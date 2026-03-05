@@ -10,7 +10,7 @@ export type ResolvedMemorySearchConfig = {
   enabled: boolean;
   sources: Array<"memory" | "sessions" | "knowledge">;
   extraPaths: string[];
-  provider: "openai" | "local" | "gemini" | "voyage" | "auto";
+  provider: "openai" | "local" | "gemini" | "voyage" | "mistral" | "ollama" | "auto";
   remote?: {
     baseUrl?: string;
     apiKey?: string;
@@ -26,7 +26,7 @@ export type ResolvedMemorySearchConfig = {
   experimental: {
     sessionMemory: boolean;
   };
-  fallback: "openai" | "gemini" | "local" | "voyage" | "none";
+  fallback: "openai" | "gemini" | "local" | "voyage" | "mistral" | "ollama" | "none";
   model: string;
   local: {
     modelPath?: string;
@@ -87,6 +87,8 @@ export type MemorySearchOverrides = {
 const DEFAULT_OPENAI_MODEL = "text-embedding-3-small";
 const DEFAULT_GEMINI_MODEL = "gemini-embedding-001";
 const DEFAULT_VOYAGE_MODEL = "voyage-4-large";
+const DEFAULT_MISTRAL_MODEL = "mistral-embed";
+const DEFAULT_OLLAMA_MODEL = "nomic-embed-text";
 const DEFAULT_CHUNK_TOKENS = 400;
 const DEFAULT_CHUNK_OVERLAP = 80;
 const DEFAULT_WATCH_DEBOUNCE_MS = 1500;
@@ -162,6 +164,8 @@ function mergeConfig(
     provider === "openai" ||
     provider === "gemini" ||
     provider === "voyage" ||
+    provider === "mistral" ||
+    provider === "ollama" ||
     provider === "auto";
   const batch = {
     enabled: overrideRemote?.batch?.enabled ?? defaultRemote?.batch?.enabled ?? false,
@@ -191,7 +195,11 @@ function mergeConfig(
         ? DEFAULT_OPENAI_MODEL
         : provider === "voyage"
           ? DEFAULT_VOYAGE_MODEL
-          : undefined;
+          : provider === "mistral"
+            ? DEFAULT_MISTRAL_MODEL
+            : provider === "ollama"
+              ? DEFAULT_OLLAMA_MODEL
+              : undefined;
   const model = overrides?.model ?? defaults?.model ?? modelDefault ?? "";
   const local = {
     modelPath: overrides?.local?.modelPath ?? defaults?.local?.modelPath,

@@ -27,13 +27,17 @@ export function UploadQueue({ items, onRetry, onRemove, onClearFinished }: Uploa
           <div key={item.id} className="rounded-md border border-border-light p-sm">
             <div className="flex items-center justify-between gap-sm">
               <div className="min-w-0 flex-1">
-                <div className="truncate text-xs font-medium text-text-primary">{item.file.name}</div>
+                <div className="truncate text-xs font-medium text-text-primary">
+                  {item.file.name}
+                </div>
                 <div className="mt-[2px] text-[11px] text-text-tertiary">
                   {(item.file.size / 1024 / 1024).toFixed(2)} MB
                 </div>
               </div>
               <div className="flex items-center gap-xs">
-                {item.status === "uploading" && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
+                {item.status === "uploading" && (
+                  <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                )}
                 {item.status === "success" && <CheckCircle2 className="h-4 w-4 text-success" />}
                 {item.status === "error" && <XCircle className="h-4 w-4 text-error" />}
                 {item.status === "error" && (

@@ -14,6 +14,12 @@ const QMD_MANAGER_CACHE = new Map<string, MemorySearchManager>();
 import { resolveAgentDir } from "../agents/agent-scope.js";
 import { resolveKnowledgeConfig } from "../agents/knowledge-config.js";
 import { requireNodeSqlite } from "./sqlite.js";
+let managerRuntimePromise: Promise<typeof import("./manager-runtime.js")> | null = null;
+
+function loadManagerRuntime() {
+  managerRuntimePromise ??= import("./manager-runtime.js");
+  return managerRuntimePromise;
+}
 
 export type MemorySearchManagerResult = {
   manager: MemorySearchManager | null;
@@ -28,8 +34,9 @@ export async function getMemorySearchManager(params: {
   const resolved = resolveMemoryBackendConfig(params);
   if (resolved.backend === "qmd" && resolved.qmd) {
     const statusOnly = params.purpose === "status";
-    const cacheKey = buildQmdCacheKey(params.agentId, resolved.qmd);
+    let cacheKey: string | undefined;
     if (!statusOnly) {
+      cacheKey = buildQmdCacheKey(params.agentId, resolved.qmd);
       const cached = QMD_MANAGER_CACHE.get(cacheKey);
       if (cached) {
         return { manager: cached };
@@ -51,13 +58,19 @@ export async function getMemorySearchManager(params: {
           {
             primary,
             fallbackFactory: async () => {
-              const { MemoryIndexManager } = await import("./manager.js");
+              const { MemoryIndexManager } = await loadManagerRuntime();
               return await MemoryIndexManager.get(params);
             },
           },
-          () => QMD_MANAGER_CACHE.delete(cacheKey),
+          () => {
+            if (cacheKey) {
+              QMD_MANAGER_CACHE.delete(cacheKey);
+            }
+          },
         );
-        QMD_MANAGER_CACHE.set(cacheKey, wrapper);
+        if (cacheKey) {
+          QMD_MANAGER_CACHE.set(cacheKey, wrapper);
+        }
         return { manager: wrapper };
       }
     } catch (err) {
@@ -67,7 +80,7 @@ export async function getMemorySearchManager(params: {
   }
 
   try {
-    const { MemoryIndexManager } = await import("./manager.js");
+    const { MemoryIndexManager } = await loadManagerRuntime();
     const overrides = loadKnowledgeVectorOverrides(params.cfg, params.agentId);
     const manager = await MemoryIndexManager.get({ ...params, overrides });
     return { manager };

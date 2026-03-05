@@ -2,10 +2,10 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import type { RespondFn } from "./types.js";
 import { listAgentIds, resolveAgentWorkspaceDir } from "../../agents/agent-scope.js";
 import { loadConfig } from "../../config/config.js";
 import { sceneHandlers } from "./scene.js";
+import type { RespondFn } from "./types.js";
 
 type HandlerResult = {
   success: boolean;

@@ -21,10 +21,7 @@ interface AddQueueOptions {
 
 interface UseUploadQueueOptions {
   concurrency?: number;
-  uploadFile: (
-    item: UploadQueueItem,
-    onProgress: (progress: number) => void,
-  ) => Promise<void>;
+  uploadFile: (item: UploadQueueItem, onProgress: (progress: number) => void) => Promise<void>;
   onItemSuccess?: (item: UploadQueueItem) => void;
 }
 
@@ -101,24 +98,27 @@ export function useUploadQueue({
     });
   }, [concurrency, onItemSuccess, uploadFile]);
 
-  const addFiles = useCallback((files: File[], options?: AddQueueOptions) => {
-    const now = Date.now();
-    const nextItems: UploadQueueItem[] = files.map((file, index) => ({
-      id: `${now}-${index}-${file.name}`,
-      file,
-      description: options?.description,
-      tags: options?.tags,
-      progress: 0,
-      status: "pending",
-    }));
-    setItems((prevItems) => [...prevItems, ...nextItems]);
-    if (runningRef.current) {
-      const workers = Math.max(1, concurrency);
-      for (let i = 0; i < workers; i += 1) {
-        runNext();
+  const addFiles = useCallback(
+    (files: File[], options?: AddQueueOptions) => {
+      const now = Date.now();
+      const nextItems: UploadQueueItem[] = files.map((file, index) => ({
+        id: `${now}-${index}-${file.name}`,
+        file,
+        description: options?.description,
+        tags: options?.tags,
+        progress: 0,
+        status: "pending",
+      }));
+      setItems((prevItems) => [...prevItems, ...nextItems]);
+      if (runningRef.current) {
+        const workers = Math.max(1, concurrency);
+        for (let i = 0; i < workers; i += 1) {
+          runNext();
+        }
       }
-    }
-  }, [concurrency, runNext]);
+    },
+    [concurrency, runNext],
+  );
 
   const start = useCallback(() => {
     if (isRunning) return;
@@ -130,23 +130,26 @@ export function useUploadQueue({
     }
   }, [concurrency, isRunning, runNext]);
 
-  const retry = useCallback((id: string) => {
-    setItems((prevItems) =>
-      prevItems.map((item) =>
-        item.id === id
-          ? { ...item, status: "pending", error: undefined, progress: 0 }
-          : item,
-      ),
-    );
-    if (!isRunning) {
-      runningRef.current = true;
-      setIsRunning(true);
-      runNext();
-    }
-  }, [isRunning, runNext]);
+  const retry = useCallback(
+    (id: string) => {
+      setItems((prevItems) =>
+        prevItems.map((item) =>
+          item.id === id ? { ...item, status: "pending", error: undefined, progress: 0 } : item,
+        ),
+      );
+      if (!isRunning) {
+        runningRef.current = true;
+        setIsRunning(true);
+        runNext();
+      }
+    },
+    [isRunning, runNext],
+  );
 
   const remove = useCallback((id: string) => {
-    setItems((prevItems) => prevItems.filter((item) => item.id !== id || item.status === "uploading"));
+    setItems((prevItems) =>
+      prevItems.filter((item) => item.id !== id || item.status === "uploading"),
+    );
   }, []);
 
   const clearFinished = useCallback(() => {
