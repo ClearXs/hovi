@@ -232,7 +232,7 @@ export function StepItem({
                 return (
                   <div
                     key={index}
-                    className="rounded-lg bg-background-tertiary px-md py-sm border border-border-light"
+                    className="rounded-lg bg-background-tertiary px-md py-sm border border-border-light max-w-full overflow-hidden"
                   >
                     {/* MCP工具标签和执行目标（单独一行） */}
                     {showToolInline && (
@@ -241,7 +241,7 @@ export function StepItem({
                           <FaTools className="w-3 h-3" />
                           {detail.toolName}
                         </span>
-                        <span className="text-xs text-text-secondary">{firstLine}</span>
+                        <span className="text-xs text-text-secondary break-all">{firstLine}</span>
                       </div>
                     )}
 
@@ -265,7 +265,7 @@ export function StepItem({
                     {/* 内容区域 - with streaming text */}
                     <FormattedContent
                       content={displayedContent}
-                      className="text-xs text-text-primary leading-relaxed"
+                      className="text-xs text-text-primary leading-relaxed max-w-full"
                     />
                   </div>
                 );

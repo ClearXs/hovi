@@ -81,5 +81,9 @@ export function FormattedContent({
     });
   };
 
-  return <p className={`whitespace-pre-wrap leading-relaxed ${className}`}>{renderContent()}</p>;
+  return (
+    <p className={`whitespace-pre-wrap break-all leading-relaxed ${className}`}>
+      {renderContent()}
+    </p>
+  );
 }

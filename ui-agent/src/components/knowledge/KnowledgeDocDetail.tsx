@@ -24,6 +24,7 @@ export function KnowledgeDocDetail({ documentId }: KnowledgeDocDetailProps) {
     searchHighlightKeywords,
     clearTargetChunk,
   } = useKnowledgeBaseStore();
+
   const chunkRefs = useRef<Record<string, HTMLButtonElement | null>>({});
 
   useEffect(() => {

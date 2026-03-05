@@ -340,19 +340,19 @@ export function KnowledgeGraphTab() {
             <div className="absolute top-full left-0 mt-1 py-1 bg-white border border-border rounded-md shadow-lg hidden group-hover:block z-10">
               <button
                 onClick={() => handleExport("json")}
-                className="w-full px-4 py-1.5 text-sm text-left hover:bg-gray-100"
+                className="flex w-full px-3 py-1.5 text-sm text-text-primary hover:bg-gray-100"
               >
                 导出 JSON
               </button>
               <button
                 onClick={() => handleExport("png")}
-                className="w-full px-4 py-1.5 text-sm text-left hover:bg-gray-100"
+                className="flex w-full px-3 py-1.5 text-sm text-text-primary hover:bg-gray-100"
               >
                 导出 PNG
               </button>
               <button
                 onClick={() => handleExport("svg")}
-                className="w-full px-4 py-1.5 text-sm text-left hover:bg-gray-100"
+                className="flex w-full px-3 py-1.5 text-sm text-text-primary hover:bg-gray-100"
               >
                 导出 SVG
               </button>
@@ -369,24 +369,6 @@ export function KnowledgeGraphTab() {
             onKeyDown={(e) => e.key === "Enter" && handleSearch()}
             className="w-48 px-3 py-1.5 text-sm border border-border rounded-md"
           />
-
-          <select
-            multiple
-            value={selectedTypes}
-            onChange={(e) => {
-              const values = Array.from(e.target.selectedOptions, (opt) => opt.value);
-              setSelectedTypes(values);
-            }}
-            onBlur={handleFilter}
-            className="px-3 py-1.5 text-sm border border-border rounded-md"
-          >
-            {stats &&
-              Object.entries(stats.entityTypes).map(([type, count]) => (
-                <option key={type} value={type}>
-                  {type} ({count})
-                </option>
-              ))}
-          </select>
         </div>
       </div>
 

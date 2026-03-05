@@ -9,6 +9,18 @@
   box-sizing: border-box;
 }
 
+/* 防止横向滚动，强制长单词换行 */
+pre, code {
+  overflow-wrap: break-word !important;
+  word-break: break-all !important;
+  white-space: pre-wrap !important;
+}
+
+/* 通用防止横向溢出 */
+* {
+  overflow-wrap: break-word;
+}
+
 html,
 body {
   height: 100%;
@@ -27,8 +39,8 @@ body {
 
 /* ==================== 自定义滚动条样式 / Custom Scrollbar ==================== */
 .scrollbar-thin::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  width: 3px;
+  height: 3px;
 }
 
 .scrollbar-thin::-webkit-scrollbar-track {
@@ -41,6 +53,25 @@ body {
 }
 
 .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background-color: var(--border-dark);
+}
+
+/* 更窄的滚动条 */
+.scrollbar-narrow::-webkit-scrollbar {
+  width: 2px;
+  height: 2px;
+}
+
+.scrollbar-narrow::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-narrow::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  border-radius: 2px;
+}
+
+.scrollbar-narrow::-webkit-scrollbar-thumb:hover {
   background-color: var(--border-dark);
 }
 

@@ -6,7 +6,9 @@ import {
   ChevronRight,
   Copy,
   Download,
+  Edit,
   ExternalLink,
+  Eye,
   GripHorizontal,
   RotateCcw,
   Save,
@@ -19,7 +21,12 @@ import remarkGfm from "remark-gfm";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import type { KnowledgeDetail } from "@/services/knowledgeApi";
-import { buildHeaders, getGatewayBaseUrl } from "@/services/knowledgeApi";
+import {
+  buildHeaders,
+  getGatewayBaseUrl,
+  updateKnowledgeDocumentContent,
+} from "@/services/knowledgeApi";
+import { useToastStore } from "@/stores/toastStore";
 import { UniverDocPreview } from "./UniverDocPreview";
 import { UniverSheetPreview } from "./UniverSheetPreview";
 
@@ -55,6 +62,7 @@ function highlightText(text: string, keywords: string[]) {
 }
 
 export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) {
+  const { addToast } = useToastStore();
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [textContent, setTextContent] = useState<string>("");
   const [isLoading, setIsLoading] = useState(false);
@@ -78,10 +86,19 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
   const [jsonToolbarExpanded, setJsonToolbarExpanded] = useState(false);
   const jsonAreaRef = useRef<HTMLDivElement | null>(null);
   const jsonToolbarRef = useRef<HTMLDivElement | null>(null);
-  const jsonDragRef = useRef<{ dragging: boolean; dx: number; dy: number }>({
+  // 拖动状态：使用 transform 实现流畅拖动
+  const jsonDragRef = useRef<{
+    dragging: boolean;
+    startX: number;
+    startY: number;
+    initialX: number;
+    initialY: number;
+  }>({
     dragging: false,
-    dx: 0,
-    dy: 0,
+    startX: 0,
+    startY: 0,
+    initialX: 0,
+    initialY: 0,
   });
   const [editedTextContent, setEditedTextContent] = useState<string>("");
   const [isSavingText, setIsSavingText] = useState(false);
@@ -89,11 +106,44 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
   const [textToolbarExpanded, setTextToolbarExpanded] = useState(false);
   const textAreaRef = useRef<HTMLDivElement | null>(null);
   const textToolbarRef = useRef<HTMLDivElement | null>(null);
-  const textDragRef = useRef<{ dragging: boolean; dx: number; dy: number }>({
+  // 拖动状态：使用 transform 实现流畅拖动
+  const textDragRef = useRef<{
+    dragging: boolean;
+    startX: number;
+    startY: number;
+    initialX: number;
+    initialY: number;
+  }>({
     dragging: false,
-    dx: 0,
-    dy: 0,
+    startX: 0,
+    startY: 0,
+    initialX: 0,
+    initialY: 0,
   });
+
+  // Markdown 编辑器状态
+  const [editedMarkdownContent, setEditedMarkdownContent] = useState<string>("");
+  const [isSavingMarkdown, setIsSavingMarkdown] = useState(false);
+  const [markdownToolbarPos, setMarkdownToolbarPos] = useState({ x: 16, y: 16 });
+  const [markdownToolbarExpanded, setMarkdownToolbarExpanded] = useState(false);
+  const [markdownEditMode, setMarkdownEditMode] = useState(false); // false = 阅读模式, true = 编辑模式
+  const markdownAreaRef = useRef<HTMLDivElement | null>(null);
+  const markdownToolbarRef = useRef<HTMLDivElement | null>(null);
+  // 拖动状态：使用 transform 实现流畅拖动
+  const markdownDragRef = useRef<{
+    dragging: boolean;
+    startX: number;
+    startY: number;
+    initialX: number;
+    initialY: number;
+  }>({
+    dragging: false,
+    startX: 0,
+    startY: 0,
+    initialX: 0,
+    initialY: 0,
+  });
+
   const mime = detail?.mimetype || "";
   const filename = detail?.filename?.toLowerCase() || "";
 
@@ -101,6 +151,7 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
     mime === "text/markdown" || filename.endsWith(".md") || filename.endsWith(".mdx");
   const isText = mime.startsWith("text/") || isMarkdown;
   const canZoom = mime.startsWith("image/") || mime === "application/pdf";
+  const isMarkdownFile = isText && isMarkdown; // 新增：区分纯文本和 Markdown
   const zoomOptions = useMemo(() => [1, 1.25, 1.5], []);
   const keywords = useMemo(
     () => highlightKeywords.map((item) => item.trim()).filter(Boolean),
@@ -151,34 +202,28 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
 
   // JSON 编辑器处理函数
   const handleSaveJson = async () => {
-    if (!detail) return;
+    if (!detail || !detail.kbId) {
+      addToast({ title: "缺少知识库信息", variant: "error" });
+      return;
+    }
 
     try {
       setIsSavingJson(true);
       const formatted = JSON.stringify(JSON.parse(editedJsonContent), null, 2);
 
       // 调用保存 API
-      const url = new URL(
-        "/api/knowledge/documents/" + detail.id + "/content",
-        getGatewayBaseUrl(),
-      );
-      const response = await fetch(url.toString(), {
-        method: "PUT",
-        headers: {
-          ...buildHeaders(),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ content: formatted }),
+      await updateKnowledgeDocumentContent({
+        kbId: detail.kbId,
+        documentId: detail.id,
+        content: formatted,
       });
-
-      if (!response.ok) throw new Error("保存失败");
 
       // 更新原始内容
       setTextContent(formatted);
       setEditedJsonContent(formatted);
-      // TODO: 添加成功提示 toast
+      addToast({ title: "保存成功", variant: "success" });
     } catch (err) {
-      alert(err instanceof Error ? err.message : "保存失败");
+      addToast({ title: err instanceof Error ? err.message : "保存失败", variant: "error" });
     } finally {
       setIsSavingJson(false);
     }
@@ -194,25 +239,50 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
   };
 
   const handleSaveText = async () => {
-    if (!detail) return;
+    if (!detail || !detail.kbId) {
+      addToast({ title: "缺少知识库信息", variant: "error" });
+      return;
+    }
     try {
       setIsSavingText(true);
-      const url = new URL(`/api/knowledge/documents/${detail.id}/content`, getGatewayBaseUrl());
-      const response = await fetch(url.toString(), {
-        method: "PUT",
-        headers: {
-          ...buildHeaders(),
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ content: editedTextContent }),
+      await updateKnowledgeDocumentContent({
+        kbId: detail.kbId,
+        documentId: detail.id,
+        content: editedTextContent,
       });
-      if (!response.ok) throw new Error("保存失败");
       setTextContent(editedTextContent);
+      addToast({ title: "保存成功", variant: "success" });
     } catch (err) {
-      alert(err instanceof Error ? err.message : "保存失败");
+      addToast({ title: err instanceof Error ? err.message : "保存失败", variant: "error" });
     } finally {
       setIsSavingText(false);
     }
+  };
+
+  const handleSaveMarkdown = async () => {
+    if (!detail || !detail.kbId) {
+      addToast({ title: "缺少知识库信息", variant: "error" });
+      return;
+    }
+    try {
+      setIsSavingMarkdown(true);
+      await updateKnowledgeDocumentContent({
+        kbId: detail.kbId,
+        documentId: detail.id,
+        content: editedMarkdownContent,
+      });
+      setTextContent(editedMarkdownContent);
+      addToast({ title: "保存成功", variant: "success" });
+    } catch (err) {
+      addToast({ title: err instanceof Error ? err.message : "保存失败", variant: "error" });
+    } finally {
+      setIsSavingMarkdown(false);
+    }
+  };
+
+  const handleResetMarkdown = () => {
+    if (!textContent) return;
+    setEditedMarkdownContent(textContent);
   };
 
   useEffect(() => {
@@ -371,33 +441,29 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
     setEditedTextContent(textContent);
   }, [textContent, isText, isMarkdown, mime, filename]);
 
+  // 初始化工具栏位置（只在组件挂载时执行一次）
   useEffect(() => {
-    if (!(mime === "application/json" || filename.endsWith(".json"))) return;
-    const area = jsonAreaRef.current;
-    const toolbar = jsonToolbarRef.current;
-    if (!area || !toolbar) return;
+    // JSON 工具栏初始位置
+    if (mime === "application/json" || filename.endsWith(".json")) {
+      setJsonToolbarPos({ x: 8, y: 8 });
+    }
+    // TXT 工具栏初始位置
+    if (isText && !isMarkdown && mime !== "application/json" && !filename.endsWith(".json")) {
+      setTextToolbarPos({ x: 8, y: 8 });
+    }
+    // Markdown 工具栏初始位置
+    if (isMarkdown) {
+      setMarkdownToolbarPos({ x: 8, y: 8 });
+    }
+  }, []);
 
-    const areaRect = area.getBoundingClientRect();
-    const toolbarRect = toolbar.getBoundingClientRect();
-    setJsonToolbarPos({
-      x: Math.max(8, areaRect.width - toolbarRect.width - 8),
-      y: 8,
-    });
-  }, [mime, filename, jsonToolbarExpanded]);
-
+  // Markdown 内容初始化
   useEffect(() => {
-    if (!isText || isMarkdown || mime === "application/json" || filename.endsWith(".json")) return;
-    const area = textAreaRef.current;
-    const toolbar = textToolbarRef.current;
-    if (!area || !toolbar) return;
-    const areaRect = area.getBoundingClientRect();
-    const toolbarRect = toolbar.getBoundingClientRect();
-    setTextToolbarPos({
-      x: Math.max(8, areaRect.width - toolbarRect.width - 8),
-      y: 8,
-    });
-  }, [isText, isMarkdown, mime, filename, textToolbarExpanded]);
+    if (!isMarkdown) return;
+    setEditedMarkdownContent(textContent);
+  }, [textContent, isMarkdown]);
 
+  // Markdown toolbar 位置调整
   if (!detail) {
     return <div className="text-sm text-text-tertiary">暂无预览</div>;
   }
@@ -527,34 +593,29 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
       <div ref={jsonAreaRef} className="relative h-full flex flex-col">
         <div
           ref={jsonToolbarRef}
-          className="absolute z-10 flex select-none items-center gap-1 rounded-xl border border-primary/25 bg-background/95 p-1 text-text-primary shadow-sm backdrop-blur"
+          className="absolute z-10 flex select-none items-center gap-1 rounded-md border border-primary/25 bg-background/95 p-1 text-text-primary shadow-sm backdrop-blur"
           style={{ left: jsonToolbarPos.x, top: jsonToolbarPos.y }}
           onMouseDown={(event) => {
             const target = event.target as HTMLElement;
             if (!target.closest("[data-json-drag]")) return;
-            const area = jsonAreaRef.current;
+            event.preventDefault();
+            event.stopPropagation();
             const toolbar = jsonToolbarRef.current;
-            if (!area || !toolbar) return;
-            const areaRect = area.getBoundingClientRect();
-            const toolbarRect = toolbar.getBoundingClientRect();
-            const rect = (event.currentTarget as HTMLDivElement).getBoundingClientRect();
+            if (!toolbar) return;
             jsonDragRef.current = {
               dragging: true,
-              dx: event.clientX - rect.left,
-              dy: event.clientY - rect.top,
+              startX: event.clientX,
+              startY: event.clientY,
+              initialX: jsonToolbarPos.x,
+              initialY: jsonToolbarPos.y,
             };
             const onMove = (moveEvent: MouseEvent) => {
               if (!jsonDragRef.current.dragging) return;
-              const nextX = moveEvent.clientX - jsonDragRef.current.dx;
-              const nextY = moveEvent.clientY - jsonDragRef.current.dy;
-              const minX = 8;
-              const minY = 8;
-              const maxX = Math.max(minX, areaRect.width - toolbarRect.width - 8);
-              const maxY = Math.max(minY, areaRect.height - toolbarRect.height - 8);
-              setJsonToolbarPos({
-                x: Math.min(maxX, Math.max(minX, nextX)),
-                y: Math.min(maxY, Math.max(minY, nextY)),
-              });
+              const deltaX = moveEvent.clientX - jsonDragRef.current.startX;
+              const deltaY = moveEvent.clientY - jsonDragRef.current.startY;
+              const newX = jsonDragRef.current.initialX + deltaX;
+              const newY = jsonDragRef.current.initialY + deltaY;
+              setJsonToolbarPos({ x: newX, y: newY });
             };
             const onUp = () => {
               jsonDragRef.current.dragging = false;
@@ -567,18 +628,14 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
           title="拖拽移动工具栏"
         >
           <TooltipProvider delayDuration={200}>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  data-json-drag
-                  type="button"
-                  className="flex h-7 w-7 cursor-move items-center justify-center rounded-md bg-background/80 text-text-secondary transition-colors hover:bg-primary/15 hover:text-primary"
-                >
-                  <GripHorizontal className="h-3.5 w-3.5" />
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">拖拽</TooltipContent>
-            </Tooltip>
+            {/* 拖拽按钮 - 无 Tooltip */}
+            <button
+              data-json-drag
+              type="button"
+              className="flex h-7 w-7 cursor-move items-center justify-center rounded-md bg-background/80 text-text-secondary transition-colors hover:bg-primary/15 hover:text-primary"
+            >
+              <GripHorizontal className="h-3.5 w-3.5" />
+            </button>
             {jsonToolbarExpanded ? (
               <>
                 <Tooltip>
@@ -650,23 +707,19 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
                 </Tooltip>
               </>
             ) : null}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  data-json-action
-                  type="button"
-                  className="flex h-7 w-7 items-center justify-center rounded-md bg-background/80 text-text-secondary transition-colors hover:bg-primary/15 hover:text-primary"
-                  onClick={() => setJsonToolbarExpanded((value) => !value)}
-                >
-                  {jsonToolbarExpanded ? (
-                    <ChevronLeft className="h-3.5 w-3.5" />
-                  ) : (
-                    <ChevronRight className="h-3.5 w-3.5" />
-                  )}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="bottom">{jsonToolbarExpanded ? "收起" : "展开"}</TooltipContent>
-            </Tooltip>
+            {/* 展开/收起按钮 - 无 Tooltip */}
+            <button
+              data-json-action
+              type="button"
+              className="flex h-7 w-7 items-center justify-center rounded-md bg-background/80 text-text-secondary transition-colors hover:bg-primary/15 hover:text-primary"
+              onClick={() => setJsonToolbarExpanded((value) => !value)}
+            >
+              {jsonToolbarExpanded ? (
+                <ChevronLeft className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5" />
+              )}
+            </button>
           </TooltipProvider>
         </div>
         <div className="flex-1 overflow-hidden rounded-lg border border-border-light">
@@ -790,34 +843,27 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
         <div ref={textAreaRef} className="relative h-full flex flex-col">
           <div
             ref={textToolbarRef}
-            className="absolute z-10 flex select-none items-center gap-1 rounded-xl border border-primary/25 bg-background/95 p-1 text-text-primary shadow-sm backdrop-blur"
+            className="absolute z-10 flex select-none items-center gap-1 rounded-md border border-primary/25 bg-background/95 p-1 text-text-primary shadow-sm backdrop-blur"
             style={{ left: textToolbarPos.x, top: textToolbarPos.y }}
             onMouseDown={(event) => {
               const target = event.target as HTMLElement;
               if (!target.closest("[data-text-drag]")) return;
-              const area = textAreaRef.current;
-              const toolbar = textToolbarRef.current;
-              if (!area || !toolbar) return;
-              const areaRect = area.getBoundingClientRect();
-              const toolbarRect = toolbar.getBoundingClientRect();
-              const rect = (event.currentTarget as HTMLDivElement).getBoundingClientRect();
+              event.preventDefault();
+              event.stopPropagation();
               textDragRef.current = {
                 dragging: true,
-                dx: event.clientX - rect.left,
-                dy: event.clientY - rect.top,
+                startX: event.clientX,
+                startY: event.clientY,
+                initialX: textToolbarPos.x,
+                initialY: textToolbarPos.y,
               };
               const onMove = (moveEvent: MouseEvent) => {
                 if (!textDragRef.current.dragging) return;
-                const nextX = moveEvent.clientX - textDragRef.current.dx;
-                const nextY = moveEvent.clientY - textDragRef.current.dy;
-                const minX = 8;
-                const minY = 8;
-                const maxX = Math.max(minX, areaRect.width - toolbarRect.width - 8);
-                const maxY = Math.max(minY, areaRect.height - toolbarRect.height - 8);
-                setTextToolbarPos({
-                  x: Math.min(maxX, Math.max(minX, nextX)),
-                  y: Math.min(maxY, Math.max(minY, nextY)),
-                });
+                const deltaX = moveEvent.clientX - textDragRef.current.startX;
+                const deltaY = moveEvent.clientY - textDragRef.current.startY;
+                const newX = textDragRef.current.initialX + deltaX;
+                const newY = textDragRef.current.initialY + deltaY;
+                setTextToolbarPos({ x: newX, y: newY });
               };
               const onUp = () => {
                 textDragRef.current.dragging = false;
@@ -829,18 +875,14 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
             }}
           >
             <TooltipProvider delayDuration={200}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    data-text-drag
-                    type="button"
-                    className="flex h-7 w-7 cursor-move items-center justify-center rounded-md bg-background/80 text-text-secondary transition-colors hover:bg-primary/15 hover:text-primary"
-                  >
-                    <GripHorizontal className="h-3.5 w-3.5" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">拖拽</TooltipContent>
-              </Tooltip>
+              {/* 拖拽按钮 - 无 Tooltip */}
+              <button
+                data-text-drag
+                type="button"
+                className="flex h-7 w-7 cursor-move items-center justify-center rounded-md bg-background/80 text-text-secondary transition-colors hover:bg-primary/15 hover:text-primary"
+              >
+                <GripHorizontal className="h-3.5 w-3.5" />
+              </button>
               {textToolbarExpanded ? (
                 <>
                   <Tooltip>
@@ -907,24 +949,18 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
                   </Tooltip>
                 </>
               ) : null}
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    className="flex h-7 w-7 items-center justify-center rounded-md bg-background/80 text-text-secondary transition-colors hover:bg-primary/15 hover:text-primary"
-                    onClick={() => setTextToolbarExpanded((value) => !value)}
-                  >
-                    {textToolbarExpanded ? (
-                      <ChevronLeft className="h-3.5 w-3.5" />
-                    ) : (
-                      <ChevronRight className="h-3.5 w-3.5" />
-                    )}
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">
-                  {textToolbarExpanded ? "收起" : "展开"}
-                </TooltipContent>
-              </Tooltip>
+              {/* 展开/收起按钮 - 无 Tooltip */}
+              <button
+                type="button"
+                className="flex h-7 w-7 items-center justify-center rounded-md bg-background/80 text-text-secondary transition-colors hover:bg-primary/15 hover:text-primary"
+                onClick={() => setTextToolbarExpanded((value) => !value)}
+              >
+                {textToolbarExpanded ? (
+                  <ChevronLeft className="h-3.5 w-3.5" />
+                ) : (
+                  <ChevronRight className="h-3.5 w-3.5" />
+                )}
+              </button>
             </TooltipProvider>
           </div>
           <div className="flex-1 overflow-hidden rounded-lg border border-border-light">
@@ -949,46 +985,224 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
     }
 
     return (
-      <div>
-        {toolbar}
-        {isMarkdown ? (
-          <div className="prose prose-sm max-w-none text-text-secondary">
-            <ReactMarkdown
-              remarkPlugins={[remarkGfm]}
-              components={{
-                p({ children }) {
-                  const content = Array.isArray(children)
-                    ? children.join("")
-                    : String(children ?? "");
-                  return <p>{highlightText(content, keywords)}</p>;
-                },
-                li({ children }) {
-                  const content = Array.isArray(children)
-                    ? children.join("")
-                    : String(children ?? "");
-                  return <li>{highlightText(content, keywords)}</li>;
-                },
-                code({ className, children }) {
-                  const match = /language-(\w+)/.exec(className || "");
-                  if (match) {
-                    return (
-                      <SyntaxHighlighter language={match[1]} PreTag="div">
-                        {String(children).replace(/\n$/, "")}
-                      </SyntaxHighlighter>
-                    );
-                  }
-                  return <code className="rounded bg-background-secondary px-1">{children}</code>;
-                },
-              }}
+      <div ref={markdownAreaRef} className="relative h-full flex flex-col">
+        {/* 悬浮工具栏 */}
+        <div
+          ref={markdownToolbarRef}
+          className="absolute z-10 flex select-none items-center gap-1 rounded-md border border-primary/25 bg-background/95 p-1 text-text-primary shadow-sm backdrop-blur"
+          style={{ left: markdownToolbarPos.x, top: markdownToolbarPos.y }}
+          onMouseDown={(event) => {
+            const target = event.target as HTMLElement;
+            if (!target.closest("[data-markdown-drag]")) return;
+            event.preventDefault();
+            event.stopPropagation();
+            markdownDragRef.current = {
+              dragging: true,
+              startX: event.clientX,
+              startY: event.clientY,
+              initialX: markdownToolbarPos.x,
+              initialY: markdownToolbarPos.y,
+            };
+            const onMove = (moveEvent: MouseEvent) => {
+              if (!markdownDragRef.current.dragging) return;
+              const deltaX = moveEvent.clientX - markdownDragRef.current.startX;
+              const deltaY = moveEvent.clientY - markdownDragRef.current.startY;
+              const newX = markdownDragRef.current.initialX + deltaX;
+              const newY = markdownDragRef.current.initialY + deltaY;
+              setMarkdownToolbarPos({ x: newX, y: newY });
+            };
+            const onUp = () => {
+              markdownDragRef.current.dragging = false;
+              window.removeEventListener("mousemove", onMove);
+              window.removeEventListener("mouseup", onUp);
+            };
+            window.addEventListener("mousemove", onMove);
+            window.addEventListener("mouseup", onUp);
+          }}
+        >
+          <TooltipProvider delayDuration={200}>
+            {/* 拖拽按钮 - 无 Tooltip */}
+            <button
+              data-markdown-drag
+              type="button"
+              className="flex h-7 w-7 cursor-move items-center justify-center rounded-md bg-background/80 text-text-secondary transition-colors hover:bg-primary/15 hover:text-primary"
             >
-              {textContent || "加载文本中..."}
-            </ReactMarkdown>
-          </div>
-        ) : (
-          <div className="whitespace-pre-wrap text-sm text-text-secondary">
-            {highlightText(textContent || "加载文本中...", keywords)}
-          </div>
-        )}
+              <GripHorizontal className="h-3.5 w-3.5" />
+            </button>
+            {/* 阅读/编辑模式切换 */}
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex h-7 w-7 items-center justify-center rounded-md bg-background/80 text-primary transition-colors hover:bg-primary/15 hover:text-primary"
+                    onClick={() => setMarkdownEditMode(!markdownEditMode)}
+                  >
+                    {markdownEditMode ? (
+                      <Eye className="h-3.5 w-3.5" />
+                    ) : (
+                      <Edit className="h-3.5 w-3.5" />
+                    )}
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  {markdownEditMode ? "阅读模式" : "编辑模式"}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+            {markdownToolbarExpanded ? (
+              <>
+                {/* 复制按钮 - 阅读模式复制原文，编辑模式复制编辑内容 */}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className="flex h-7 w-7 items-center justify-center rounded-md bg-background/80 text-primary transition-colors hover:bg-primary/15 hover:text-primary"
+                      onClick={() =>
+                        navigator.clipboard?.writeText(
+                          markdownEditMode ? editedMarkdownContent : textContent,
+                        )
+                      }
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">复制</TooltipContent>
+                </Tooltip>
+                {/* 打开按钮 - 始终显示 */}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      type="button"
+                      className="flex h-7 w-7 items-center justify-center rounded-md bg-background/80 text-primary transition-colors hover:bg-primary/15 hover:text-primary"
+                      onClick={() => blobUrl && window.open(blobUrl, "_blank", "noopener")}
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">打开</TooltipContent>
+                </Tooltip>
+                {/* 下载按钮 - 始终显示 */}
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <a
+                      href={blobUrl || undefined}
+                      download={detail.filename}
+                      className="flex h-7 w-7 items-center justify-center rounded-md bg-background/80 text-primary transition-colors hover:bg-primary/15 hover:text-primary"
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                    </a>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">下载</TooltipContent>
+                </Tooltip>
+                {/* 重置按钮 - 仅编辑模式显示 */}
+                {markdownEditMode && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        className="flex h-7 w-7 items-center justify-center rounded-md bg-background/80 text-primary transition-colors hover:bg-primary/15 hover:text-primary disabled:opacity-40"
+                        onClick={handleResetMarkdown}
+                        disabled={isSavingMarkdown}
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">重置</TooltipContent>
+                  </Tooltip>
+                )}
+                {/* 保存按钮 - 仅编辑模式显示 */}
+                {markdownEditMode && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        className="flex h-7 w-7 items-center justify-center rounded-md bg-primary text-white transition-colors hover:bg-primary/90 disabled:opacity-40"
+                        onClick={handleSaveMarkdown}
+                        disabled={isSavingMarkdown}
+                      >
+                        <Save className="h-3.5 w-3.5" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="bottom">保存</TooltipContent>
+                  </Tooltip>
+                )}
+              </>
+            ) : null}
+            {/* 展开/收起按钮 - 无 Tooltip */}
+            <button
+              type="button"
+              className="flex h-7 w-7 items-center justify-center rounded-md bg-background/80 text-text-secondary transition-colors hover:bg-primary/15 hover:text-primary"
+              onClick={() => setMarkdownToolbarExpanded((value) => !value)}
+            >
+              {markdownToolbarExpanded ? (
+                <ChevronLeft className="h-3.5 w-3.5" />
+              ) : (
+                <ChevronRight className="h-3.5 w-3.5" />
+              )}
+            </button>
+          </TooltipProvider>
+        </div>
+
+        {/* Markdown 内容区域 */}
+        <div className="flex-1 overflow-hidden rounded-lg border border-border-light">
+          {markdownEditMode ? (
+            // 编辑模式 - Monaco Editor
+            <Editor
+              height="100%"
+              language="markdown"
+              value={editedMarkdownContent}
+              onChange={(value) => setEditedMarkdownContent(value || "")}
+              options={{
+                readOnly: false,
+                minimap: { enabled: false },
+                wordWrap: "on",
+                scrollBeyondLastLine: false,
+                fontSize: 14,
+                tabSize: 2,
+              }}
+              theme="vs-dark"
+            />
+          ) : (
+            // 阅读模式 - ReactMarkdown 渲染
+            <div className="h-full overflow-auto bg-background p-md scrollbar-narrow">
+              <div className="prose prose-sm max-w-none text-text-secondary">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  components={{
+                    p({ children }) {
+                      const content = Array.isArray(children)
+                        ? children.join("")
+                        : String(children ?? "");
+                      return <p>{highlightText(content, keywords)}</p>;
+                    },
+                    li({ children }) {
+                      const content = Array.isArray(children)
+                        ? children.join("")
+                        : String(children ?? "");
+                      return <li>{highlightText(content, keywords)}</li>;
+                    },
+                    code({ className, children }) {
+                      const match = /language-(\w+)/.exec(className || "");
+                      if (match) {
+                        return (
+                          <SyntaxHighlighter language={match[1]} PreTag="div">
+                            {String(children).replace(/\n$/, "")}
+                          </SyntaxHighlighter>
+                        );
+                      }
+                      return (
+                        <code className="rounded bg-background-secondary px-1">{children}</code>
+                      );
+                    },
+                  }}
+                >
+                  {textContent || "加载文本中..."}
+                </ReactMarkdown>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     );
   }

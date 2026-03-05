@@ -28,9 +28,22 @@ import {
 } from "@/components/ui/context-menu";
 import { useVoiceInput } from "@/features/avatar/hooks/useVoiceInput";
 import { getAgentFile } from "@/features/persona/services/personaApi";
+import type { MotionConfig } from "@/features/persona/types/persona";
+import { useAvatarStateStore, type AvatarStatePayload } from "@/stores/avatarStateStore";
 import { useConnectionStore } from "@/stores/connectionStore";
 
+// MotionItem 类型（从 SettingsPanel 复制）
+interface MotionItem {
+  id: string;
+  file: string;
+  thumbnail?: string;
+  type: "idle" | "emote";
+  keywords?: string[];
+  description?: string;
+}
+
 // Dynamic import for VrmViewer
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 const VrmViewer = dynamic(
   () => import("@/components/avatar/VrmViewer").then((mod) => mod.VrmViewer),
   {
@@ -39,7 +52,7 @@ const VrmViewer = dynamic(
       <div className="w-full h-full flex items-center justify-center text-gray-400">加载中...</div>
     ),
   },
-);
+) as any;
 
 interface VirtualAssistantPageProps {
   onClose?: () => void;
@@ -50,13 +63,21 @@ export function VirtualAssistantPage({ onClose }: VirtualAssistantPageProps) {
   const status = useConnectionStore((s) => s.status);
   const AGENT_ID = "main";
 
+  // Avatar 状态（来自工具事件）
+  const avatarState = useAvatarStateStore((s) => s.currentState);
+
   // 状态
   const [showSubtitles, setShowSubtitles] = useState(true);
   const [vrmUrl, setVrmUrl] = useState<string | null>(null);
   const [motionUrl, setMotionUrl] = useState<string | null>(null);
+  const [motionConfig, setMotionConfig] = useState<MotionConfig | null>(null);
   const [vrmLoading, setVrmLoading] = useState(false);
   const [vrmError, setVrmError] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
+
+  // VrmViewer ref
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const vrmViewerRef = useRef<any>(null);
 
   // 语音输入
   const {
@@ -75,6 +96,41 @@ export function VirtualAssistantPage({ onClose }: VirtualAssistantPageProps) {
   const btnDragInfo = useRef({ startX: 0, startY: 0, startPosX: 0, startPosY: 0 });
 
   const isConnected = status === "connected";
+
+  // 预览动作
+  const handlePreviewMotion = useCallback(
+    (motion: MotionItem) => {
+      console.log("[Preview] handlePreviewMotion called:", motion);
+      const controller = vrmViewerRef.current?.getController();
+      console.log("[Preview] controller:", controller);
+
+      if (controller) {
+        // 确保设置 motionBasePath
+        if (vrmUrl) {
+          const urlParts = vrmUrl.split("/");
+          const filesIndex = urlParts.indexOf("files");
+          if (filesIndex !== -1) {
+            // 不需要加前导斜杠，因为 vrmUrl 已经是 /files/... 格式
+            const basePath = urlParts.slice(0, filesIndex + 2).join("/");
+            controller.setMotionBasePath(basePath);
+            console.log("[Preview] Set motionBasePath:", basePath);
+          }
+        }
+
+        console.log("[Preview] Playing motion:", motion);
+        if (motion.type === "idle") {
+          // 对于 idle，播放 idle 动作
+          controller.playIdleMotion();
+        } else {
+          // 对于 emote，直接根据 file 路径播放
+          controller.playMotionByFile(motion.file, false);
+        }
+      } else {
+        console.warn("[Preview] AvatarController not available");
+      }
+    },
+    [vrmUrl],
+  );
 
   // 加载 VRM 配置
   const loadConfig = useCallback(async () => {
@@ -100,14 +156,36 @@ export function VirtualAssistantPage({ onClose }: VirtualAssistantPageProps) {
               console.log("[VRM] Setting URL:", url);
               setVrmUrl(url);
 
-              // 加载动作
-              const currentMotion = config.currentMotion || config.idleMotion;
-              if (currentMotion) {
-                const mUrl = `/files/${AGENT_ID}/${currentMotion}`;
+              // 加载动作 - 支持新旧格式
+              let motionUrlValue: string | null = null;
+              if (config.currentMotion) {
+                // 新格式: { idle: "motions/xxx.vmd" }
+                if (typeof config.currentMotion === "object" && config.currentMotion.idle) {
+                  motionUrlValue = config.currentMotion.idle;
+                } else if (typeof config.currentMotion === "string") {
+                  // 旧格式: "motions/xxx.vmd"
+                  motionUrlValue = config.currentMotion;
+                }
+              } else if (config.idleMotion) {
+                // 更早的旧格式
+                motionUrlValue = config.idleMotion;
+              } else if (config.motions?.idle?.file) {
+                // 从 motions.idle 读取
+                motionUrlValue = config.motions.idle.file;
+              }
+
+              if (motionUrlValue) {
+                const mUrl = `/files/${AGENT_ID}/${motionUrlValue}`;
                 console.log("[VRM] Setting motion URL:", mUrl);
                 setMotionUrl(mUrl);
               } else {
                 setMotionUrl(null);
+              }
+
+              // 加载 Motion 配置（用于 AvatarController）
+              if (config.motions) {
+                console.log("[VRM] Setting motionConfig:", config.motions);
+                setMotionConfig(config.motions);
               }
 
               setVrmLoading(false);
@@ -209,7 +287,13 @@ export function VirtualAssistantPage({ onClose }: VirtualAssistantPageProps) {
             </div>
           </div>
         ) : isConnected && !vrmError ? (
-          <VrmViewer modelUrl={vrmUrl} motionUrl={motionUrl} />
+          <VrmViewer
+            ref={vrmViewerRef}
+            modelUrl={vrmUrl}
+            motionUrl={motionUrl}
+            motionConfig={motionConfig}
+            avatarState={avatarState}
+          />
         ) : null}
       </div>
 
@@ -257,8 +341,13 @@ export function VirtualAssistantPage({ onClose }: VirtualAssistantPageProps) {
             left: btnPosition ? `calc(16px + ${btnPosition.x}px)` : "16px",
           }}
         >
-          <div className="bg-white rounded-lg shadow-lg w-[360px] isolation-auto">
-            <SettingsPanel open={true} onClose={() => setIsExpanded(false)} onSave={loadConfig} />
+          <div className="bg-white rounded-lg shadow-lg w-[360px] h-[70vh] isolation-auto">
+            <SettingsPanel
+              open={true}
+              onClose={() => setIsExpanded(false)}
+              onSave={loadConfig}
+              onPreviewMotion={handlePreviewMotion}
+            />
           </div>
         </div>
       )}

@@ -585,10 +585,14 @@ export function EnhancedChatInput({
       )}
 
       {/* 输入区域 - Manus风格 */}
-      <div className={compact ? "py-md flex flex-col items-center" : "flex flex-col items-center"}>
+      <div
+        className={
+          compact ? "py-md flex flex-col items-center" : "py-md flex flex-col items-center"
+        }
+      >
         <div className="w-full md:max-w-[800px] lg:max-w-[1000px] px-md md:px-xl lg:px-2xl">
           <div
-            className={`flex flex-col gap-sm border border-border transition-shadow ${
+            className={`flex flex-col gap-sm border border-border transition-shadow min-w-0 ${
               compact
                 ? "bg-background-secondary rounded-xl px-md py-md"
                 : "bg-background-secondary rounded-2xl px-lg py-lg shadow-sm"
@@ -654,7 +658,7 @@ export function EnhancedChatInput({
             )}
 
             {/* 文本输入框 */}
-            <div className="flex-1 min-w-0">
+            <div className="flex-1 min-w-[200px]">
               <textarea
                 ref={textareaRef}
                 value={inputValue}
@@ -663,7 +667,7 @@ export function EnhancedChatInput({
                 disabled={disabled}
                 placeholder={placeholder}
                 rows={2}
-                className={`w-full resize-none border-none outline-none bg-transparent text-sm text-text-primary placeholder:text-text-tertiary disabled:opacity-50 disabled:cursor-not-allowed`}
+                className="w-full resize-none border-none outline-none bg-transparent text-sm text-text-primary placeholder:text-text-tertiary disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{ maxHeight: "200px", minHeight: "72px" }}
               />
             </div>

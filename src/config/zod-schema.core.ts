@@ -204,9 +204,10 @@ export const ModelCompatSchema = z
 export const ModelDefinitionSchema = z
   .object({
     id: z.string().min(1),
-    name: z.string().min(1),
+    name: z.string().min(1).optional(),
     api: ModelApiSchema.optional(),
     reasoning: z.boolean().optional(),
+    embedding: z.boolean().optional(),
     input: z.array(z.union([z.literal("text"), z.literal("image")])).optional(),
     cost: z
       .object({

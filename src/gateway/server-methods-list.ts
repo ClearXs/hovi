@@ -112,6 +112,11 @@ const BASE_METHODS = [
   "scenes.update",
   "scenes.delete",
   "scenes.setActive",
+  // ASR methods
+  "asr.config.get",
+  "asr.config.set",
+  "asr.status",
+  "asr.transcribe",
 ];
 
 export function listGatewayMethods(): string[] {

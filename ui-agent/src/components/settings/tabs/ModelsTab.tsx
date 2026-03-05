@@ -31,6 +31,13 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useToastStore } from "@/stores/toastStore";
 
@@ -44,6 +51,7 @@ interface ModelCatalogEntry {
   provider: string;
   contextWindow?: number;
   reasoning?: boolean;
+  embedding?: boolean;
 }
 
 interface ModelCost {
@@ -58,6 +66,7 @@ interface ModelDefinition {
   name?: string;
   api?: string;
   reasoning?: boolean;
+  embedding?: boolean;
   input?: string[];
   cost?: ModelCost;
   contextWindow?: number;
@@ -151,6 +160,11 @@ function ModelRow({ model }: { model: ModelDefinition }) {
         {model.reasoning && (
           <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded">
             reasoning
+          </span>
+        )}
+        {model.embedding && (
+          <span className="text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">
+            embedding
           </span>
         )}
       </div>
@@ -250,32 +264,34 @@ function AddProviderDialog({
 
           <div>
             <label className="text-xs text-text-secondary mb-1 block">API 类型</label>
-            <select
-              value={api}
-              onChange={(e) => setApi(e.target.value)}
-              className="h-8 w-full rounded-md border border-border-light bg-background px-2 text-xs"
-            >
-              {API_TYPES.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
+            <Select value={api} onValueChange={setApi}>
+              <SelectTrigger className="h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {API_TYPES.map((t) => (
+                  <SelectItem key={t.value} value={t.value}>
+                    {t.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           <div>
             <label className="text-xs text-text-secondary mb-1 block">认证方式</label>
-            <select
-              value={auth}
-              onChange={(e) => setAuth(e.target.value)}
-              className="h-8 w-full rounded-md border border-border-light bg-background px-2 text-xs"
-            >
-              {AUTH_MODES.map((m) => (
-                <option key={m.value} value={m.value}>
-                  {m.label}
-                </option>
-              ))}
-            </select>
+            <Select value={auth} onValueChange={setAuth}>
+              <SelectTrigger className="h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {AUTH_MODES.map((m) => (
+                  <SelectItem key={m.value} value={m.value}>
+                    {m.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {(auth === "api-key" || auth === "token") && (
@@ -394,6 +410,7 @@ function AddModelDialog({
   const [contextWindow, setContextWindow] = useState("");
   const [maxTokens, setMaxTokens] = useState("");
   const [reasoning, setReasoning] = useState(false);
+  const [embedding, setEmbedding] = useState(false);
 
   // 获取该提供商的可用模型（排除已添加的）
   const availableModels = useMemo(() => {
@@ -427,6 +444,7 @@ function AddModelDialog({
         contextWindow: contextWindow ? parseInt(contextWindow, 10) : undefined,
         maxTokens: maxTokens ? parseInt(maxTokens, 10) : undefined,
         reasoning: reasoning || undefined,
+        embedding: embedding || undefined,
       });
     }
 
@@ -437,6 +455,7 @@ function AddModelDialog({
     setContextWindow("");
     setMaxTokens("");
     setReasoning(false);
+    setEmbedding(false);
     setMode("select");
   };
 
@@ -479,20 +498,35 @@ function AddModelDialog({
                   该提供商没有可用模型，或已全部添加
                 </p>
               ) : (
-                <select
-                  value={selectedModel}
-                  onChange={(e) => setSelectedModel(e.target.value)}
-                  className="h-8 w-full rounded-md border border-border-light bg-background px-2 text-xs"
-                >
-                  <option value="">请选择模型...</option>
-                  {availableModels.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name || m.id}
-                      {m.contextWindow ? ` (${Math.round(m.contextWindow / 1000)}K)` : ""}
-                      {m.reasoning ? " 🧠" : ""}
-                    </option>
-                  ))}
-                </select>
+                <Select value={selectedModel} onValueChange={setSelectedModel}>
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue placeholder="请选择模型..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableModels.map((m) => (
+                      <SelectItem key={m.id} value={m.id}>
+                        <div className="flex items-center gap-2">
+                          <span>{m.name || m.id}</span>
+                          {m.contextWindow && (
+                            <span className="text-text-tertiary">
+                              ({Math.round(m.contextWindow / 1000)}K)
+                            </span>
+                          )}
+                          {m.reasoning && (
+                            <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded">
+                              reasoning
+                            </span>
+                          )}
+                          {m.embedding && (
+                            <span className="text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">
+                              embedding
+                            </span>
+                          )}
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               )}
             </div>
           ) : (
@@ -540,16 +574,26 @@ function AddModelDialog({
                 </div>
               </div>
 
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="reasoning"
-                  checked={reasoning}
-                  onChange={(e) => setReasoning(e.target.checked)}
-                  className="rounded border-border-light"
-                />
-                <label htmlFor="reasoning" className="text-xs text-text-secondary">
+              <div className="flex items-center gap-4">
+                <label className="flex items-center gap-2 text-xs text-text-secondary">
+                  <input
+                    type="checkbox"
+                    id="reasoning"
+                    checked={reasoning}
+                    onChange={(e) => setReasoning(e.target.checked)}
+                    className="rounded border-border-light"
+                  />
                   推理模型 (Reasoning)
+                </label>
+                <label className="flex items-center gap-2 text-xs text-text-secondary">
+                  <input
+                    type="checkbox"
+                    id="embedding"
+                    checked={embedding}
+                    onChange={(e) => setEmbedding(e.target.checked)}
+                    className="rounded border-border-light"
+                  />
+                  Embedding 模型
                 </label>
               </div>
             </>
@@ -561,6 +605,294 @@ function AddModelDialog({
             取消
           </Button>
           <Button size="sm" disabled={!canSubmit} onClick={handleSubmit}>
+            添加
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Quick Add Model Dialog (manual input + create provider)              */
+/* ------------------------------------------------------------------ */
+
+function QuickAddModelDialog({
+  open,
+  onOpenChange,
+  onAdd,
+  existingProviders,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onAdd: (
+    providerName: string,
+    model: ModelDefinition,
+    createProvider?: { baseUrl: string; api: string; auth: string },
+  ) => void;
+  existingProviders: string[];
+}) {
+  // 模型信息
+  const [modelId, setModelId] = useState("");
+  const [modelName, setModelName] = useState("");
+  const [contextWindow, setContextWindow] = useState("");
+  const [maxTokens, setMaxTokens] = useState("");
+  const [isReasoning, setIsReasoning] = useState(false);
+  const [isEmbedding, setIsEmbedding] = useState(false);
+
+  // 提供商信息
+  const [selectedProvider, setSelectedProvider] = useState<string>("");
+  const [isNewProvider, setIsNewProvider] = useState(false);
+  const [newProviderName, setNewProviderName] = useState("");
+  const [newProviderBaseUrl, setNewProviderBaseUrl] = useState("");
+  const [newProviderApi, setNewProviderApi] = useState("openai-completions");
+  const [newProviderAuth, setNewProviderAuth] = useState("api-key");
+
+  const canSubmit =
+    modelId.trim() &&
+    (selectedProvider || (isNewProvider && newProviderName.trim() && newProviderBaseUrl.trim()));
+
+  const handleSubmit = () => {
+    if (!canSubmit) return;
+
+    const model: ModelDefinition = {
+      id: modelId.trim(),
+      name: modelName.trim() || undefined,
+      contextWindow: contextWindow ? parseInt(contextWindow, 10) : undefined,
+      maxTokens: maxTokens ? parseInt(maxTokens, 10) : undefined,
+      reasoning: isReasoning || undefined,
+      embedding: isEmbedding || undefined,
+    };
+
+    if (isNewProvider) {
+      onAdd(newProviderName.toLowerCase().trim(), model, {
+        baseUrl: newProviderBaseUrl.trim(),
+        api: newProviderApi,
+        auth: newProviderAuth,
+      });
+    } else {
+      onAdd(selectedProvider, model);
+    }
+
+    // Reset
+    setModelId("");
+    setModelName("");
+    setContextWindow("");
+    setMaxTokens("");
+    setIsReasoning(false);
+    setIsEmbedding(false);
+    setSelectedProvider("");
+    setIsNewProvider(false);
+    setNewProviderName("");
+    setNewProviderBaseUrl("");
+  };
+
+  // 当对话框关闭时重置状态
+  useEffect(() => {
+    if (!open) {
+      setModelId("");
+      setModelName("");
+      setContextWindow("");
+      setMaxTokens("");
+      setIsReasoning(false);
+      setIsEmbedding(false);
+      setSelectedProvider("");
+      setIsNewProvider(false);
+      setNewProviderName("");
+      setNewProviderBaseUrl("");
+    }
+  }, [open]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-[36rem] max-h-[80vh] overflow-hidden flex flex-col">
+        <DialogHeader>
+          <DialogTitle>快速添加模型</DialogTitle>
+          <DialogDescription>手动输入模型信息并添加到提供商。</DialogDescription>
+        </DialogHeader>
+
+        <div className="flex-1 overflow-y-auto space-y-4">
+          {/* 模型信息 */}
+          <div className="space-y-3 p-3 bg-surface-subtle rounded-md">
+            <div>
+              <label className="text-xs text-text-secondary mb-1 block">
+                模型 ID <span className="text-error">*</span>
+              </label>
+              <Input
+                value={modelId}
+                onChange={(e) => setModelId(e.target.value)}
+                placeholder="gpt-4o, claude-3-opus, custom-model"
+                className="h-8 text-xs font-mono"
+              />
+            </div>
+
+            <div>
+              <label className="text-xs text-text-secondary mb-1 block">模型名称</label>
+              <Input
+                value={modelName}
+                onChange={(e) => setModelName(e.target.value)}
+                placeholder="可选"
+                className="h-8 text-xs"
+              />
+            </div>
+
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <label className="text-xs text-text-secondary mb-1 block">上下文窗口</label>
+                <Input
+                  value={contextWindow}
+                  onChange={(e) => setContextWindow(e.target.value.replace(/\D/g, ""))}
+                  placeholder="如: 128000"
+                  className="h-8 text-xs"
+                />
+              </div>
+              <div className="flex-1">
+                <label className="text-xs text-text-secondary mb-1 block">最大输出</label>
+                <Input
+                  value={maxTokens}
+                  onChange={(e) => setMaxTokens(e.target.value.replace(/\D/g, ""))}
+                  placeholder="如: 4096"
+                  className="h-8 text-xs"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-4">
+              <label className="flex items-center gap-2 text-xs text-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={isReasoning}
+                  onChange={(e) => setIsReasoning(e.target.checked)}
+                  className="rounded border-border-light"
+                />
+                推理模型 (Reasoning)
+              </label>
+              <label className="flex items-center gap-2 text-xs text-text-secondary">
+                <input
+                  type="checkbox"
+                  checked={isEmbedding}
+                  onChange={(e) => setIsEmbedding(e.target.checked)}
+                  className="rounded border-border-light"
+                />
+                Embedding 模型
+              </label>
+            </div>
+          </div>
+
+          {/* 提供商选择 */}
+          <div>
+            <label className="text-xs text-text-secondary mb-1 block">
+              添加到提供商 <span className="text-error">*</span>
+            </label>
+
+            {existingProviders.length > 0 && !isNewProvider && (
+              <div className="space-y-2">
+                <Select value={selectedProvider} onValueChange={setSelectedProvider}>
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue placeholder="选择已有提供商..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {existingProviders.map((p) => (
+                      <SelectItem key={p} value={p}>
+                        {p}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="h-6 text-xs text-primary"
+                  onClick={() => setIsNewProvider(true)}
+                >
+                  <Plus className="w-3 h-3 mr-1" />
+                  新建提供商
+                </Button>
+              </div>
+            )}
+
+            {isNewProvider && (
+              <div className="space-y-3 p-3 bg-surface-subtle rounded-md">
+                <div>
+                  <label className="text-xs text-text-secondary mb-1 block">提供商名称</label>
+                  <Input
+                    value={newProviderName}
+                    onChange={(e) => setNewProviderName(e.target.value)}
+                    placeholder="my-provider"
+                    className="h-8 text-xs"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs text-text-secondary mb-1 block">Base URL</label>
+                  <Input
+                    value={newProviderBaseUrl}
+                    onChange={(e) => setNewProviderBaseUrl(e.target.value)}
+                    placeholder="https://api.example.com/v1"
+                    className="h-8 text-xs font-mono"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <div className="flex-1">
+                    <label className="text-xs text-text-secondary mb-1 block">API 类型</label>
+                    <Select value={newProviderApi} onValueChange={setNewProviderApi}>
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {API_TYPES.map((t) => (
+                          <SelectItem key={t.value} value={t.value}>
+                            {t.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="flex-1">
+                    <label className="text-xs text-text-secondary mb-1 block">认证方式</label>
+                    <Select value={newProviderAuth} onValueChange={setNewProviderAuth}>
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {AUTH_MODES.map((m) => (
+                          <SelectItem key={m.value} value={m.value}>
+                            {m.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="h-6 text-xs text-text-tertiary"
+                  onClick={() => setIsNewProvider(false)}
+                >
+                  返回选择已有提供商
+                </Button>
+              </div>
+            )}
+
+            {existingProviders.length === 0 && !isNewProvider && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 text-xs w-full"
+                onClick={() => setIsNewProvider(true)}
+              >
+                <Plus className="w-3 h-3 mr-1" />
+                新建提供商
+              </Button>
+            )}
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={() => onOpenChange(false)}>
+            取消
+          </Button>
+          <Button size="sm" onClick={handleSubmit} disabled={!canSubmit}>
             添加
           </Button>
         </DialogFooter>
@@ -745,6 +1077,11 @@ function ProviderCard({
                             reasoning
                           </span>
                         )}
+                        {model.embedding && (
+                          <span className="text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded">
+                            embedding
+                          </span>
+                        )}
                         {isDefault && (
                           <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded flex items-center gap-1">
                             <Check className="w-2.5 h-2.5" /> 主模型
@@ -844,6 +1181,7 @@ export function ModelsTab({ onClose }: { onClose?: () => void }) {
   const [addProviderOpen, setAddProviderOpen] = useState(false);
   const [addModelOpen, setAddModelOpen] = useState(false);
   const [addModelProvider, setAddModelProvider] = useState<string | null>(null);
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [removeTarget, setRemoveTarget] = useState<string | null>(null);
   const [isRemoving, setIsRemoving] = useState(false);
   const [search, setSearch] = useState("");
@@ -1071,6 +1409,47 @@ export function ModelsTab({ onClose }: { onClose?: () => void }) {
     [providers, patchProvider, addToast],
   );
 
+  // 快速添加模型（支持创建新提供商）
+  const handleQuickAddModel = useCallback(
+    async (
+      providerName: string,
+      model: ModelDefinition,
+      newProviderConfig?: { baseUrl: string; api: string; auth: string },
+    ) => {
+      // 如果需要创建新提供商
+      if (newProviderConfig) {
+        const payload: Record<string, unknown> = {
+          baseUrl: newProviderConfig.baseUrl,
+          api: newProviderConfig.api,
+          auth: newProviderConfig.auth,
+          models: [model],
+        };
+        const ok = await patchProvider(providerName, payload);
+        if (ok) {
+          setProviders((prev) => ({
+            ...prev,
+            [providerName]: {
+              baseUrl: newProviderConfig.baseUrl,
+              api: newProviderConfig.api,
+              auth: newProviderConfig.auth,
+              models: [model],
+            },
+          }));
+          setQuickAddOpen(false);
+          addToast({
+            title: "已添加",
+            description: `模型 ${model.id} 已添加到新提供商 ${providerName}`,
+          });
+        }
+      } else {
+        // 已有提供商，直接添加模型
+        await handleAddModel(providerName, model);
+        setQuickAddOpen(false);
+      }
+    },
+    [handleAddModel, patchProvider, addToast],
+  );
+
   const handleRemoveProvider = useCallback(
     async (providerName: string) => {
       setIsRemoving(true);
@@ -1183,9 +1562,20 @@ export function ModelsTab({ onClose }: { onClose?: () => void }) {
       )}
 
       <section>
-        <h4 className="text-xs font-semibold text-text-tertiary uppercase tracking-wider mb-3">
-          模型目录
-        </h4>
+        <div className="flex items-center justify-between mb-3">
+          <h4 className="text-xs font-semibold text-text-tertiary uppercase tracking-wider">
+            模型目录
+          </h4>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+            onClick={() => setQuickAddOpen(true)}
+          >
+            <Plus className="w-3 h-3 mr-1" />
+            快速添加
+          </Button>
+        </div>
         {grouped.size === 0 ? (
           <div className="text-center py-8 text-sm text-text-tertiary">
             {search ? "没有找到匹配的模型" : "暂无可用模型"}
@@ -1212,6 +1602,11 @@ export function ModelsTab({ onClose }: { onClose?: () => void }) {
                         {model.reasoning && (
                           <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded flex-shrink-0">
                             reasoning
+                          </span>
+                        )}
+                        {model.embedding && (
+                          <span className="text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded flex-shrink-0">
+                            embedding
                           </span>
                         )}
                       </div>
@@ -1264,6 +1659,15 @@ export function ModelsTab({ onClose }: { onClose?: () => void }) {
         existingModelIds={
           addModelProvider ? providers[addModelProvider]?.models.map((m) => m.id) || [] : []
         }
+      />
+
+      <QuickAddModelDialog
+        open={quickAddOpen}
+        onOpenChange={setQuickAddOpen}
+        onAdd={(providerName, model, newProviderConfig) => {
+          void handleQuickAddModel(providerName, model, newProviderConfig);
+        }}
+        existingProviders={Object.keys(providers)}
       />
 
       {removeTarget && (

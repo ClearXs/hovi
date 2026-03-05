@@ -50,7 +50,7 @@ export function ToolCallList({ toolCalls, className = "" }: ToolCallListProps) {
           </div>
 
           {/* 操作描述 */}
-          <div className="text-xs text-text-primary leading-relaxed">{call.action}</div>
+          <div className="text-xs text-text-primary leading-relaxed break-all">{call.action}</div>
 
           {/* URL - 如果有的话 */}
           {call.url && (

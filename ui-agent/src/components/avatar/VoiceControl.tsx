@@ -19,6 +19,8 @@ export function VoiceControl({
   onRecordingEnd,
   onTestSpeak,
 }: VoiceControlProps) {
+  const [hasPermission, setHasPermission] = useState<boolean | null>(null);
+
   console.log(
     "[VoiceControl] Render, isRecording:",
     isRecording,
@@ -27,8 +29,6 @@ export function VoiceControl({
     "hasPermission:",
     hasPermission,
   );
-
-  const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 

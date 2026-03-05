@@ -162,7 +162,7 @@ export function ExecutionDetails({ execution }: ExecutionDetailsProps) {
                         >
                           <div className="font-mono text-sm text-purple-800">{tool.name}</div>
                           {tool.arguments && (
-                            <pre className="mt-2 text-xs text-purple-600 overflow-x-auto">
+                            <pre className="mt-2 text-xs text-purple-600 overflow-x-auto whitespace-pre-wrap break-all">
                               {JSON.stringify(tool.arguments, null, 2)}
                             </pre>
                           )}
@@ -197,7 +197,7 @@ export function ExecutionDetails({ execution }: ExecutionDetailsProps) {
                   <div className="mt-3">
                     <div className="text-xs font-medium text-blue-700 mb-2">生成的代码</div>
                     <div className="bg-gray-900 rounded-md overflow-hidden">
-                      <pre className="p-3 text-xs text-gray-100 overflow-x-auto max-h-64">
+                      <pre className="p-3 text-xs text-gray-100 overflow-x-auto whitespace-pre-wrap break-all max-h-64">
                         <code>{step.code_written}</code>
                       </pre>
                     </div>

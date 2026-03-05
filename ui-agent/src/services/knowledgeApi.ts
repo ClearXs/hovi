@@ -496,6 +496,21 @@ export async function updateKnowledgeMetadata(params: {
   });
 }
 
+export async function updateKnowledgeDocumentContent(params: {
+  kbId: string;
+  documentId: string;
+  content: string;
+}): Promise<{ success: boolean; updatedAt: string }> {
+  return callKnowledgeWs<{ success: boolean; updatedAt: string }>(
+    "knowledge.documentContentUpdate",
+    {
+      kbId: params.kbId,
+      documentId: params.documentId,
+      content: params.content,
+    },
+  );
+}
+
 export async function uploadKnowledgeWithProgress(
   params: {
     kbId: string;
@@ -680,4 +695,20 @@ export async function getKnowledgeGraphData(params: {
   limit?: number;
 }): Promise<KnowledgeGraphData> {
   return callKnowledgeWs("knowledge.graph.data", params);
+}
+
+/**
+ * Rebuild document: re-vectorize and re-build graph
+ */
+export type RebuildDocumentResult = {
+  success: boolean;
+  vectorized: boolean;
+  graphBuilt: boolean;
+};
+
+export async function rebuildKnowledgeDocument(params: {
+  kbId: string;
+  documentId: string;
+}): Promise<RebuildDocumentResult> {
+  return callKnowledgeWs<RebuildDocumentResult>("knowledge.rebuild", params);
 }

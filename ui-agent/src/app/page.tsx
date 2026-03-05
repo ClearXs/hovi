@@ -27,6 +27,7 @@ import { StreamingReplayProvider, useStreamingReplay } from "@/contexts/Streamin
 import { fetchAgents } from "@/features/persona/services/personaApi";
 import type { AgentInfo } from "@/features/persona/types/persona";
 import { isPageIndexSupported } from "@/services/pageindexApi";
+import { useAvatarStateStore } from "@/stores/avatarStateStore";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSessionDocumentStore } from "@/stores/sessionDocumentStore";
 import { useSessionStore } from "@/stores/sessionStore";
@@ -730,6 +731,32 @@ function HomeContent() {
       const toolCallId =
         typeof data.data?.toolCallId === "string" ? data.data.toolCallId : undefined;
       const toolName = typeof data.data?.name === "string" ? data.data.name : undefined;
+
+      // 处理 avatar 状态工具事件
+      if (toolName === "set_avatar_state") {
+        const resultData = data.data?.result as
+          | {
+              details?: {
+                type?: string;
+                state?: "idle" | "emote";
+                emoteId?: string | null;
+                expression?: string;
+              };
+            }
+          | undefined;
+
+        if (resultData?.details?.type === "avatar_state") {
+          const avatarState = {
+            type: "avatar_state" as const,
+            state: resultData.details.state || "idle",
+            emoteId: resultData.details.emoteId || null,
+            expression: resultData.details.expression || "neutral",
+          };
+          console.log("[Page] Setting avatar state from tool:", avatarState);
+          useAvatarStateStore.getState().setAvatarState(avatarState);
+        }
+      }
+
       const toolKey = resolveGroupKey(sessionKey, runId);
       const toolCallKey = toolCallId ? `${toolKey}:${toolCallId}` : undefined;
       const durationMs =

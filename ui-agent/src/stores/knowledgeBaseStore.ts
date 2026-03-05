@@ -29,6 +29,7 @@ import {
   uploadKnowledge,
   getKnowledgeSettings,
   updateKnowledgeSettings,
+  rebuildKnowledgeDocument,
 } from "@/services/knowledgeApi";
 
 interface KnowledgeFilters {
@@ -82,6 +83,8 @@ interface KnowledgeBaseState {
   searchQuery: string;
   targetChunkId: string | null;
   searchHighlightKeywords: string[];
+  isRebuilding: boolean;
+  rebuildProgress: { vectorized: boolean; graphBuilt: boolean } | null;
 
   loadKbList: (params?: {
     offset?: number;
@@ -145,6 +148,7 @@ interface KnowledgeBaseState {
     tags?: string[];
   }) => Promise<void>;
   deleteDocument: (id: string) => Promise<void>;
+  rebuildDocument: (documentId: string) => Promise<void>;
 }
 
 export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
@@ -194,6 +198,8 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   searchQuery: "",
   targetChunkId: null,
   searchHighlightKeywords: [],
+  isRebuilding: false,
+  rebuildProgress: null,
 
   loadKbList: async (params) => {
     const { kbLimit } = get();
@@ -592,6 +598,25 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
       }
     } finally {
       set({ isDeleting: false });
+    }
+  },
+
+  rebuildDocument: async (documentId) => {
+    const kbId = get().activeKbId;
+    if (!kbId) {
+      throw new Error("请先选择知识库");
+    }
+    set({ isRebuilding: true, rebuildProgress: null });
+    try {
+      const result = await rebuildKnowledgeDocument({ kbId, documentId });
+      set({
+        rebuildProgress: {
+          vectorized: result.vectorized,
+          graphBuilt: result.graphBuilt,
+        },
+      });
+    } finally {
+      set({ isRebuilding: false });
     }
   },
 }));

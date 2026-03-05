@@ -1,6 +1,7 @@
 "use client";
 
-import { ChevronLeft, FileText, Network, Pencil, Search, Settings2 } from "lucide-react";
+import { ChevronLeft, FileText, Network, Pencil, RefreshCw, Search, Settings2 } from "lucide-react";
+import { Loader2, Check, X } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { KnowledgeDocumentsTab } from "@/components/knowledge/tabs/KnowledgeDocumentsTab";
 import { KnowledgeGraphTab } from "@/components/knowledge/tabs/KnowledgeGraphTab";
@@ -30,6 +31,9 @@ export function KnowledgeDetail({ activeDocumentId, onBack }: KnowledgeDetailPro
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const selectDocument = useKnowledgeBaseStore((state) => state.selectDocument);
   const updateDocumentMetadata = useKnowledgeBaseStore((state) => state.updateDocumentMetadata);
+  const rebuildDocument = useKnowledgeBaseStore((state) => state.rebuildDocument);
+  const isRebuilding = useKnowledgeBaseStore((state) => state.isRebuilding);
+  const rebuildProgress = useKnowledgeBaseStore((state) => state.rebuildProgress);
   const kbDetail = useKnowledgeBaseStore((state) => state.kbDetail);
   const currentDocument = useKnowledgeBaseStore((state) => state.detail);
   const isDocumentDetail = tab === "documents" && documentsMode === "detail";
@@ -136,20 +140,77 @@ export function KnowledgeDetail({ activeDocumentId, onBack }: KnowledgeDetailPro
             </div>
           </div>
           {isDocumentDetail && (
-            <button
-              type="button"
-              className="mt-0.5 text-text-tertiary transition-colors hover:text-text-primary"
-              aria-label="编辑文档信息"
-              title="编辑文档信息"
-              onClick={() => {
-                setEditFilename(currentDocument?.filename ?? "");
-                setEditDescription(currentDocument?.description ?? "");
-                setEditError(null);
-                setEditOpen(true);
-              }}
-            >
-              <Pencil className="h-4 w-4" />
-            </button>
+            <div className="flex items-center gap-xs">
+              {/* Rebuild button with tooltip */}
+              <div className="relative group">
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 text-text-tertiary transition-colors hover:text-text-primary disabled:opacity-50 text-xs"
+                  aria-label="重建文档"
+                  disabled={isRebuilding}
+                  onClick={() => {
+                    if (currentDocument?.id) {
+                      void rebuildDocument(currentDocument.id);
+                    }
+                  }}
+                >
+                  {isRebuilding ? (
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-3 w-3" />
+                  )}
+                  重建
+                </button>
+                {/* Tooltip - show only when rebuilding */}
+                <div
+                  className={cn(
+                    "absolute right-0 top-full mt-1 w-32 rounded-md border border-border-light bg-background-secondary p-2 text-xs shadow-md z-50 transition-all",
+                    isRebuilding ? "opacity-100 visible" : "opacity-0 invisible",
+                  )}
+                >
+                  <div className="font-medium mb-1">重建进度</div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-text-secondary">向量化</span>
+                    {isRebuilding ? (
+                      <Loader2 className="h-3 w-3 animate-spin text-text-tertiary" />
+                    ) : rebuildProgress?.vectorized ? (
+                      <Check className="h-3 w-3 text-green-500" />
+                    ) : rebuildProgress !== null ? (
+                      <X className="h-3 w-3 text-text-tertiary" />
+                    ) : (
+                      <span className="text-text-tertiary">-</span>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-between gap-2 mt-1">
+                    <span className="text-text-secondary">图谱化</span>
+                    {isRebuilding ? (
+                      <Loader2 className="h-3 w-3 animate-spin text-text-tertiary" />
+                    ) : rebuildProgress?.graphBuilt ? (
+                      <Check className="h-3 w-3 text-green-500" />
+                    ) : rebuildProgress !== null ? (
+                      <X className="h-3 w-3 text-text-tertiary" />
+                    ) : (
+                      <span className="text-text-tertiary">-</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+              {/* Edit button */}
+              <button
+                type="button"
+                className="text-text-tertiary transition-colors hover:text-text-primary"
+                aria-label="编辑文档信息"
+                title="编辑文档信息"
+                onClick={() => {
+                  setEditFilename(currentDocument?.filename ?? "");
+                  setEditDescription(currentDocument?.description ?? "");
+                  setEditError(null);
+                  setEditOpen(true);
+                }}
+              >
+                <Pencil className="h-4 w-4" />
+              </button>
+            </div>
           )}
         </div>
         {!isDocumentDetail && (

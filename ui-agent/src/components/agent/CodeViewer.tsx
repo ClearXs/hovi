@@ -47,7 +47,7 @@ const CodeViewer = ({ filename, code, language = "python" }: CodeViewerProps) =>
         </button>
       </div>
       <div className="overflow-auto max-h-96 scrollbar-thin">
-        <pre className="p-4 text-sm font-mono text-green-400">
+        <pre className="p-4 text-sm font-mono text-green-400 whitespace-pre-wrap break-all">
           <code>{code}</code>
         </pre>
       </div>

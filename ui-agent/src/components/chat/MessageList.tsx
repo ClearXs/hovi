@@ -111,7 +111,7 @@ export function MessageList({
       ref={containerRef}
       className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-border-light scrollbar-track-transparent px-md md:px-xl lg:px-2xl py-lg flex flex-col items-center"
     >
-      <div className="w-full md:max-w-[800px] lg:max-w-[1000px]">
+      <div className="w-full min-w-[300px] md:max-w-[800px] lg:max-w-[1000px]">
         {messages.length === 0 && !isLoading && emptyState && (
           <div className="flex flex-col items-center justify-center gap-sm py-2xl text-center text-text-tertiary">
             <div className="text-sm text-text-secondary">{emptyState.title}</div>

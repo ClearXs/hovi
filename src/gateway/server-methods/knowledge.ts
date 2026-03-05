@@ -655,6 +655,49 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
     }
   },
 
+  // 文档内容更新
+  "knowledge.documentContentUpdate": async ({ params, respond }) => {
+    try {
+      const agentId = resolveAgentId(params, {});
+      const manager = getKnowledgeManager(agentId);
+
+      if (!manager.isEnabled(agentId)) {
+        respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, "知识库功能未启用"));
+        return;
+      }
+
+      const p = params as { documentId: string; kbId?: string; content: string };
+      if (!p.documentId) {
+        respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "缺少 documentId 参数"));
+        return;
+      }
+      if (!p.kbId) {
+        respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "缺少 kbId 参数"));
+        return;
+      }
+      if (typeof p.content !== "string") {
+        respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "缺少 content 参数"));
+        return;
+      }
+
+      const result = await manager.updateDocumentContent({
+        documentId: p.documentId,
+        agentId,
+        kbId: p.kbId,
+        content: p.content,
+      });
+
+      respond(true, result);
+    } catch (err) {
+      log.error(`knowledge.documentContentUpdate failed: ${String(err)}`);
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INTERNAL_ERROR, `文档内容更新失败: ${String(err)}`),
+      );
+    }
+  },
+
   // 分块列表
   "knowledge.chunks": async ({ params, respond }) => {
     try {
@@ -1239,6 +1282,38 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
         false,
         undefined,
         errorShape(ErrorCodes.INTERNAL_ERROR, `获取图谱数据失败: ${String(err)}`),
+      );
+    }
+  },
+
+  /**
+   * Rebuild document: re-vectorize and re-build graph
+   */
+  "knowledge.rebuild": async ({ params, respond, agentId }) => {
+    try {
+      const kbId = readStringParam(params, "kbId", { required: true });
+      const documentId = readStringParam(params, "documentId", { required: true });
+
+      const manager = getKnowledgeManager(agentId);
+
+      if (!manager.isEnabled(agentId)) {
+        respond(false, undefined, errorShape(ErrorCodes.KB_NOT_ENABLED, "知识库未启用"));
+        return;
+      }
+
+      const result = await manager.rebuildDocument({
+        agentId,
+        kbId,
+        documentId,
+      });
+
+      respond(true, result);
+    } catch (err) {
+      log.error(`knowledge.rebuild failed: ${String(err)}`);
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INTERNAL_ERROR, `重建文档失败: ${String(err)}`),
       );
     }
   },
