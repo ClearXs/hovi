@@ -1,6 +1,6 @@
 // ASR types for voice recognition
 
-export type AsrProvider = "local" | "deepgram" | "openai" | "groq";
+export type AsrProvider = "sherpa-onnx" | "deepgram" | "openai" | "groq";
 
 export type AsrModelSize = "tiny" | "base" | "small" | "medium" | "large";
 
@@ -14,7 +14,7 @@ export interface AsrConfig {
   realTimeSubtitle?: boolean;
   cloudFallback?: boolean;
   cloudApiKey?: string;
-  cloudProvider?: Exclude<AsrProvider, "local">;
+  cloudProvider?: Exclude<AsrProvider, "sherpa-onnx">;
 }
 
 export interface TranscriptionResult {

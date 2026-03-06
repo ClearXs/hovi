@@ -19,11 +19,13 @@ function VRMModel({
   motionUrl,
   avatarControllerRef,
   onVrmLoad,
+  onProgress,
 }: {
   url: string | null;
   motionUrl: string | null;
   avatarControllerRef: React.MutableRefObject<AvatarController | null>;
   onVrmLoad?: (vrm: VRM, controller: AvatarController) => void;
+  onProgress?: (loaded: number, total: number) => void;
 }) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { scene, camera } = useThree() as any;
@@ -38,7 +40,6 @@ function VRMModel({
       return;
     }
     currentMotionUrlRef.current = _motionUrl;
-    console.log("[VrmViewer] Loading motion from:", _motionUrl);
     try {
       // 根据文件扩展名选择加载器
       const fileExtension = _motionUrl.split(".").pop()?.toLowerCase();
@@ -99,7 +100,6 @@ function VRMModel({
         const action = mixerRef.current.clipAction(animationToPlay[0]);
         action.play();
       }
-      console.log("[VrmViewer] Motion loaded successfully");
     } catch (error) {
       console.error("[VrmViewer] Failed to load motion:", error);
     }
@@ -107,15 +107,19 @@ function VRMModel({
 
   useEffect(() => {
     if (!url) {
-      console.log("[VrmViewer] No URL provided");
       return;
     }
-
-    console.log("[VrmViewer] Loading VRM from:", url);
 
     const loader = new GLTFLoader();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     loader.register((parser: any) => new VRMLoaderPlugin(parser));
+
+    // 添加错误处理
+    const loaderErrorHandler = (error: Error) => {
+      console.error("[VrmViewer] Failed to load VRM:", error);
+      console.error("[VrmViewer] URL:", url);
+      console.error("[VrmViewer] Error message:", error.message);
+    };
 
     loader.load(
       url,
@@ -157,7 +161,9 @@ function VRMModel({
       },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (progress: any) => {
-        // Loading progress
+        if (progress.total > 0 && onProgress) {
+          onProgress(progress.loaded, progress.total);
+        }
       },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (error: any) => {
@@ -231,6 +237,8 @@ export interface VrmViewerProps {
   /** Avatar state from tool events */
   avatarState?: AvatarStatePayload | null;
   onVrmLoad?: (vrm: VRM, controller: AvatarController) => void;
+  /** Loading progress callback */
+  onProgress?: (loaded: number, total: number) => void;
 }
 
 export interface VrmViewerRef {
@@ -238,7 +246,7 @@ export interface VrmViewerRef {
 }
 
 export const VrmViewer = forwardRef<VrmViewerRef, VrmViewerProps>(
-  ({ modelUrl, motionUrl = null, motionConfig, avatarState, onVrmLoad }, ref) => {
+  ({ modelUrl, motionUrl = null, motionConfig, avatarState, onVrmLoad, onProgress }, ref) => {
     const avatarControllerRef = useRef<AvatarController | null>(null);
     const prevAvatarStateRef = useRef<AvatarStatePayload | null>(null);
     const isMountedRef = useRef(true);
@@ -277,7 +285,6 @@ export const VrmViewer = forwardRef<VrmViewerRef, VrmViewerProps>(
         // 预加载所有动作到内存
         avatarControllerRef.current.preloadAllMotions().then(() => {
           if (!isMountedRef.current) return;
-          console.log("[VrmViewer] All motions preloaded, starting idle animation");
           // 预加载完成后播放 idle 动作
           avatarControllerRef.current?.playIdleMotion();
         });
@@ -295,7 +302,6 @@ export const VrmViewer = forwardRef<VrmViewerRef, VrmViewerProps>(
       }
 
       if (avatarState) {
-        console.log("[VrmViewer] Applying avatar state:", avatarState);
         prevAvatarStateRef.current = avatarState;
 
         // 调用 AvatarController 设置状态
@@ -329,6 +335,7 @@ export const VrmViewer = forwardRef<VrmViewerRef, VrmViewerProps>(
             motionUrl={motionUrl}
             avatarControllerRef={avatarControllerRef}
             onVrmLoad={onVrmLoad}
+            onProgress={onProgress}
           />
         </Canvas>
       </div>

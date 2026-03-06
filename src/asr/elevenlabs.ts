@@ -1,8 +1,8 @@
 // ElevenLabs voice cloning API
 
-import { log } from "../logging.js";
+import { getLogger } from "../logging.js";
 
-const logger = log("asr:elevenlabs");
+const logger = getLogger("asr:elevenlabs");
 
 export interface VoiceCloneResult {
   voiceId: string;

@@ -178,7 +178,11 @@ export function KnowledgeSettingsTab() {
     let defaultProvider = "";
 
     if (configResult.status === "fulfilled") {
-      let parsed: ParsedConfig | null = configResult.value?.parsed ?? null;
+      // Use config first (has original values), fallback to parsed (may be redacted)
+      let parsed: ParsedConfig | null =
+        (configResult.value as { config?: ParsedConfig })?.config ??
+        configResult.value?.parsed ??
+        null;
       if (!parsed && configResult.value?.raw) {
         try {
           parsed = JSON.parse(configResult.value.raw) as ParsedConfig;
@@ -791,16 +795,25 @@ export function KnowledgeSettingsTab() {
             onClick={async () => {
               setSettingsError(null);
               try {
-                // 保存图谱设置（后端会自动同时更新 base 和 agent 级别）
-                await updateSettings({
-                  kbId: activeKbId ?? undefined,
-                  graph: {
-                    enabled: baseGraphEnabled,
-                    extractor: graphExtractor,
-                    provider: graphProvider,
-                    model: graphModel,
-                  },
-                });
+                // 保存图谱设置 - 同时更新 base 和 agent 级别
+                await Promise.all([
+                  updateSettings({
+                    kbId: activeKbId ?? undefined,
+                    graph: {
+                      enabled: baseGraphEnabled,
+                      extractor: graphExtractor,
+                      provider: graphProvider,
+                      model: graphModel,
+                    },
+                  }),
+                  updateBaseSettings({
+                    settings: {
+                      graph: {
+                        enabled: baseGraphEnabled,
+                      },
+                    },
+                  }),
+                ]);
                 setGraphDirty(false);
                 addToast({ title: "图谱化设置已保存", variant: "success" });
               } catch (error) {

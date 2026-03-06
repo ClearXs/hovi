@@ -41,7 +41,7 @@ function getKnowledgeManager(agentId: string): KnowledgeManager {
   const cfg = loadConfig();
   const db = getDatabase(agentId);
   const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
-  return new KnowledgeManager({ cfg, db, baseDir: workspaceDir });
+  return new KnowledgeManager({ cfg, db, baseDir: workspaceDir, agentId });
 }
 
 // 类型定义
@@ -121,13 +121,17 @@ interface KnowledgeSearchParams {
 // 辅助函数：解析 agentId
 function resolveAgentId(params: Record<string, unknown>, _context: { req?: unknown }): string {
   // 首先尝试从 params 获取
-  if (params.agentId && typeof params.agentId === "string") {
-    return params.agentId;
+  if (params.agentId && typeof params.agentId === "string" && params.agentId.trim()) {
+    return params.agentId.trim();
   }
   // 然后尝试从 header 获取（WebSocket 场景）
   // 最后使用默认 agentId
   const cfg = loadConfig();
-  return resolveDefaultAgentId(cfg);
+  const defaultId = resolveDefaultAgentId(cfg);
+  if (!defaultId) {
+    throw new Error("无法解析 agentId");
+  }
+  return defaultId;
 }
 
 // 辅助函数：解析知识库列表参数
@@ -466,8 +470,15 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
   // 文档上传 (base64 content)
   "knowledge.upload": async ({ params, respond }) => {
     try {
+      log.info(
+        `knowledge.upload received params: ${JSON.stringify({ ...params, content: params.content?.substring(0, 50) })}`,
+      );
+
       const agentId = resolveAgentId(params, {});
+      log.info(`knowledge.upload agentId: ${agentId}`);
+
       const manager = getKnowledgeManager(agentId);
+      log.info(`knowledge.upload manager created`);
 
       if (!manager.isEnabled(agentId)) {
         respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, "知识库功能未启用"));
@@ -482,6 +493,10 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
         description?: string;
         tags?: string[];
       };
+
+      log.info(
+        `knowledge.upload parsed params: kbId=${p.kbId}, filename=${p.filename}, mimeType=${p.mimeType}, contentLen=${p.content?.length}`,
+      );
 
       if (!p.kbId) {
         respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "缺少 kbId 参数"));
@@ -505,8 +520,9 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
         return;
       }
 
-      // Determine mimetype
-      const mimeType = p.mimeType || "application/octet-stream";
+      // Determine mimetype (ensure it's never undefined)
+      const mimeType =
+        p.mimeType && p.mimeType.trim() ? p.mimeType.trim() : "application/octet-stream";
 
       // Upload through manager
       const result = await manager.uploadDocument({
@@ -514,7 +530,7 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
         kbId: p.kbId,
         buffer: fileBuffer,
         filename: p.filename,
-        mimeType,
+        mimetype: mimeType,
         description: p.description,
         tags: p.tags,
         sourceType: "web_api",
@@ -527,11 +543,12 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
         indexed: result.indexed,
       });
     } catch (err) {
-      log.error(`knowledge.upload failed: ${String(err)}`);
+      const error = err as Error;
+      log.error(`knowledge.upload failed: ${error.message}, stack: ${error.stack}`);
       respond(
         false,
         undefined,
-        errorShape(ErrorCodes.INTERNAL_ERROR, `文档上传失败: ${String(err)}`),
+        errorShape(ErrorCodes.INTERNAL_ERROR, `文档上传失败: ${error.message}`),
       );
     }
   },
@@ -1000,23 +1017,43 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
         return;
       }
 
+      log.info(
+        `knowledge.settings.update received: ${JSON.stringify({ agentId, kbId: p.kbId, settings: p.settings })}`,
+      );
+
       // If kbId is provided, update both base-level and agent-level settings
       if (p.kbId) {
         const settings = p.settings;
-        // Extract graph.enabled if present for base settings
-        const baseGraphSettings = settings.graph
-          ? { graph: { enabled: (settings.graph as { enabled?: boolean }).enabled } }
-          : {};
-        // Update base settings if graph.enabled is present
-        if (Object.keys(baseGraphSettings).length > 0) {
+
+        // Extract base-level settings (graph.enabled and vectorization.enabled)
+        const baseSettingsPart: Record<string, unknown> = {};
+        if (settings.graph && typeof settings.graph === "object") {
+          const graphSettings = settings.graph as Record<string, unknown>;
+          if (graphSettings.enabled !== undefined) {
+            baseSettingsPart.graph = { enabled: graphSettings.enabled as boolean };
+          }
+        }
+        if (settings.vectorization && typeof settings.vectorization === "object") {
+          const vectorizationSettings = settings.vectorization as Record<string, unknown>;
+          if (vectorizationSettings.enabled !== undefined) {
+            baseSettingsPart.vectorization = { enabled: vectorizationSettings.enabled as boolean };
+          }
+        }
+
+        log.info(`knowledge.settings.update baseSettingsPart: ${JSON.stringify(baseSettingsPart)}`);
+
+        // Update base settings if any base-level setting is present
+        if (Object.keys(baseSettingsPart).length > 0) {
           manager.updateBaseSettings({
             agentId,
             kbId: p.kbId,
-            settings: baseGraphSettings as Parameters<
+            settings: baseSettingsPart as Parameters<
               typeof manager.updateBaseSettings
             >[0]["settings"],
           });
+          log.info(`knowledge.settings.update base settings updated for kb ${p.kbId}`);
         }
+
         // Always update agent-level settings
         const agentSettings = manager.updateSettings(agentId, p.settings);
         respond(true, { kbId: p.kbId, settings: agentSettings });
@@ -1257,8 +1294,9 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
   /**
    * Get graph data for visualization
    */
-  "knowledge.graph.data": async ({ params, respond, agentId }) => {
+  "knowledge.graph.data": async ({ params, respond }) => {
     try {
+      const agentId = resolveAgentId(params, {});
       const kbId = readStringParam(params, "kbId", { required: true });
       const limit = readNumberParam(params, "limit", { integer: true }) || 500;
 
@@ -1289,8 +1327,9 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
   /**
    * Rebuild document: re-vectorize and re-build graph
    */
-  "knowledge.rebuild": async ({ params, respond, agentId }) => {
+  "knowledge.rebuild": async ({ params, respond }) => {
     try {
+      const agentId = resolveAgentId(params, {});
       const kbId = readStringParam(params, "kbId", { required: true });
       const documentId = readStringParam(params, "documentId", { required: true });
 

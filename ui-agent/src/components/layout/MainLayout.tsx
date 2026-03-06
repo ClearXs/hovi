@@ -50,6 +50,8 @@ interface MainLayoutProps {
   showSidebar?: boolean;
   onOpenKnowledge?: () => void;
   onOpenPersonaSettings?: () => void;
+  onOpenCronJobs?: () => void;
+  onOpenAgentManage?: () => void;
   assistantVisible?: boolean;
   onToggleAssistantVisible?: () => void;
   activeView?: "chat" | "knowledge" | "persona";
@@ -91,6 +93,8 @@ const MainLayout = ({
   showSidebar = true,
   onOpenKnowledge = () => {},
   onOpenPersonaSettings = () => {},
+  onOpenCronJobs = () => {},
+  onOpenAgentManage = () => {},
   assistantVisible = true,
   onToggleAssistantVisible = () => {},
   activeView = "chat",
@@ -132,6 +136,8 @@ const MainLayout = ({
             onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
             onOpenKnowledge={onOpenKnowledge}
             onOpenPersonaSettings={onOpenPersonaSettings}
+            onOpenCronJobs={onOpenCronJobs}
+            onOpenAgentManage={onOpenAgentManage}
             assistantVisible={assistantVisible}
             onToggleAssistantVisible={onToggleAssistantVisible}
             activeView={activeView}

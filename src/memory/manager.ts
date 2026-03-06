@@ -19,7 +19,7 @@ import {
 } from "./embeddings.js";
 import { isFileMissingError, statRegularFile } from "./fs-utils.js";
 import { bm25RankToScore, buildFtsQuery, mergeHybridResults } from "./hybrid.js";
-import { isMemoryPath, normalizeExtraMemoryPaths } from "./internal.js";
+import { chunkMarkdown, hashText, isMemoryPath, normalizeExtraMemoryPaths } from "./internal.js";
 import { MemoryManagerEmbeddingOps } from "./manager-embedding-ops.js";
 import { searchKeyword, searchVector } from "./manager-search.js";
 import { extractKeywords } from "./query-expansion.js";
@@ -235,6 +235,117 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     if (key) {
       this.sessionWarm.add(key);
     }
+  }
+
+  /**
+   * Ingest a knowledge document for indexing
+   */
+  async ingestKnowledgeDocument(params: {
+    documentId: string;
+    filename: string;
+    content: string;
+  }): Promise<void> {
+    const pathKey = `knowledge/${params.documentId}`;
+
+    // Skip if no provider (FTS-only mode)
+    if (!this.provider) {
+      log.debug("Skipping embedding indexing in FTS-only mode", {
+        path: pathKey,
+        source: "knowledge",
+      });
+      return;
+    }
+
+    // Chunk the content
+    const chunks = chunkMarkdown(params.content, this.settings.chunking).filter(
+      (chunk) => chunk.text.trim().length > 0,
+    );
+
+    if (chunks.length === 0) {
+      log.warn("No chunks generated from content", { documentId: params.documentId });
+      return;
+    }
+
+    // Generate embeddings
+    log.info(
+      `knowledge: ingest using provider: ${this.provider?.id}, model: ${this.provider?.model}`,
+    );
+    const embeddings = await this.embedChunksInBatches(chunks);
+    log.info(`knowledge: embedChunksInBatches completed, got ${embeddings.length} embeddings`);
+    const sample = embeddings.find((embedding) => embedding.length > 0);
+    const vectorReady = sample ? await this.ensureVectorReady(sample.length) : false;
+    const now = Date.now();
+
+    // Delete existing chunks for this document
+    this.db.prepare(`DELETE FROM chunks WHERE path = ? AND source = ?`).run(pathKey, "knowledge");
+
+    // Delete existing vector data
+    if (vectorReady) {
+      try {
+        this.db
+          .prepare(
+            `DELETE FROM ${VECTOR_TABLE} WHERE id IN (SELECT id FROM chunks WHERE path = ? AND source = ?)`,
+          )
+          .run(pathKey, "knowledge");
+      } catch {}
+    }
+
+    // Delete existing FTS data
+    if (this.fts.enabled && this.fts.available) {
+      try {
+        this.db
+          .prepare(`DELETE FROM ${FTS_TABLE} WHERE path = ? AND source = ? AND model = ?`)
+          .run(pathKey, "knowledge", this.provider.model);
+      } catch {}
+    }
+
+    // Insert new chunks
+    const insertChunk = this.db.prepare(`
+      INSERT INTO chunks (id, path, source, start_line, end_line, hash, model, text, embedding, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const insertFts = this.fts.enabled
+      ? this.db.prepare(
+          `INSERT INTO ${FTS_TABLE} (text, id, path, source, model, start_line, end_line)
+           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        )
+      : null;
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      const chunkId = `${pathKey}:${i}`;
+      const text = chunk.text;
+      const embedding = JSON.stringify(embeddings[i] || []);
+      const hash = hashText(text);
+
+      insertChunk.run(
+        chunkId,
+        pathKey,
+        "knowledge",
+        chunk.startLine,
+        chunk.endLine,
+        hash,
+        this.provider.model,
+        text,
+        embedding,
+        now,
+      );
+
+      if (insertFts) {
+        insertFts.run(
+          text,
+          chunkId,
+          pathKey,
+          "knowledge",
+          this.provider.model,
+          chunk.startLine,
+          chunk.endLine,
+        );
+      }
+    }
+
+    log.info(`knowledge: indexed ${chunks.length} chunks for document ${params.documentId}`);
   }
 
   async search(

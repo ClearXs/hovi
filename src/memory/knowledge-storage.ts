@@ -57,10 +57,12 @@ export type UpdateDocumentMetadataParams = {
  */
 export class KnowledgeStorageManager {
   private baseDir: string;
+  private agentId: string;
   private db: DatabaseSync;
 
-  constructor(baseDir: string, db: DatabaseSync) {
+  constructor(baseDir: string, agentId: string, db: DatabaseSync) {
     this.baseDir = baseDir;
+    this.agentId = agentId;
     this.db = db;
   }
 
@@ -68,7 +70,7 @@ export class KnowledgeStorageManager {
    * Get the knowledge storage directory path
    */
   getStorageDir(): string {
-    return path.join(this.baseDir, "knowledge");
+    return path.join(this.baseDir, this.agentId, "knowledge");
   }
 
   /**
@@ -146,7 +148,7 @@ export class KnowledgeStorageManager {
 
     const documentId = randomUUID();
     const ext = this.getExtensionFromMime(mimetype);
-    const filepath = `knowledge/${documentId}.${ext}`;
+    const filepath = `${this.agentId}/knowledge/${documentId}.${ext}`;
     const absPath = path.join(this.baseDir, filepath);
 
     // Write file
@@ -233,7 +235,7 @@ export class KnowledgeStorageManager {
     }
 
     const ext = this.getExtensionFromMime(params.mimetype);
-    const filepath = `knowledge/${params.documentId}.${ext}`;
+    const filepath = `${this.agentId}/knowledge/${params.documentId}.${ext}`;
     const absPath = path.join(this.baseDir, filepath);
     const previousPath = path.join(this.baseDir, existing.filepath);
 

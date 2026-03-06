@@ -6,6 +6,7 @@ import type { DiagnosticsConfig, LoggingConfig, SessionConfig, WebConfig } from 
 import type { BrowserConfig } from "./types.browser.js";
 import type { ChannelsConfig } from "./types.channels.js";
 import type { CliConfig } from "./types.cli.js";
+import type { ConnectorsConfig } from "./types.connectors.js";
 import type { CronConfig } from "./types.cron.js";
 import type {
   CanvasHostConfig,
@@ -107,6 +108,7 @@ export type OpenClawConfig = {
   session?: SessionConfig;
   web?: WebConfig;
   channels?: ChannelsConfig;
+  connectors?: ConnectorsConfig;
   cron?: CronConfig;
   hooks?: HooksConfig;
   discovery?: DiscoveryConfig;

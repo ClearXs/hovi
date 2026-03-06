@@ -250,7 +250,16 @@ export const configHandlers: GatewayRequestHandlers = {
     }
     const snapshot = await readConfigFileSnapshot();
     const schema = loadSchemaWithPlugins();
-    respond(true, redactConfigSnapshot(snapshot, schema.uiHints), undefined);
+    const redacted = redactConfigSnapshot(snapshot, schema.uiHints);
+    // Return original config for display purposes (e.g., api keys), plus redacted for general use
+    respond(
+      true,
+      {
+        ...redacted,
+        config: snapshot.config, // Original config with actual values (including apiKey)
+      },
+      undefined,
+    );
   },
   "config.schema": ({ params, respond }) => {
     if (!assertValidParams(params, validateConfigSchemaParams, "config.schema", respond)) {

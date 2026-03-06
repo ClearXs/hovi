@@ -101,6 +101,7 @@ export interface OpenClawConfigPartial {
 interface ConfigGetResponse {
   raw: string;
   hash: string;
+  config?: OpenClawConfigPartial;
   parsed?: OpenClawConfigPartial;
 }
 
@@ -167,7 +168,9 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
     set({ isLoadingConfig: true, configError: null });
     try {
       const result = await wsClient.sendRequest<ConfigGetResponse>("config.get", {});
-      const parsed = result?.parsed ?? (result?.raw ? JSON.parse(result.raw) : null);
+      // Use config first (has original values), fallback to parsed (may be redacted)
+      const parsed =
+        result?.config ?? result?.parsed ?? (result?.raw ? JSON.parse(result.raw) : null);
       set({
         config: parsed,
         configHash: result?.hash ?? null,

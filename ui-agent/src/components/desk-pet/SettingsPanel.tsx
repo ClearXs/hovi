@@ -287,7 +287,7 @@ interface LocalScene extends ApiScene {
 
 // ASR 配置
 interface AsrConfig {
-  provider: "local" | "deepgram" | "openai" | "groq";
+  provider: "sherpa-onnx" | "deepgram" | "openai" | "groq";
   modelSize?: "tiny" | "base" | "small" | "medium" | "large";
   language?: string;
   vadEnabled?: boolean;
@@ -310,6 +310,11 @@ interface TtsConfig {
     style: number;
     speed: number;
   };
+  // Edge TTS 专用
+  edgeVoice?: string;
+  edgeLanguage?: string;
+  edgeRate?: string;
+  edgeVolume?: string;
 }
 
 export function SettingsPanel({
@@ -352,8 +357,26 @@ export function SettingsPanel({
     description: "",
     keywords: "",
   });
+  // 场景相关状态
   const [scenes, setScenes] = useState<LocalScene[]>([]);
   const [currentSceneId, setCurrentSceneId] = useState<string | null>(null);
+  // 场景编辑 Dialog 状态
+  const [isSceneDialogOpen, setIsSceneDialogOpen] = useState(false);
+  const [editingSceneId, setEditingSceneId] = useState<string | null>(null);
+  const [sceneForm, setSceneForm] = useState<{
+    name: string;
+    description: string;
+    r_path: string;
+    thumb: string;
+  }>({
+    name: "",
+    description: "",
+    r_path: "",
+    thumb: "",
+  });
+  const [sceneThumbFile, setSceneThumbFile] = useState<File | null>(null);
+  const [sceneThumbPreview, setSceneThumbPreview] = useState<string>("");
+  const [sceneFile, setSceneFile] = useState<File | null>(null);
   const [soulContent, setSoulContent] = useState("");
   const [asrConfig, setAsrConfig] = useState<AsrConfig>({
     provider: "deepgram",
@@ -392,8 +415,9 @@ export function SettingsPanel({
 
     try {
       const fileResult = await getAgentFile(wsClient, agentId, "persona.json");
-      if (fileResult?.content) {
-        const content = fileResult.content.trim();
+      const fileContent = fileResult?.content;
+      if (fileContent) {
+        const content = fileContent.trim();
         // 检查是否是有效的 JSON 配置
         if (content.startsWith("{") && content.endsWith("}")) {
           try {
@@ -453,19 +477,21 @@ export function SettingsPanel({
           } catch (e) {
             console.error("Failed to parse persona.json as JSON:", e);
           }
-        } else {
-          console.log("persona.json is not JSON config, skipping");
         }
       }
 
       const soulResult = await getAgentFile(wsClient, agentId, "SOUL.md");
-      if (soulResult?.content) {
-        setSoulContent(soulResult.content);
-      }
+      const content = soulResult?.content ?? soulResult?.file?.content ?? "";
+      setSoulContent(content);
 
       const scenesData = await fetchScenes(wsClient, agentId);
-      setScenes(scenesData);
-      const activatedScene = scenesData.find((s: LocalScene) => s.activated);
+      // 修复字段映射：后端返回 active，前端使用 activated
+      const mappedScenes = scenesData.map((s: any) => ({
+        ...s,
+        activated: s.active,
+      }));
+      setScenes(mappedScenes);
+      const activatedScene = mappedScenes.find((s: LocalScene) => s.activated);
       if (activatedScene) {
         setCurrentSceneId(activatedScene.id);
       }
@@ -536,7 +562,10 @@ export function SettingsPanel({
         reader.readAsDataURL(file);
       });
 
-      const fileName = `models/${file.name}`;
+      // 文件存储路径：{agentId}/models/{filename}，例如 main/models/avatar.vrm
+      const fileName = `${agentId}/models/${file.name}`;
+      // persona.json 中只保存相对路径（不带 agentId 前缀），例如 models/avatar.vrm
+      const configVrmPath = `models/${file.name}`;
       console.log("Uploading VRM to:", fileName);
       const result = await uploadAgentFile(
         wsClient,
@@ -547,8 +576,8 @@ export function SettingsPanel({
       );
       console.log("VRM upload result:", result);
 
-      setPersonaConfig((prev) => ({ ...prev, vrm: fileName }));
-      console.log("Updated personaConfig.vrm to:", fileName);
+      setPersonaConfig((prev) => ({ ...prev, vrm: configVrmPath }));
+      console.log("Updated personaConfig.vrm to:", configVrmPath);
 
       // 自动保存配置
       await setAgentFile(
@@ -556,7 +585,7 @@ export function SettingsPanel({
         agentId,
         "persona.json",
         JSON.stringify({
-          vrm: fileName,
+          vrm: configVrmPath,
           motions: {
             idle: personaConfig.motions.find((m) => m.type === "idle") || null,
             emotes: personaConfig.motions.filter((m) => m.type === "emote"),
@@ -592,24 +621,31 @@ export function SettingsPanel({
         reader.readAsDataURL(file);
       });
 
-      const fileName = `motions/${file.name}`;
+      // 文件存储路径：{agentId}/motions/{filename}，例如 main/motions/idle.vrma
+      const fileName = `${agentId}/motions/${file.name}`;
       await uploadAgentFile(wsClient, agentId, fileName, base64, "model/vmd");
 
       // 构建动作项
       const motionItem: MotionItem = {
         id: form.id || file.name.replace(/\.[^.]+$/, ""),
-        file: fileName,
+        // 存储相对路径（不包含 agentId 前缀）
+        file: `motions/${file.name}`,
         type: form.type,
         keywords: form.keywords ? form.keywords.split(",").map((k) => k.trim()) : [],
         description: form.description,
       };
+
+      // 相对路径（不包含 agentId 前缀）
+      const relativeMotionFile = `motions/${file.name}`;
 
       setPersonaConfig((prev) => ({
         ...prev,
         motions: [...prev.motions, motionItem],
         // 如果是 idle 类型，自动设置为当前 idle 动作
         currentMotion:
-          form.type === "idle" ? { ...prev.currentMotion, idle: fileName } : prev.currentMotion,
+          form.type === "idle"
+            ? { ...prev.currentMotion, idle: relativeMotionFile }
+            : prev.currentMotion,
       }));
     } catch (error) {
       console.error("Failed to upload motion:", error);
@@ -685,21 +721,141 @@ export function SettingsPanel({
     }
   };
 
-  const handleAddScene = async () => {
-    if (!wsClient) return;
-    try {
-      const result = await createScene(wsClient, {
-        agentId: agentId,
-        name: `新场景 ${scenes.length + 1}`,
-        description: "",
-        r_path: "scenes/",
-        main_file: "scene.json",
-      });
-      if (result.ok && result.scene) {
-        setScenes([...scenes, { ...result.scene, activated: false }]);
+  // 打开添加场景 Dialog
+  const handleAddScene = () => {
+    setEditingSceneId(null);
+    setSceneForm({
+      name: "",
+      description: "",
+      r_path: "",
+      thumb: "",
+    });
+    setSceneThumbFile(null);
+    setSceneThumbPreview("");
+    setSceneFile(null);
+    setIsSceneDialogOpen(true);
+  };
+
+  // 打开编辑场景 Dialog
+  const handleEditScene = (scene: LocalScene) => {
+    setEditingSceneId(scene.id);
+    setSceneForm({
+      name: scene.name,
+      description: scene.description || "",
+      r_path: scene.r_path || "",
+      thumb: scene.thumb || "",
+    });
+    setSceneThumbFile(null);
+    setSceneThumbPreview("");
+    setIsSceneDialogOpen(true);
+  };
+
+  // 处理场景缩略图选择
+  const handleSceneThumbSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSceneThumbFile(file);
+      // 从文件名提取场景名称
+      const sceneName = file.name.replace(/\.[^.]+$/, "");
+      if (!sceneForm.name) {
+        setSceneForm((prev) => ({ ...prev, name: sceneName }));
       }
+      // 生成预览 URL
+      const previewUrl = URL.createObjectURL(file);
+      setSceneThumbPreview(previewUrl);
+    }
+  };
+
+  // 确认添加/编辑场景
+  const handleSceneDialogConfirm = async () => {
+    if (!wsClient) return;
+    if (!sceneForm.name.trim()) {
+      console.error("Scene name is required");
+      return;
+    }
+
+    try {
+      const sceneName = sceneForm.name.trim();
+      let thumbPath = sceneForm.thumb;
+      let mainFile = "";
+
+      // 上传场景文件 (GLTF/GLB)
+      if (sceneFile) {
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const result = reader.result as string;
+            resolve(result.split(",")[1]);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(sceneFile);
+        });
+
+        const fileName = `${agentId}/scenes/${sceneName}/${sceneFile.name}`;
+        await uploadAgentFile(wsClient, agentId, fileName, base64, "model/gltf-binary");
+        mainFile = `scenes/${sceneName}/${sceneFile.name}`;
+      }
+
+      // 上传缩略图
+      if (sceneThumbFile) {
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const result = reader.result as string;
+            resolve(result.split(",")[1]);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(sceneThumbFile);
+        });
+
+        const fileName = `${agentId}/scenes/${sceneName}/${sceneThumbFile.name}`;
+        await uploadAgentFile(wsClient, agentId, fileName, base64, "image/png");
+        thumbPath = `scenes/${sceneName}/${sceneThumbFile.name}`;
+      }
+
+      if (editingSceneId) {
+        // 编辑模式：更新场景
+        await updateScene(wsClient, {
+          agentId,
+          sceneId: editingSceneId,
+          name: sceneName,
+          description: sceneForm.description,
+          r_path: `scenes/${sceneName}/`,
+          thumb: thumbPath || undefined,
+          main_file: mainFile || undefined,
+        });
+        setScenes(
+          scenes.map((s) =>
+            s.id === editingSceneId
+              ? {
+                  ...s,
+                  name: sceneName,
+                  description: sceneForm.description,
+                  r_path: `scenes/${sceneName}/`,
+                  thumb: thumbPath,
+                  main_file: mainFile || s.main_file,
+                }
+              : s,
+          ),
+        );
+      } else {
+        // 添加模式：创建场景
+        const result = await createScene(wsClient, {
+          agentId,
+          name: sceneName,
+          description: sceneForm.description,
+          r_path: `scenes/${sceneName}/`,
+          main_file: mainFile || "scene.json",
+          thumb: thumbPath || undefined,
+        });
+        if (result.ok && result.scene) {
+          setScenes([...scenes, { ...result.scene, activated: false }]);
+        }
+      }
+
+      setIsSceneDialogOpen(false);
     } catch (error) {
-      console.error("Failed to create scene:", error);
+      console.error("Failed to save scene:", error);
     }
   };
 
@@ -787,10 +943,7 @@ export function SettingsPanel({
   return (
     <div className="w-full bg-background rounded-lg shadow-lg overflow-hidden flex flex-col h-full">
       {/* Content - 使用原生滚动 */}
-      <div
-        className="flex-1 overflow-y-auto p-4 space-y-4 pointer-events-auto"
-        style={{ scrollbarWidth: "thin" }}
-      >
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 pointer-events-auto">
         {loading ? (
           <div className="flex items-center justify-center py-8">
             <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900" />
@@ -877,7 +1030,7 @@ export function SettingsPanel({
                 </Button>
               </div>
 
-              <div className="space-y-1 max-h-[100px] overflow-y-auto">
+              <div className="space-y-1">
                 {personaConfig.motions.length === 0 ? (
                   <p className="text-xs text-muted-foreground text-center py-2">
                     暂无动作，点击添加
@@ -894,7 +1047,6 @@ export function SettingsPanel({
                           isActive ? "border-primary bg-primary/10" : "hover:bg-muted/50"
                         }`}
                         onClick={() => {
-                          console.log("[SettingsPanel] Motion clicked:", motion);
                           // 设置当前激活的 motion（用于高亮）
                           setActiveMotionFile(motion.file);
                           // 点击时切换当前 motion
@@ -1021,7 +1173,7 @@ export function SettingsPanel({
                 </Button>
               </div>
 
-              <div className="space-y-1 max-h-[100px] overflow-y-auto">
+              <div className="space-y-1">
                 {scenes.length === 0 ? (
                   <p className="text-xs text-muted-foreground text-center py-2">暂无场景</p>
                 ) : (
@@ -1029,7 +1181,7 @@ export function SettingsPanel({
                     <div
                       key={scene.id}
                       className={cn(
-                        "flex items-center justify-between p-1.5 border border-dashed rounded-md cursor-pointer text-xs",
+                        "flex items-center justify-between p-2 border border-dashed rounded-md cursor-pointer text-sm",
                         scene.id === currentSceneId
                           ? "border-primary bg-primary/5"
                           : "hover:bg-muted/50",
@@ -1037,23 +1189,36 @@ export function SettingsPanel({
                       onClick={() => handleActivateScene(scene.id)}
                     >
                       <span className="truncate flex-1">{scene.name}</span>
-                      <div className="flex items-center gap-1 ml-2">
+                      <div className="flex items-center gap-2 ml-2">
                         {scene.activated ? (
-                          <span className="text-[10px] bg-primary text-primary-foreground px-1.5 py-0.5 rounded">
+                          <span className="text-xs bg-primary text-primary-foreground px-2 py-1 rounded">
                             激活
                           </span>
                         ) : (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-5 w-5"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDeleteScene(scene.id);
-                            }}
-                          >
-                            <Trash2 className="w-3 h-3 text-destructive" />
-                          </Button>
+                          <>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-5 w-5"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleEditScene(scene);
+                              }}
+                            >
+                              <Edit className="w-3 h-3" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-5 w-5"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteScene(scene.id);
+                              }}
+                            >
+                              <Trash2 className="w-3 h-3 text-destructive" />
+                            </Button>
+                          </>
                         )}
                       </div>
                     </div>
@@ -1061,6 +1226,104 @@ export function SettingsPanel({
                 )}
               </div>
             </div>
+
+            {/* 添加/编辑场景 Dialog */}
+            <Dialog open={isSceneDialogOpen} onOpenChange={setIsSceneDialogOpen}>
+              <DialogContent className="max-w-[400px]">
+                <DialogHeader>
+                  <DialogTitle>{editingSceneId ? "编辑场景" : "添加场景"}</DialogTitle>
+                  <DialogDescription>
+                    {editingSceneId ? "修改场景信息" : "上传场景文件创建场景"}
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  {/* 场景文件上传 (GLTF/GLB) */}
+                  {!editingSceneId && (
+                    <div className="space-y-2">
+                      <label className="text-xs font-medium text-muted-foreground">场景文件</label>
+                      <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center hover:border-gray-400 transition-colors">
+                        <input
+                          type="file"
+                          accept=".gltf,.glb"
+                          className="hidden"
+                          id="scene-file-upload"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) {
+                              // 从文件名提取场景名称
+                              const sceneName = file.name.replace(/\.[^.]+$/, "");
+                              setSceneForm((prev) => ({ ...prev, name: sceneName }));
+                            }
+                          }}
+                        />
+                        <label htmlFor="scene-file-upload" className="cursor-pointer">
+                          <div className="flex flex-col items-center gap-1">
+                            <Upload className="w-5 h-5 text-muted-foreground" />
+                            <span className="text-xs text-muted-foreground">
+                              点击上传场景文件 (.gltf, .glb)
+                            </span>
+                          </div>
+                        </label>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 缩略图上传 */}
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium text-muted-foreground">
+                      缩略图 (可选)
+                    </label>
+                    <div className="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center hover:border-gray-400 transition-colors">
+                      <input
+                        type="file"
+                        accept="image/*"
+                        className="hidden"
+                        id="scene-thumb-upload"
+                        onChange={handleSceneThumbSelect}
+                      />
+                      <label htmlFor="scene-thumb-upload" className="cursor-pointer">
+                        {sceneThumbPreview ? (
+                          <div className="flex flex-col items-center gap-2">
+                            <img
+                              src={sceneThumbPreview}
+                              alt="预览"
+                              className="w-16 h-16 object-cover rounded"
+                            />
+                            <span className="text-xs text-muted-foreground">点击更换缩略图</span>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center gap-1">
+                            <Upload className="w-5 h-5 text-muted-foreground" />
+                            <span className="text-xs text-muted-foreground">点击上传缩略图</span>
+                          </div>
+                        )}
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* 场景描述 */}
+                  <div className="space-y-2">
+                    <label className="text-xs font-medium text-muted-foreground">描述 (可选)</label>
+                    <Textarea
+                      value={sceneForm.description}
+                      onChange={(e) =>
+                        setSceneForm((prev) => ({ ...prev, description: e.target.value }))
+                      }
+                      placeholder="输入场景描述"
+                      className="min-h-[60px] resize-none"
+                    />
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => setIsSceneDialogOpen(false)}>
+                    取消
+                  </Button>
+                  <Button onClick={handleSceneDialogConfirm} disabled={!sceneForm.name.trim()}>
+                    {editingSceneId ? "保存" : "添加"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
 
             {/* Soul 配置 */}
             <div className="space-y-1.5">
@@ -1096,8 +1359,8 @@ export function SettingsPanel({
                     sideOffset={4}
                     className="z-[100] bg-white shadow-lg"
                   >
-                    <SelectItem value="local" className="text-xs">
-                      本地 (Faster Whisper)
+                    <SelectItem value="sherpa-onnx" className="text-xs">
+                      本地 (sherpa-onnx)
                     </SelectItem>
                     <SelectItem value="deepgram" className="text-xs">
                       Deepgram
@@ -1112,49 +1375,17 @@ export function SettingsPanel({
                 </Select>
               </div>
 
-              {/* 本地模型设置 (当选择本地时显示) */}
-              {asrConfig.provider === "local" && (
+              {/* sherpa-onnx 本地设置 (当选择 sherpa-onnx 时显示) */}
+              {asrConfig.provider === "sherpa-onnx" && (
                 <div className="space-y-1">
-                  <label className="text-[10px] text-muted-foreground">模型大小</label>
-                  <Select
-                    value={asrConfig.modelSize || "tiny"}
-                    onValueChange={(value) =>
-                      setAsrConfig((prev) => ({
-                        ...prev,
-                        modelSize: value as AsrConfig["modelSize"],
-                      }))
-                    }
-                  >
-                    <SelectTrigger className="h-8 text-xs">
-                      <SelectValue placeholder="选择模型大小" />
-                    </SelectTrigger>
-                    <SelectContent
-                      position="popper"
-                      sideOffset={4}
-                      className="z-[100] bg-white shadow-lg"
-                    >
-                      <SelectItem value="tiny" className="text-xs">
-                        tiny (最快)
-                      </SelectItem>
-                      <SelectItem value="base" className="text-xs">
-                        base
-                      </SelectItem>
-                      <SelectItem value="small" className="text-xs">
-                        small
-                      </SelectItem>
-                      <SelectItem value="medium" className="text-xs">
-                        medium
-                      </SelectItem>
-                      <SelectItem value="large" className="text-xs">
-                        large (最准确)
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <p className="text-[10px] text-muted-foreground">
+                    使用本地 sherpa-onnx 模型 (需下载模型文件)
+                  </p>
                 </div>
               )}
 
               {/* 云端设置 (当选择云端或开启回退时显示) */}
-              {(asrConfig.provider !== "local" || asrConfig.cloudFallback) && (
+              {(asrConfig.provider !== "sherpa-onnx" || asrConfig.cloudFallback) && (
                 <div className="space-y-1">
                   <label className="text-[10px] text-muted-foreground">API Key</label>
                   <Input
@@ -1337,6 +1568,129 @@ export function SettingsPanel({
                     }
                     className="h-8 text-xs"
                   />
+                </div>
+              )}
+
+              {/* Edge TTS 设置 */}
+              {ttsConfig.provider === "edge" && (
+                <div className="space-y-2">
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-muted-foreground">语言</label>
+                    <Select
+                      value={ttsConfig.edgeLanguage || "zh-CN"}
+                      onValueChange={(value) =>
+                        setTtsConfig((prev) => ({ ...prev, edgeLanguage: value }))
+                      }
+                    >
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue placeholder="选择语言" />
+                      </SelectTrigger>
+                      <SelectContent
+                        position="popper"
+                        sideOffset={4}
+                        className="z-[100] bg-white shadow-lg"
+                      >
+                        <SelectItem value="zh-CN" className="text-xs">
+                          中文 (简体)
+                        </SelectItem>
+                        <SelectItem value="zh-HK" className="text-xs">
+                          中文 (香港)
+                        </SelectItem>
+                        <SelectItem value="zh-TW" className="text-xs">
+                          中文 (台湾)
+                        </SelectItem>
+                        <SelectItem value="en-US" className="text-xs">
+                          English (US)
+                        </SelectItem>
+                        <SelectItem value="en-GB" className="text-xs">
+                          English (UK)
+                        </SelectItem>
+                        <SelectItem value="ja-JP" className="text-xs">
+                          日本語
+                        </SelectItem>
+                        <SelectItem value="ko-KR" className="text-xs">
+                          한국어
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-muted-foreground">声音</label>
+                    <Select
+                      value={ttsConfig.edgeVoice || ""}
+                      onValueChange={(value) =>
+                        setTtsConfig((prev) => ({ ...prev, edgeVoice: value }))
+                      }
+                    >
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue placeholder="选择声音" />
+                      </SelectTrigger>
+                      <SelectContent
+                        position="popper"
+                        sideOffset={4}
+                        className="z-[100] bg-white shadow-lg"
+                      >
+                        <SelectItem value="zh-CN-XiaoxiaoNeural" className="text-xs">
+                          Xiaoxiao (女声)
+                        </SelectItem>
+                        <SelectItem value="zh-CN-YunxiNeural" className="text-xs">
+                          Yunxi (男声)
+                        </SelectItem>
+                        <SelectItem value="zh-CN-YunyangNeural" className="text-xs">
+                          Yunyang (男声)
+                        </SelectItem>
+                        <SelectItem value="zh-CN-XiaoyiNeural" className="text-xs">
+                          Xiaoyi (女声)
+                        </SelectItem>
+                        <SelectItem value="zh-HK-HiuGaaiNeural" className="text-xs">
+                          HiuGaai (女声)
+                        </SelectItem>
+                        <SelectItem value="zh-TT-ZhiweiNeural" className="text-xs">
+                          Zhiwei (男声)
+                        </SelectItem>
+                        <SelectItem value="en-US-JennyNeural" className="text-xs">
+                          Jenny (女声)
+                        </SelectItem>
+                        <SelectItem value="en-US-GuyNeural" className="text-xs">
+                          Guy (男声)
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] text-muted-foreground">语速</label>
+                    <Select
+                      value={ttsConfig.edgeRate || "0"}
+                      onValueChange={(value) =>
+                        setTtsConfig((prev) => ({ ...prev, edgeRate: value }))
+                      }
+                    >
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue placeholder="选择语速" />
+                      </SelectTrigger>
+                      <SelectContent
+                        position="popper"
+                        sideOffset={4}
+                        className="z-[100] bg-white shadow-lg"
+                      >
+                        <SelectItem value="-50%" className="text-xs">
+                          慢 (-50%)
+                        </SelectItem>
+                        <SelectItem value="-25%" className="text-xs">
+                          较慢 (-25%)
+                        </SelectItem>
+                        <SelectItem value="0" className="text-xs">
+                          正常 (0%)
+                        </SelectItem>
+                        <SelectItem value="+25%" className="text-xs">
+                          较快 (+25%)
+                        </SelectItem>
+                        <SelectItem value="+50%" className="text-xs">
+                          快 (+50%)
+                        </SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
               )}
 

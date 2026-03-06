@@ -71,7 +71,7 @@ function getKnowledgeManager(agentId: string): KnowledgeManager {
   const cfg = loadConfig();
   const db = getDatabase(agentId);
   const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId);
-  return new KnowledgeManager({ cfg, db, baseDir: workspaceDir });
+  return new KnowledgeManager({ cfg, db, baseDir: workspaceDir, agentId });
 }
 
 function parseTags(params: URLSearchParams, fallback?: string): string[] | undefined {

@@ -31,6 +31,7 @@ import { sameFileIdentity } from "../../infra/file-identity.js";
 import { SafeOpenError, readLocalFileSafely, writeFileWithinRoot } from "../../infra/fs-safe.js";
 import { assertNoPathAliasEscape } from "../../infra/path-alias-guards.js";
 import { isNotFoundPathError } from "../../infra/path-guards.js";
+import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { DEFAULT_AGENT_ID, normalizeAgentId } from "../../routing/session-key.js";
 import { resolveUserPath } from "../../utils.js";
 import {
@@ -71,11 +72,18 @@ const PERSONA_FILE_NAMES = ["persona.json"] as const;
 // 场景配置文件名
 const SCENE_FILE_NAMES = ["scenes.json"] as const;
 
+// Soul 配置文件名（保存在 workspace 根目录）
+const SOUL_FILE_NAMES = ["SOUL.md"] as const;
+
+// 需要保存到 workspace 根目录的文件名集合
+const _WORKSPACE_ROOT_FILE_NAMES = new Set<string>(SOUL_FILE_NAMES);
+
 const ALLOWED_FILE_NAMES = new Set<string>([
   ...BOOTSTRAP_FILE_NAMES,
   ...MEMORY_FILE_NAMES,
   ...PERSONA_FILE_NAMES,
   ...SCENE_FILE_NAMES,
+  ...SOUL_FILE_NAMES,
 ]);
 
 function resolveAgentWorkspaceFileOrRespondError(
@@ -685,17 +693,28 @@ export const agentsHandlers: GatewayRequestHandlers = {
       return;
     }
     const { agentId, workspaceDir, name } = resolved;
-    const filePath = path.join(workspaceDir, name);
+
+    // SOUL.md 需要从 workspace 根目录读取，而不是 agent 工作区目录
+    // isRootFile = WORKSPACE_ROOT_FILE_NAMES.has(name); // Reserved for future use
+    const targetRootDir = workspaceDir;
+    const filePath = path.join(targetRootDir, name);
+
     const resolvedPath = await resolveWorkspaceFilePathOrRespond({
       respond,
-      workspaceDir,
+      workspaceDir: targetRootDir,
       name,
     });
     if (!resolvedPath) {
       return;
     }
     if (resolvedPath.kind === "missing") {
-      respondWorkspaceFileMissing({ respond, agentId, workspaceDir, name, filePath });
+      respondWorkspaceFileMissing({
+        respond,
+        agentId,
+        workspaceDir: targetRootDir,
+        name,
+        filePath,
+      });
       return;
     }
     let safeRead: Awaited<ReturnType<typeof readLocalFileSafely>>;
@@ -703,7 +722,13 @@ export const agentsHandlers: GatewayRequestHandlers = {
       safeRead = await readLocalFileSafely({ filePath: resolvedPath.ioPath });
     } catch (err) {
       if (err instanceof SafeOpenError && err.code === "not-found") {
-        respondWorkspaceFileMissing({ respond, agentId, workspaceDir, name, filePath });
+        respondWorkspaceFileMissing({
+          respond,
+          agentId,
+          workspaceDir: targetRootDir,
+          name,
+          filePath,
+        });
         return;
       }
       respondWorkspaceFileUnsafe(respond, name);
@@ -713,7 +738,7 @@ export const agentsHandlers: GatewayRequestHandlers = {
       true,
       {
         agentId,
-        workspace: workspaceDir,
+        workspace: targetRootDir,
         file: {
           name,
           path: filePath,
@@ -736,11 +761,16 @@ export const agentsHandlers: GatewayRequestHandlers = {
       return;
     }
     const { agentId, workspaceDir, name } = resolved;
-    await fs.mkdir(workspaceDir, { recursive: true });
-    const filePath = path.join(workspaceDir, name);
+
+    // SOUL.md 需要保存到 workspace 根目录，而不是 agent 工作区目录
+    // isRootFile = WORKSPACE_ROOT_FILE_NAMES.has(name); // Reserved for future use
+    const targetRootDir = workspaceDir;
+    const targetFilePath = path.join(targetRootDir, name);
+
+    await fs.mkdir(targetRootDir, { recursive: true });
     const resolvedPath = await resolveWorkspaceFilePathOrRespond({
       respond,
-      workspaceDir,
+      workspaceDir: targetRootDir,
       name,
     });
     if (!resolvedPath) {
@@ -749,7 +779,7 @@ export const agentsHandlers: GatewayRequestHandlers = {
     const content = String(params.content ?? "");
     try {
       await writeFileWithinRoot({
-        rootDir: workspaceDir,
+        rootDir: targetRootDir,
         relativePath: name,
         data: content,
         encoding: "utf8",
@@ -764,10 +794,10 @@ export const agentsHandlers: GatewayRequestHandlers = {
       {
         ok: true,
         agentId,
-        workspace: workspaceDir,
+        workspace: targetRootDir,
         file: {
           name,
-          path: filePath,
+          path: targetFilePath,
           missing: false,
           size: meta?.size,
           updatedAtMs: meta?.updatedAtMs,
@@ -834,7 +864,7 @@ export const agentsHandlers: GatewayRequestHandlers = {
       await fs.mkdir(path.dirname(filePath), { recursive: true });
 
       await fs.writeFile(filePath, fileBuffer);
-      const meta = await statFile(filePath);
+      const meta = await statFileSafely(filePath);
 
       respond(true, {
         ok: true,

@@ -122,10 +122,11 @@ export async function getAgentFile(
   agentId: string,
   name: string,
 ): Promise<{ ok: boolean; content?: string; file?: { content?: string } }> {
-  const result = await client.sendRequest<{ ok: boolean; file?: { content?: string } }>(
-    "agents.files.get",
-    { agentId, name },
-  );
+  const result = await client.sendRequest<{
+    ok: boolean;
+    content?: string;
+    file?: { content?: string };
+  }>("agents.files.get", { agentId, name });
   // Backward compatibility: extract content from file object if present
   if (result.file?.content !== undefined) {
     return { ok: result.ok, content: result.file.content };

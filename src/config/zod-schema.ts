@@ -551,6 +551,14 @@ export const OpenClawSchema = z
       .strict()
       .optional(),
     channels: ChannelsSchema,
+    connectors: z
+      .object({
+        entries: z.record(z.string(), z.any()).optional(),
+        sessions: z.record(z.string(), z.any()).optional(),
+        oauthProviders: z.record(z.string(), z.any()).optional(),
+      })
+      .strict()
+      .optional(),
     discovery: z
       .object({
         wideArea: z

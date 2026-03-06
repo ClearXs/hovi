@@ -1,11 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { AgentManageDialog } from "@/components/agent-manage/AgentManageDialog";
 import { ComputerPanelWrapper } from "@/components/agent/ComputerPanelWrapper";
 import { EnhancedChatInput } from "@/components/chat/EnhancedChatInput";
 import { MessageList, Message } from "@/components/chat/MessageList";
 import { SessionDocuments } from "@/components/chat/SessionDocuments";
 import { SessionPreviewPanel } from "@/components/chat/SessionPreviewPanel";
+import { CronJobsDialog } from "@/components/cron/CronJobsDialog";
 import { SettingsPanel } from "@/components/desk-pet/SettingsPanel";
 import { VirtualAssistantPage } from "@/components/desk-pet/VirtualAssistantPage";
 import { FileItemProps } from "@/components/files/FileList";
@@ -74,6 +76,8 @@ function HomeContent() {
   const [activeMainView, setActiveMainView] = useState<"chat" | "knowledge" | "persona">("chat");
   const [assistantVisible, setAssistantVisible] = useState(true);
   const [personaSettingsOpen, setPersonaSettingsOpen] = useState(false);
+  const [cronJobsOpen, setCronJobsOpen] = useState(false);
+  const [agentManageOpen, setAgentManageOpen] = useState(false);
   const { isStreaming, startStreaming, stopStreaming } = useStreamingReplay();
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [detailSessionKey, setDetailSessionKey] = useState<string | null>(null);
@@ -1440,6 +1444,8 @@ function HomeContent() {
           setCurrentConversationId(null);
           setActiveMainView("persona");
         }}
+        onOpenCronJobs={() => setCronJobsOpen(true)}
+        onOpenAgentManage={() => setAgentManageOpen(true)}
         assistantVisible={activeMainView !== "persona" && assistantVisible}
         onToggleAssistantVisible={() => setAssistantVisible(!assistantVisible)}
         showTopBar={activeMainView !== "persona"}
@@ -1751,6 +1757,12 @@ function HomeContent() {
 
       {/* 虚拟角色设置面板 */}
       <SettingsPanel open={personaSettingsOpen} onOpenChange={setPersonaSettingsOpen} />
+
+      {/* 定时任务对话框 */}
+      <CronJobsDialog open={cronJobsOpen} onOpenChange={setCronJobsOpen} />
+
+      {/* Agent管理对话框 */}
+      <AgentManageDialog open={agentManageOpen} onOpenChange={setAgentManageOpen} />
     </>
   );
 }

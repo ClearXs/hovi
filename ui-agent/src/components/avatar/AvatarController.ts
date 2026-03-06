@@ -58,6 +58,9 @@ export class AvatarController {
   // 动画
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private currentAction: any = null;
+  // 保存当前的 finished 事件监听器，以便切换时移除
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private finishedListener: any = null;
 
   constructor(options?: AvatarControllerOptions) {
     if (options?.expressionMapping) {
@@ -81,7 +84,6 @@ export class AvatarController {
    */
   public setMotionBasePath(basePath: string): void {
     this.motionBasePath = basePath;
-    console.log(`[AvatarController] Motion base path set to: ${basePath}`);
   }
 
   /**
@@ -108,7 +110,6 @@ export class AvatarController {
     }
 
     const fullPath = `${basePath}/${motionFile}`;
-    console.log(`[AvatarController] getMotionUrl: ${motionFile} -> ${fullPath}`);
     return fullPath;
   }
 
@@ -150,15 +151,12 @@ export class AvatarController {
       return;
     }
 
-    console.log("[AvatarController] Starting to preload all motions...");
-
     // 预加载 idle 动作
     if (this.idleMotion && !this.loadedMotions.has("idle")) {
       try {
         const motion = await this.loadMotionFile(this.idleMotion);
         if (motion) {
           this.loadedMotions.set("idle", motion);
-          console.log(`[AvatarController] Preloaded idle motion: ${this.idleMotion}`);
         }
       } catch (error) {
         console.warn(`[AvatarController] Failed to preload idle motion:`, error);
@@ -172,15 +170,12 @@ export class AvatarController {
           const motion = await this.loadMotionFile(motionFile);
           if (motion) {
             this.loadedMotions.set(emoteId, motion);
-            console.log(`[AvatarController] Preloaded emote: ${emoteId}`);
           }
         } catch (error) {
           console.warn(`[AvatarController] Failed to preload emote ${emoteId}:`, error);
         }
       }
     }
-
-    console.log("[AvatarController] All motions preloaded, cached count:", this.loadedMotions.size);
   }
 
   /**
@@ -191,7 +186,6 @@ export class AvatarController {
     return new Promise(async (resolve, reject) => {
       try {
         const motionUrl = this.getMotionUrl(motionFile);
-        console.log(`[AvatarController] Loading motion file: ${motionFile} -> ${motionUrl}`);
 
         // 根据文件扩展名选择加载器
         const fileExtension = motionFile.split(".").pop()?.toLowerCase();
@@ -341,7 +335,6 @@ export class AvatarController {
       }
     }
 
-    console.log("[AvatarController] Available expressions:", expressions);
     return expressions;
   }
 
@@ -357,12 +350,6 @@ export class AvatarController {
    * 播放 idle 动作
    */
   public async playIdleMotion(): Promise<void> {
-    console.log(
-      "[AvatarController] playIdleMotion called, idleMotion:",
-      this.idleMotion,
-      "vrm:",
-      !!this.vrm,
-    );
     if (!this.vrm) {
       console.warn("[AvatarController] Cannot play idle: no vrm");
       return;
@@ -412,7 +399,6 @@ export class AvatarController {
     const cacheKey = `preview_${motionFile}`;
     this.loadedMotions.delete(cacheKey);
 
-    console.log(`[AvatarController] Playing motion by file: ${motionFile}`);
     await this.loadAndPlayMotion(motionFile, cacheKey, loop);
   }
 
@@ -425,20 +411,31 @@ export class AvatarController {
     cacheKey: string,
     loop: boolean,
   ): Promise<void> {
-    console.log(
-      `[AvatarController] loadAndPlayMotion: file=${motionFile}, cacheKey=${cacheKey}, loop=${loop}`,
-    );
-
     if (!this.vrm || !this.mixer) {
       console.warn("[AvatarController] Cannot play: no vrm or mixer");
       return;
     }
 
     try {
-      // 停止当前动画
+      // 停止当前动画 - 立即停止，不等待
       if (this.currentAction) {
         this.currentAction.stop();
         this.currentAction = null;
+      }
+
+      // 停止临时混合器（用于 VRMA 动画）
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const tempMixer = (this as any).tempMixer;
+      if (tempMixer) {
+        tempMixer.stopAllAction();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (this as any).tempMixer = null;
+      }
+
+      // 清理之前的事件监听器
+      if (this.finishedListener && this.mixer) {
+        this.mixer.removeEventListener("finished", this.finishedListener);
+        this.finishedListener = null;
       }
 
       // 尝试从缓存获取已加载的动画
@@ -449,7 +446,6 @@ export class AvatarController {
         // 缓存未命中，动态加载
         motion = await this.loadMotionFile(motionFile);
       } else {
-        console.log(`[AvatarController] Using cached motion: ${cacheKey}`);
       }
 
       if (!motion) {
@@ -481,13 +477,39 @@ export class AvatarController {
         if (fileExtension === "vma" || fileExtension === "vrma") {
           // 创建新的 AnimationClip 确保干净的加载
           animClip = animClip.clone();
-          console.log("[AvatarController] Cloned VRMA animation clip");
         }
 
-        console.log(
-          `[AvatarController] Animation clip: ${animClip?.name}, duration: ${animClip?.duration}, loop: ${loop}`,
-        );
+        // 尝试使用 VRM 的人形系统来播放动画（自动处理骨骼映射）
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const vrmAny = this.vrm as any;
+        if (vrmAny.humanoid && vrmAny.humanoid.retarget && fileExtension === "vrma") {
+          // 使用 VRM 的人形系统进行动画重定向
+          try {
+            // 创建临时混合器用于处理动画
+            const tempMixer = new (THREE as any).AnimationMixer(this.vrm.scene);
+            const tempAction = tempMixer.clipAction(animClip);
+            tempAction.reset();
+            if (loop) {
+              tempAction.setLoop((THREE as any).LoopRepeat, Infinity);
+            } else {
+              tempAction.setLoop((THREE as any).LoopOnce);
+            }
+            tempAction.clampWhenFinished = !loop;
+            tempAction.play();
+            tempAction.fadeIn(0.1);
 
+            // 保存临时混合器引用以便在 update 中更新
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (this as any).tempMixer = tempMixer;
+
+            this.currentAction = tempAction;
+            return;
+          } catch (e) {
+            console.warn("[AvatarController] Humanoid retargeting failed, using fallback:", e);
+          }
+        }
+
+        // 回退：使用普通混合器
         const newAction = this.mixer.clipAction(animClip);
 
         // 重置并设置循环模式
@@ -499,34 +521,23 @@ export class AvatarController {
         }
         newAction.clampWhenFinished = !loop; // 只有循环时才保持最后一帧
 
-        console.log(
-          `[AvatarController] Playing motion: loop=${loop}, cacheKey=${cacheKey}, isPlaying=${newAction.isPlaying}`,
-        );
-
-        // 停止当前动作
-        if (this.currentAction) {
-          this.currentAction.fadeOut(0.1);
-          this.currentAction.stop();
-        }
-
-        // 播放新动作
+        // 播放新动作（当前动作的淡出已在前面处理）
         newAction.fadeIn(0.1);
         newAction.play();
 
-        console.log(
-          `[AvatarController] After play: isPlaying=${newAction.isPlaying}, loop=${newAction.loop}`,
-        );
+        this.currentAction = newAction;
 
         // 非循环动画（emote）播放完毕后自动过渡回 idle
         if (!loop) {
           // 使用 mixer 的事件监听动画结束
           const onFinished = (e: any) => {
             if (e.action === newAction) {
-              console.log("[AvatarController] Emote finished, transitioning to idle");
               this.mixer.removeEventListener("finished", onFinished);
+              this.finishedListener = null;
               this.playIdleMotion();
             }
           };
+          this.finishedListener = onFinished;
           this.mixer.addEventListener("finished", onFinished);
         }
 
@@ -544,6 +555,13 @@ export class AvatarController {
     // 更新动画混合器
     if (this.mixer) {
       this.mixer.update(delta);
+    }
+
+    // 更新临时混合器（用于 VRMA 动画）
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const tempMixer = (this as any).tempMixer;
+    if (tempMixer) {
+      tempMixer.update(delta);
     }
 
     // 更新表情控制器

@@ -1,5 +1,11 @@
 "use client";
 
+const REDACTED_SENTINEL = "__OPENCLAW_REDACTED__";
+
+function isRedacted(value: unknown): boolean {
+  return value === REDACTED_SENTINEL;
+}
+
 import {
   Bot,
   Plus,
@@ -994,7 +1000,7 @@ function ProviderCard({
             <div>
               <label className="text-xs text-text-secondary mb-1 block">API Key</label>
               <ApiKeyField
-                value={provider.apiKey ?? ""}
+                value={isRedacted(provider.apiKey) ? "" : (provider.apiKey ?? "")}
                 onChange={onApiKeyChange}
                 placeholder={`输入 ${name} API Key`}
               />
@@ -1213,9 +1219,12 @@ export function ModelsTab({ onClose }: { onClose?: () => void }) {
       const result = await wsClient.sendRequest<{
         raw: string;
         hash: string;
+        config?: Record<string, unknown>;
         parsed?: Record<string, unknown>;
       }>("config.get", {});
-      const parsed = result?.parsed ?? (result?.raw ? JSON.parse(result.raw) : null);
+      // Use config first (has original values), fallback to parsed (may be redacted)
+      const parsed =
+        result?.config ?? result?.parsed ?? (result?.raw ? JSON.parse(result.raw) : null);
       setConfigHash(result?.hash ?? null);
       const modelsProviders = (parsed?.models as Record<string, unknown>)?.providers;
       if (modelsProviders && typeof modelsProviders === "object") {

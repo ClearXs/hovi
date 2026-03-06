@@ -74,6 +74,8 @@ export function VirtualAssistantPage({ onClose }: VirtualAssistantPageProps) {
   const [vrmLoading, setVrmLoading] = useState(false);
   const [vrmError, setVrmError] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [loadProgress, setLoadProgress] = useState(0);
+  const vrmLoadedRef = useRef(false); // 追踪 VRM 是否已加载
 
   // VrmViewer ref
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -87,7 +89,7 @@ export function VirtualAssistantPage({ onClose }: VirtualAssistantPageProps) {
     error: voiceError,
     toggle: handleToggleVoice,
   } = useVoiceInput({
-    onStatusChange: (s) => console.log("[Voice] Status changed to:", s),
+    onStatusChange: () => {},
   });
 
   // 按钮拖动状态
@@ -100,33 +102,24 @@ export function VirtualAssistantPage({ onClose }: VirtualAssistantPageProps) {
   // 预览动作
   const handlePreviewMotion = useCallback(
     (motion: MotionItem) => {
-      console.log("[Preview] handlePreviewMotion called:", motion);
       const controller = vrmViewerRef.current?.getController();
-      console.log("[Preview] controller:", controller);
 
       if (controller) {
-        // 确保设置 motionBasePath
+        // 确保每次都设置 motionBasePath
         if (vrmUrl) {
           const urlParts = vrmUrl.split("/");
           const filesIndex = urlParts.indexOf("files");
           if (filesIndex !== -1) {
-            // 不需要加前导斜杠，因为 vrmUrl 已经是 /files/... 格式
             const basePath = urlParts.slice(0, filesIndex + 2).join("/");
             controller.setMotionBasePath(basePath);
-            console.log("[Preview] Set motionBasePath:", basePath);
           }
         }
 
-        console.log("[Preview] Playing motion:", motion);
         if (motion.type === "idle") {
-          // 对于 idle，播放 idle 动作
           controller.playIdleMotion();
         } else {
-          // 对于 emote，直接根据 file 路径播放
           controller.playMotionByFile(motion.file, false);
         }
-      } else {
-        console.warn("[Preview] AvatarController not available");
       }
     },
     [vrmUrl],
@@ -138,10 +131,10 @@ export function VirtualAssistantPage({ onClose }: VirtualAssistantPageProps) {
     try {
       setVrmError(false);
       setVrmLoading(true);
+      setLoadProgress(0);
+      vrmLoadedRef.current = false; // 重置加载状态
       setVrmUrl(null);
-      console.log("[VRM] Loading config for agent:", AGENT_ID);
       const fileResult = await getAgentFile(wsClient, AGENT_ID, "persona.json");
-      console.log("[VRM] Config file result:", fileResult);
 
       // 检查文件是否存在且有内容
       const content = fileResult?.content;
@@ -150,11 +143,13 @@ export function VirtualAssistantPage({ onClose }: VirtualAssistantPageProps) {
         if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
           try {
             const config = JSON.parse(trimmed);
-            console.log("[VRM] Parsed config:", config, "vrm value:", config.vrm);
             if (config.vrm) {
               const url = `/files/${AGENT_ID}/${config.vrm}`;
-              console.log("[VRM] Setting URL:", url);
               setVrmUrl(url);
+
+              // VRM URL 已设置，加载配置完成，隐藏初始加载动画
+              // 后续的 VRM 文件加载由 VrmViewer 组件内部处理
+              setVrmLoading(false);
 
               // 加载动作 - 支持新旧格式
               let motionUrlValue: string | null = null;
@@ -176,7 +171,6 @@ export function VirtualAssistantPage({ onClose }: VirtualAssistantPageProps) {
 
               if (motionUrlValue) {
                 const mUrl = `/files/${AGENT_ID}/${motionUrlValue}`;
-                console.log("[VRM] Setting motion URL:", mUrl);
                 setMotionUrl(mUrl);
               } else {
                 setMotionUrl(null);
@@ -184,29 +178,23 @@ export function VirtualAssistantPage({ onClose }: VirtualAssistantPageProps) {
 
               // 加载 Motion 配置（用于 AvatarController）
               if (config.motions) {
-                console.log("[VRM] Setting motionConfig:", config.motions);
                 setMotionConfig(config.motions);
               }
-
-              setVrmLoading(false);
+              // Don't set vrmLoading false here - let VrmViewer's onVrmLoad handle it
             } else {
-              console.log("[VRM] No vrm in config");
+              // No VRM to load, we're done loading
               setVrmLoading(false);
             }
           } catch (e) {
-            console.error("[VRM] JSON parse error:", e);
             setVrmLoading(false);
           }
         } else {
-          console.log("[VRM] persona.json is not valid JSON, skipping VRM load");
           setVrmLoading(false);
         }
       } else {
-        console.log("[VRM] persona.json not found or empty, skipping VRM load");
         setVrmLoading(false);
       }
     } catch (error) {
-      console.error("[VRM] Failed to load config:", error);
       setVrmError(true);
       setVrmLoading(false);
     }
@@ -217,6 +205,16 @@ export function VirtualAssistantPage({ onClose }: VirtualAssistantPageProps) {
       loadConfig();
     }
   }, [isConnected, vrmError, loadConfig]);
+
+  // 备用：如果加载超时（10秒），自动关闭加载状态
+  useEffect(() => {
+    if (vrmLoading) {
+      const timeout = setTimeout(() => {
+        setVrmLoading(false);
+      }, 10000);
+      return () => clearTimeout(timeout);
+    }
+  }, [vrmLoading]);
 
   // 右键菜单操作
   const handleToggleSubtitles = useCallback(() => {
@@ -283,7 +281,17 @@ export function VirtualAssistantPage({ onClose }: VirtualAssistantPageProps) {
           <div className="flex items-center justify-center w-full h-full">
             <div className="flex flex-col items-center gap-2">
               <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-              <span className="text-sm text-muted-foreground">加载中...</span>
+              <span className="text-sm text-muted-foreground">
+                加载中... {loadProgress > 0 ? `${Math.round(loadProgress)}%` : ""}
+              </span>
+              {loadProgress > 0 && loadProgress < 100 && (
+                <div className="w-32 h-2 bg-gray-200 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-primary transition-all duration-300"
+                    style={{ width: `${loadProgress}%` }}
+                  />
+                </div>
+              )}
             </div>
           </div>
         ) : isConnected && !vrmError ? (
@@ -293,6 +301,9 @@ export function VirtualAssistantPage({ onClose }: VirtualAssistantPageProps) {
             motionUrl={motionUrl}
             motionConfig={motionConfig}
             avatarState={avatarState}
+            onProgress={(loaded: number, total: number) => {
+              setLoadProgress((loaded / total) * 100);
+            }}
           />
         ) : null}
       </div>

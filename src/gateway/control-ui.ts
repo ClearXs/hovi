@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
+import { resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { openBoundaryFileSync } from "../infra/boundary-file-read.js";
 import { resolveControlUiRootSync } from "../infra/control-ui-assets.js";
@@ -218,9 +219,15 @@ export function handleControlUiAvatarRequest(
 function setStaticFileHeaders(res: ServerResponse, filePath: string) {
   const ext = path.extname(filePath).toLowerCase();
   res.setHeader("Content-Type", contentTypeForExt(ext));
-  // Static UI should never be cached aggressively while iterating; allow the
-  // browser to revalidate.
-  res.setHeader("Cache-Control", "no-cache");
+
+  // VRM and motion files can be cached (they rarely change)
+  // Only set no-cache for HTML files
+  if (ext === ".html") {
+    res.setHeader("Cache-Control", "no-cache");
+  } else {
+    // Cache for 1 hour, allow browser to revalidate
+    res.setHeader("Cache-Control", "public, max-age=3600, must-revalidate");
+  }
 }
 
 function serveResolvedFile(res: ServerResponse, filePath: string, body: Buffer) {
@@ -461,4 +468,118 @@ export function handleControlUiHttpRequest(
 
   respondControlUiNotFound(res);
   return true;
+}
+
+/**
+ * Handler for /files/:agentId/:path* requests.
+ * Serves files from agent workspace directories.
+ * Example: /files/main/models/avatar.vrm -> /workspace/main/models/avatar.vrm
+ */
+export function handleAgentFilesRequest(
+  req: IncomingMessage,
+  res: ServerResponse,
+  opts: { config: OpenClawConfig },
+): boolean {
+  const urlRaw = req.url;
+  if (!urlRaw) {
+    return false;
+  }
+
+  // Only handle GET and HEAD requests
+  if (!isReadHttpMethod(req.method)) {
+    return false;
+  }
+
+  const url = new URL(urlRaw, "http://localhost");
+  const pathname = url.pathname;
+
+  // Check if this is a /files/ request
+  if (!pathname.startsWith("/files/")) {
+    return false;
+  }
+
+  // Parse /files/:agentId/:path*
+  const pathParts = pathname.slice("/files/".length).split("/").filter(Boolean);
+  if (pathParts.length < 2) {
+    // Need at least agentId and one path component
+    respondControlUiNotFound(res);
+    return true;
+  }
+
+  const agentId = pathParts[0];
+  const fileRelPath = pathParts.slice(1).join("/");
+
+  // Validate agentId
+  if (!agentId || !isValidAgentId(agentId)) {
+    respondControlUiNotFound(res);
+    return true;
+  }
+
+  // Apply security headers
+  applyControlUiSecurityHeaders(res);
+
+  // Resolve workspace directory
+  const workspaceDir = resolveAgentWorkspaceDir(opts.config, agentId);
+  if (!workspaceDir) {
+    respondControlUiNotFound(res);
+    return true;
+  }
+
+  // Files are stored under {workspace}/{agentId}/... structure
+  // e.g., /files/main/models/avatar.vrm -> /workspace/main/models/avatar.vrm
+  const filePath = path.join(workspaceDir, agentId, fileRelPath);
+
+  // Security check: ensure file is within workspace
+  if (!isWithinDir(workspaceDir, filePath)) {
+    respondControlUiNotFound(res);
+    return true;
+  }
+
+  // Check if file exists
+  try {
+    const stats = fs.statSync(filePath);
+    if (!stats.isFile()) {
+      respondControlUiNotFound(res);
+      return true;
+    }
+  } catch {
+    respondControlUiNotFound(res);
+    return true;
+  }
+
+  // Handle HEAD request
+  if (respondHeadForFile(req, res, filePath)) {
+    return true;
+  }
+
+  // Serve the file using streaming for better performance
+  try {
+    const stat = fs.statSync(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+
+    res.setHeader("Content-Type", contentTypeForExt(ext));
+    res.setHeader("Content-Length", stat.size);
+
+    // VRM and motion files can be cached
+    if (ext === ".vrm" || ext === ".vmd" || ext === ".vma" || ext === ".vrma") {
+      res.setHeader("Cache-Control", "public, max-age=3600, must-revalidate");
+    } else if (ext === ".html") {
+      res.setHeader("Cache-Control", "no-cache");
+    } else {
+      res.setHeader("Cache-Control", "public, max-age=3600, must-revalidate");
+    }
+
+    const readStream = fs.createReadStream(filePath);
+    readStream.pipe(res);
+
+    readStream.on("error", () => {
+      res.statusCode = 500;
+      res.end();
+    });
+
+    return true;
+  } catch {
+    respondControlUiNotFound(res);
+    return true;
+  }
 }

@@ -23,6 +23,7 @@ import {
 import { type GatewayAuthResult, type ResolvedGatewayAuth } from "./auth.js";
 import { normalizeCanvasScopedUrl } from "./canvas-capability.js";
 import {
+  handleAgentFilesRequest,
   handleControlUiAvatarRequest,
   handleControlUiHttpRequest,
   type ControlUiRootState,
@@ -46,6 +47,7 @@ import {
   resolveHookDeliver,
 } from "./hooks.js";
 import { sendGatewayAuthFailure, setDefaultSecurityHeaders } from "./http-common.js";
+import { handleKnowledgeHttpRequest } from "./knowledge-http.js";
 import { handleOpenAiHttpRequest } from "./openai-http.js";
 import { handleOpenResponsesHttpRequest } from "./openresponses-http.js";
 import {
@@ -590,6 +592,15 @@ export function createGatewayHttpServer(opts: {
           name: "slack",
           run: () => handleSlackHttpRequest(req, res),
         },
+        {
+          name: "knowledge",
+          run: () =>
+            handleKnowledgeHttpRequest(req, res, {
+              auth: resolvedAuth,
+              trustedProxies,
+              rateLimiter,
+            }),
+        },
       ];
       if (openResponsesEnabled) {
         requestStages.push({
@@ -667,6 +678,16 @@ export function createGatewayHttpServer(opts: {
           rateLimiter,
         }),
       );
+
+      // Agent files handler - serves files from agent workspace directories
+      // MUST be before control-ui-http to avoid SPA fallback
+      requestStages.push({
+        name: "agent-files",
+        run: () =>
+          handleAgentFilesRequest(req, res, {
+            config: configSnapshot,
+          }),
+      });
 
       if (controlUiEnabled) {
         requestStages.push({

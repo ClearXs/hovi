@@ -401,40 +401,38 @@ export async function knowledgeSearch(params: {
   });
 }
 
-// 文件上传仍然使用 HTTP（需要 FormData）
+// 文件上传使用 WebSocket RPC
 export async function uploadKnowledge(params: {
   kbId: string;
   file: File;
   description?: string;
   tags?: string[];
 }): Promise<{ documentId: string; filename: string; size: number; indexed?: boolean }> {
-  const GATEWAY_HTTP_URL = process.env.NEXT_PUBLIC_GATEWAY_HTTP_URL || "";
-  const base = /^https?:\/\//.test(GATEWAY_HTTP_URL)
-    ? GATEWAY_HTTP_URL
-    : typeof window !== "undefined"
-      ? `${window.location.origin}${GATEWAY_HTTP_URL}`
-      : `http://localhost${GATEWAY_HTTP_URL}`;
+  // Read file as base64
+  const arrayBuffer = await params.file.arrayBuffer();
+  const base64 = btoa(
+    new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), ""),
+  );
 
-  const form = new FormData();
-  form.append("kbId", params.kbId);
-  form.append("file", params.file);
-  if (params.description) form.append("description", params.description);
-  if (params.tags && params.tags.length > 0) form.append("tags", params.tags.join(","));
+  // Determine mime type
+  const mimeType = params.file.type || "application/octet-stream";
 
-  const token = useConnectionStore.getState().gatewayToken;
-  const headers: Record<string, string> = {};
-  if (token) headers.Authorization = `Bearer ${token}`;
-
-  const response = await fetch(`${base}/api/knowledge/upload`, {
-    method: "POST",
-    headers,
-    body: form,
+  // Call via WebSocket RPC
+  const result = await callKnowledgeWs<{
+    documentId: string;
+    filename: string;
+    size: number;
+    indexed: boolean;
+  }>("knowledge.upload", {
+    kbId: params.kbId,
+    filename: params.file.name,
+    content: base64,
+    mimeType,
+    description: params.description,
+    tags: params.tags,
   });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data?.message || KNOWLEDGE_ERRORS.REQUEST_FAILED);
-  }
-  return data;
+
+  return result;
 }
 
 export async function updateKnowledge(params: {
@@ -450,34 +448,33 @@ export async function updateKnowledge(params: {
   indexed?: boolean;
   updatedAt?: string;
 }> {
-  const GATEWAY_HTTP_URL = process.env.NEXT_PUBLIC_GATEWAY_HTTP_URL || "";
-  const base = /^https?:\/\//.test(GATEWAY_HTTP_URL)
-    ? GATEWAY_HTTP_URL
-    : typeof window !== "undefined"
-      ? `${window.location.origin}${GATEWAY_HTTP_URL}`
-      : `http://localhost${GATEWAY_HTTP_URL}`;
+  // Read file as base64
+  const arrayBuffer = await params.file.arrayBuffer();
+  const base64 = btoa(
+    new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), ""),
+  );
 
-  const form = new FormData();
-  form.append("kbId", params.kbId);
-  form.append("documentId", params.documentId);
-  form.append("file", params.file);
-  if (params.description) form.append("description", params.description);
-  if (params.tags && params.tags.length > 0) form.append("tags", params.tags.join(","));
+  // Determine mime type
+  const mimeType = params.file.type || "application/octet-stream";
 
-  const token = useConnectionStore.getState().gatewayToken;
-  const headers: Record<string, string> = {};
-  if (token) headers.Authorization = `Bearer ${token}`;
-
-  const response = await fetch(`${base}/api/knowledge/update`, {
-    method: "POST",
-    headers,
-    body: form,
+  // Call via WebSocket RPC
+  const result = await callKnowledgeWs<{
+    documentId: string;
+    filename: string;
+    size: number;
+    indexed: boolean;
+    updatedAt: string;
+  }>("knowledge.upload", {
+    kbId: params.kbId,
+    documentId: params.documentId,
+    filename: params.file.name,
+    content: base64,
+    mimeType,
+    description: params.description,
+    tags: params.tags,
   });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(data?.message || KNOWLEDGE_ERRORS.REQUEST_FAILED);
-  }
-  return data;
+
+  return result;
 }
 
 export async function updateKnowledgeMetadata(params: {
@@ -520,49 +517,39 @@ export async function uploadKnowledgeWithProgress(
   },
   onProgress?: (progress: number) => void,
 ): Promise<{ documentId: string; filename: string; size: number; indexed?: boolean }> {
-  const GATEWAY_HTTP_URL = process.env.NEXT_PUBLIC_GATEWAY_HTTP_URL || "";
-  const base = /^https?:\/\//.test(GATEWAY_HTTP_URL)
-    ? GATEWAY_HTTP_URL
-    : typeof window !== "undefined"
-      ? `${window.location.origin}${GATEWAY_HTTP_URL}`
-      : `http://localhost${GATEWAY_HTTP_URL}`;
+  // Read file as base64
+  const arrayBuffer = await params.file.arrayBuffer();
 
-  const form = new FormData();
-  form.append("kbId", params.kbId);
-  form.append("file", params.file);
-  if (params.description) form.append("description", params.description);
-  if (params.tags && params.tags.length > 0) form.append("tags", params.tags.join(","));
+  // Report progress for reading file
+  if (onProgress) onProgress(30);
 
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", `${base}/api/knowledge/upload`);
+  const base64 = btoa(
+    new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), ""),
+  );
 
-    const token = useConnectionStore.getState().gatewayToken;
-    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+  if (onProgress) onProgress(60);
 
-    xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable && onProgress) {
-        const progress = Math.round((event.loaded / event.total) * 100);
-        onProgress(progress);
-      }
-    };
+  // Determine mime type
+  const mimeType = params.file.type || "application/octet-stream";
 
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) {
-        try {
-          const data = JSON.parse(xhr.responseText);
-          resolve(data);
-        } catch {
-          reject(new Error("Invalid response"));
-        }
-      } else {
-        reject(new Error(KNOWLEDGE_ERRORS.REQUEST_FAILED));
-      }
-    };
-
-    xhr.onerror = () => reject(new Error(KNOWLEDGE_ERRORS.REQUEST_FAILED));
-    xhr.send(form);
+  // Call via WebSocket RPC
+  const result = await callKnowledgeWs<{
+    documentId: string;
+    filename: string;
+    size: number;
+    indexed: boolean;
+  }>("knowledge.upload", {
+    kbId: params.kbId,
+    filename: params.file.name,
+    content: base64,
+    mimeType,
+    description: params.description,
+    tags: params.tags,
   });
+
+  if (onProgress) onProgress(100);
+
+  return result;
 }
 
 // ============================================================

@@ -215,20 +215,22 @@ export class KnowledgeManager {
   private cfg: OpenClawConfig;
   private db: DatabaseSync;
   private baseDir: string;
+  private agentId: string;
   private storage: KnowledgeStorageManager;
   private processorRegistry: ProcessorRegistry;
   private readonly embeddingCacheTable = "embedding_cache";
   private readonly ftsTable = "chunks_fts";
 
-  constructor(params: { cfg: OpenClawConfig; db: DatabaseSync; baseDir: string }) {
+  constructor(params: { cfg: OpenClawConfig; db: DatabaseSync; baseDir: string; agentId: string }) {
     this.cfg = params.cfg;
     this.db = params.db;
     this.baseDir = params.baseDir;
+    this.agentId = params.agentId;
 
     // Ensure schema exists
     ensureKnowledgeSchema(this.db);
 
-    this.storage = new KnowledgeStorageManager(this.baseDir, this.db);
+    this.storage = new KnowledgeStorageManager(this.baseDir, this.agentId, this.db);
     this.processorRegistry = new ProcessorRegistry();
   }
 
@@ -881,7 +883,7 @@ export class KnowledgeManager {
             model: this.getSettings(params.agentId).vectorization.model,
           },
         });
-        if (memoryManager) {
+        if (memoryManager && typeof memoryManager.deleteKnowledgeDocument === "function") {
           memoryManager.deleteKnowledgeDocument(params.documentId);
         }
       } catch (err) {
@@ -1080,7 +1082,7 @@ export class KnowledgeManager {
           },
         });
 
-        if (memoryManager) {
+        if (memoryManager && typeof memoryManager.deleteKnowledgeDocument === "function") {
           memoryManager.deleteKnowledgeDocument(params.documentId);
         }
       } catch (err) {
@@ -2230,26 +2232,40 @@ export class KnowledgeManager {
       kbId,
     });
 
+    log.info(
+      `knowledge: rebuild resolving document path: ${JSON.stringify({ absPath: resolved.absPath, mimetype: resolved.mimetype, docId: doc.id, docFilename: doc.filename })}`,
+    );
+
     const fsPromises = await import("fs/promises");
     const fileBuffer = await fsPromises.readFile(resolved.absPath);
+    log.info(`knowledge: rebuild read file buffer, size: ${fileBuffer.byteLength}`);
 
     // Extract text using processor
     const processor = this.processorRegistry.getProcessor(resolved.mimetype);
+    log.info(
+      `knowledge: rebuild processor for ${resolved.mimetype}: ${processor ? "found" : "NOT FOUND"}`,
+    );
     let extractedText = "";
     if (processor) {
       try {
         extractedText = await processor.extract(fileBuffer, {});
+        log.info(`knowledge: rebuild extracted text length: ${extractedText.length}`);
       } catch (err) {
+        log.error(`knowledge: rebuild processor.extract failed: ${String(err)}`);
         throw new Error(`Failed to extract text from document: ${String(err)}`, { cause: err });
       }
     }
 
     if (!extractedText || extractedText.trim().length === 0) {
+      log.error(
+        `knowledge: rebuild no text extracted, mimetype: ${resolved.mimetype}, processor: ${processor ? "yes" : "no"}, fileSize: ${fileBuffer.byteLength}`,
+      );
       throw new Error("No text content could be extracted from the document");
     }
 
     const settings = this.getSettings(params.agentId);
     const baseSettings = this.getBaseSettingsById(params.agentId, kbId);
+    log.info(`knowledge: rebuild baseSettings raw: ${JSON.stringify(baseSettings)}`);
 
     let vectorized = false;
     let graphBuilt = false;
@@ -2292,6 +2308,9 @@ export class KnowledgeManager {
     }
 
     // Re-vectorize if enabled
+    log.info(
+      `knowledge: rebuild vectorization check - autoIndex: ${config.search.autoIndex}, includeInMemorySearch: ${config.search.includeInMemorySearch}, settings.vectorization.enabled: ${settings.vectorization.enabled}, baseSettings.vectorization.enabled: ${baseSettings.vectorization.enabled}, hasText: ${!!extractedText}`,
+    );
     if (
       config.search.autoIndex &&
       config.search.includeInMemorySearch &&
@@ -2313,13 +2332,23 @@ export class KnowledgeManager {
           });
           vectorized = true;
           this.storage.updateIndexedAt(doc.id);
+          log.info(`knowledge: rebuild vectorization succeeded for doc ${doc.id}`);
+        } else {
+          log.warn(`knowledge: rebuild memoryManager is null, skipping vectorization`);
         }
       } catch (err) {
-        log.warn(`knowledge: failed to re-vectorize document: ${String(err)}`);
+        log.warn(
+          `knowledge: failed to re-vectorize document: ${String(err)}, stack: ${(err as Error).stack}`,
+        );
       }
+    } else {
+      log.info(`knowledge: rebuild skipping vectorization due to settings`);
     }
 
     // Re-build graph if enabled
+    log.info(
+      `knowledge: rebuild graph check - baseSettings.graph.enabled: ${baseSettings.graph.enabled}, hasText: ${!!extractedText}`,
+    );
     if (baseSettings.graph.enabled && extractedText) {
       try {
         await this.extractGraphForDocument({
@@ -2330,9 +2359,12 @@ export class KnowledgeManager {
           kbId,
         });
         graphBuilt = true;
+        log.info(`knowledge: rebuild graph extraction succeeded for doc ${doc.id}`);
       } catch (err) {
         log.warn(`knowledge: failed to re-build graph: ${String(err)}`);
       }
+    } else {
+      log.info(`knowledge: rebuild skipping graph due to settings`);
     }
 
     return {

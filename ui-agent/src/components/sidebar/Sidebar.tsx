@@ -21,6 +21,8 @@ import {
   Box,
   ChevronUp,
   Sparkles,
+  Clock,
+  Bot,
 } from "lucide-react";
 import { useEffect, useRef, useState, useMemo } from "react";
 import { FiEdit3, FiSearch, FiBook } from "react-icons/fi";
@@ -70,6 +72,8 @@ interface SidebarProps {
   isLoading?: boolean;
   onOpenKnowledge?: () => void;
   onOpenPersonaSettings?: () => void;
+  onOpenCronJobs?: () => void;
+  onOpenAgentManage?: () => void;
   assistantVisible?: boolean;
   onToggleAssistantVisible?: () => void;
   activeView?: "chat" | "knowledge" | "persona";
@@ -104,6 +108,8 @@ const Sidebar = ({
   isLoading = false,
   onOpenKnowledge = () => {},
   onOpenPersonaSettings = () => {},
+  onOpenCronJobs = () => {},
+  onOpenAgentManage = () => {},
   assistantVisible = true,
   onToggleAssistantVisible = () => {},
   activeView = "chat",
@@ -162,6 +168,14 @@ const Sidebar = ({
 
   const handlePersonaSettingsClick = () => {
     onOpenPersonaSettings();
+  };
+
+  const handleCronJobsClick = () => {
+    onOpenCronJobs();
+  };
+
+  const handleAgentManageClick = () => {
+    onOpenAgentManage();
   };
 
   const resolveTitle = (session: GatewaySessionRow) =>
@@ -668,6 +682,40 @@ const Sidebar = ({
                 </TooltipTrigger>
                 <TooltipContent>
                   <p className="text-xs">助手设定</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+
+            {/* 定时任务按钮 */}
+            <TooltipProvider delayDuration={300}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={handleCronJobsClick}
+                    className="w-10 h-10 rounded-md flex items-center justify-center transition-colors duration-fast hover:bg-surface-hover active:bg-surface-subtle cursor-pointer"
+                  >
+                    <Clock className="w-5 h-5 text-text-secondary hover:text-text-primary transition-colors" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="text-xs">定时任务</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+
+            {/* Agent管理按钮 */}
+            <TooltipProvider delayDuration={300}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={handleAgentManageClick}
+                    className="w-10 h-10 rounded-md flex items-center justify-center transition-colors duration-fast hover:bg-surface-hover active:bg-surface-subtle cursor-pointer"
+                  >
+                    <Bot className="w-5 h-5 text-text-secondary hover:text-text-primary transition-colors" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="text-xs">Agent管理</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -1181,6 +1229,36 @@ const Sidebar = ({
                 </TooltipTrigger>
                 <TooltipContent>
                   <p className="text-xs">助手设定</p>
+                </TooltipContent>
+              </Tooltip>
+
+              {/* 定时任务 */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={handleCronJobsClick}
+                    className="flex-shrink-0 w-6 h-6 rounded hover:bg-surface-hover active:bg-surface-subtle flex items-center justify-center transition-colors cursor-pointer"
+                  >
+                    <Clock className="w-3.5 h-3.5 text-text-secondary hover:text-text-primary transition-colors" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="text-xs">定时任务</p>
+                </TooltipContent>
+              </Tooltip>
+
+              {/* Agent管理 */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={handleAgentManageClick}
+                    className="flex-shrink-0 w-6 h-6 rounded hover:bg-surface-hover active:bg-surface-subtle flex items-center justify-center transition-colors cursor-pointer"
+                  >
+                    <Bot className="w-3.5 h-3.5 text-text-secondary hover:text-text-primary transition-colors" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p className="text-xs">Agent管理</p>
                 </TooltipContent>
               </Tooltip>
 

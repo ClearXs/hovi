@@ -1,10 +1,10 @@
 // ASR processor - integrates with cloud ASR providers via media-understanding
 
-import { log } from "../logging.js";
+import { getLogger } from "../logging.js";
 import { resolveAsrConfig } from "./config.js";
 import type { AsrConfig, TranscriptionResult, VadResult } from "./types.js";
 
-const logger = log("asr:processor");
+const logger = getLogger("asr:processor");
 
 export class AsrProcessor {
   private config: AsrConfig;

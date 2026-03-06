@@ -154,6 +154,7 @@ export class ProcessorRegistry {
       ["text/plain", new TextProcessor()],
       ["text/markdown", new TextProcessor()],
       ["text/html", new HtmlProcessor()],
+      ["application/json", new TextProcessor()],
     ]);
   }
 
