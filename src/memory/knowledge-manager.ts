@@ -1327,6 +1327,7 @@ export class KnowledgeManager {
         workspaceDir: this.baseDir,
         agentDir: resolveAgentDir(this.cfg, params.agentId),
       });
+      log.info(`knowledge: extractGraphForDocument got ${extractResult.triples.length} triples`);
       const triples = extractResult.triples
         .map((triple) => normalizeTripleOrNull(triple))
         .filter((triple): triple is KnowledgeGraphTripleInput => Boolean(triple));
@@ -1349,6 +1350,21 @@ export class KnowledgeManager {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       );
       const insertFts = this.buildGraphFtsInsert();
+
+      // Prepare kg_entities and kg_relations inserts
+      const insertEntity = this.db.prepare(
+        `INSERT OR IGNORE INTO kg_entities (id, kb_id, document_id, name, type, description, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      );
+      const insertRelation = this.db.prepare(
+        `INSERT INTO kg_relations (id, kb_id, document_id, source_entity_id, target_entity_id, keywords, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      );
+
+      // Track entities we've seen to avoid duplicates
+      const entityIds = new Set<string>();
+      const now = Date.now();
+
       for (const triple of triples) {
         const h = typeof triple.h === "string" ? triple.h : triple.h.name;
         const t = typeof triple.t === "string" ? triple.t : triple.t.name;
@@ -1359,10 +1375,28 @@ export class KnowledgeManager {
           t: typeof triple.t === "string" ? undefined : triple.t,
         });
         const tripleId = hashTripleKey(triple);
-        insertTriple.run(tripleId, kbId, params.documentId, h, r, t, props, Date.now());
+        insertTriple.run(tripleId, kbId, params.documentId, h, r, t, props, now);
         if (insertFts) {
           insertFts.run([h, r, t].join(" "), tripleId, kbId, params.documentId, h, r, t);
         }
+
+        // Insert entities into kg_entities
+        const hId = `entity:${kbId}:${h}`;
+        if (!entityIds.has(hId)) {
+          entityIds.add(hId);
+          const hDesc = typeof triple.h === "string" ? undefined : triple.h.description;
+          insertEntity.run(hId, kbId, params.documentId, h, "实体", hDesc ?? null, now, now);
+        }
+        const tId = `entity:${kbId}:${t}`;
+        if (!entityIds.has(tId)) {
+          entityIds.add(tId);
+          const tDesc = typeof triple.t === "string" ? undefined : triple.t.description;
+          insertEntity.run(tId, kbId, params.documentId, t, "实体", tDesc ?? null, now, now);
+        }
+
+        // Insert relation into kg_relations
+        const relId = `rel:${tripleId}`;
+        insertRelation.run(relId, kbId, params.documentId, hId, tId, r, now);
       }
       this.db
         .prepare(
@@ -1489,13 +1523,13 @@ export class KnowledgeManager {
     }));
   }
 
-  listChunks(params: {
+  async listChunks(params: {
     agentId: string;
     documentId: string;
     kbId?: string;
     limit?: number;
     offset?: number;
-  }): { total: number; returned: number; offset: number; chunks: KnowledgeChunk[] } {
+  }) {
     const config = this.getConfig(params.agentId);
     if (!config) {
       throw new Error(`Knowledge base is disabled for agent ${params.agentId}`);
@@ -1514,23 +1548,76 @@ export class KnowledgeManager {
     const limit = Math.max(1, params.limit ?? 50);
     const offset = Math.max(0, params.offset ?? 0);
     const pathKey = `knowledge/${params.documentId}`;
-    const totalRow = this.db
-      .prepare(`SELECT COUNT(*) as count FROM chunks WHERE path = ? AND source = 'knowledge'`)
-      .get(pathKey) as { count: number };
-    const rows = this.db
-      .prepare(
-        `SELECT id, text, start_line, end_line
-         FROM chunks
-         WHERE path = ? AND source = 'knowledge'
-         ORDER BY start_line ASC
-         LIMIT ? OFFSET ?`,
-      )
-      .all(pathKey, limit, offset) as Array<{
-      id: string;
-      text: string;
-      start_line: number;
-      end_line: number;
-    }>;
+
+    // Get chunks from MemoryIndexManager's database (where chunks are actually stored)
+    const { MemoryIndexManager } = await import("./manager.js");
+    let memoryDb;
+    try {
+      const memoryManager = await MemoryIndexManager.get({
+        cfg: this.cfg,
+        agentId: params.agentId,
+      });
+      if (memoryManager) {
+        memoryDb = (
+          memoryManager as unknown as {
+            db: {
+              prepare: (sql: string) => {
+                get: (path: string) => { count: number };
+                all: (
+                  path: string,
+                  limit: number,
+                  offset: number,
+                ) => Array<{ id: string; text: string; start_line: number; end_line: number }>;
+              };
+            };
+          }
+        ).db;
+      }
+    } catch (err) {
+      log.warn(`listChunks: failed to get memory manager: ${String(err)}`);
+    }
+
+    // Try to get from memory database first
+    let total = 0;
+    let rows: Array<{ id: string; text: string; start_line: number; end_line: number }> = [];
+
+    if (memoryDb) {
+      try {
+        const totalRow = memoryDb
+          .prepare(`SELECT COUNT(*) as count FROM chunks WHERE path = ? AND source = 'knowledge'`)
+          .get(pathKey) as { count: number } | undefined;
+        total = totalRow?.count ?? 0;
+        rows = memoryDb
+          .prepare(
+            `SELECT id, text, start_line, end_line
+             FROM chunks
+             WHERE path = ? AND source = 'knowledge'
+             ORDER BY start_line ASC
+             LIMIT ? OFFSET ?`,
+          )
+          .all(pathKey, limit, offset) as typeof rows;
+      } catch (err) {
+        log.warn(`listChunks: failed to read from memory db: ${String(err)}`);
+      }
+    }
+
+    // Fallback to local db if memory db not available
+    if (!memoryDb || rows.length === 0) {
+      const totalRow = this.db
+        .prepare(`SELECT COUNT(*) as count FROM chunks WHERE path = ? AND source = 'knowledge'`)
+        .get(pathKey) as { count: number };
+      total = totalRow?.count ?? 0;
+      rows = this.db
+        .prepare(
+          `SELECT id, text, start_line, end_line
+           FROM chunks
+           WHERE path = ? AND source = 'knowledge'
+           ORDER BY start_line ASC
+           LIMIT ? OFFSET ?`,
+        )
+        .all(pathKey, limit, offset) as typeof rows;
+    }
+
     const chunks = rows.map((row, idx) => ({
       id: row.id,
       index: offset + idx + 1,
@@ -1540,7 +1627,7 @@ export class KnowledgeManager {
       status: "enabled" as const,
     }));
     return {
-      total: totalRow?.count ?? 0,
+      total,
       returned: chunks.length,
       offset,
       chunks,
@@ -2263,6 +2350,9 @@ export class KnowledgeManager {
       throw new Error("No text content could be extracted from the document");
     }
 
+    // Ensure chunks schema exists before vectorization
+    this.ensureChunksSchema();
+
     const settings = this.getSettings(params.agentId);
     const baseSettings = this.getBaseSettingsById(params.agentId, kbId);
     log.info(`knowledge: rebuild baseSettings raw: ${JSON.stringify(baseSettings)}`);
@@ -2307,21 +2397,19 @@ export class KnowledgeManager {
       throw err;
     }
 
-    // Re-vectorize if enabled
+    // Re-vectorize if enabled (only check baseSettings, ignore agent-level settings)
     log.info(
-      `knowledge: rebuild vectorization check - autoIndex: ${config.search.autoIndex}, includeInMemorySearch: ${config.search.includeInMemorySearch}, settings.vectorization.enabled: ${settings.vectorization.enabled}, baseSettings.vectorization.enabled: ${baseSettings.vectorization.enabled}, hasText: ${!!extractedText}`,
+      `knowledge: rebuild vectorization check - baseSettings.vectorization.enabled: ${baseSettings.vectorization.enabled}, hasText: ${!!extractedText}`,
     );
-    if (
-      config.search.autoIndex &&
-      config.search.includeInMemorySearch &&
-      settings.vectorization.enabled &&
-      baseSettings.vectorization.enabled &&
-      extractedText
-    ) {
+    if (baseSettings.vectorization.enabled && extractedText) {
       try {
         const memoryManager = await MemoryIndexManager.get({
           cfg: this.cfg,
           agentId: params.agentId,
+          overrides: {
+            provider: settings.vectorization.provider,
+            model: settings.vectorization.model,
+          },
         });
 
         if (memoryManager) {

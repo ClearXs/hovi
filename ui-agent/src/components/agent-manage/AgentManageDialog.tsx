@@ -118,7 +118,7 @@ export function AgentManageDialog({ open, onOpenChange }: AgentManageDialogProps
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-[48rem] h-[80vh] flex flex-col p-0 gap-0">
+        <DialogContent className="max-w-[64rem] h-[80vh] flex flex-col p-0 gap-0">
           <DialogHeader className="px-6 pt-6 pb-0 flex-shrink-0">
             <DialogTitle className="text-lg font-semibold">Agent 管理</DialogTitle>
           </DialogHeader>

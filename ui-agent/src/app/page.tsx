@@ -28,11 +28,14 @@ import { WelcomePage } from "@/components/welcome/WelcomePage";
 import { StreamingReplayProvider, useStreamingReplay } from "@/contexts/StreamingReplayContext";
 import { fetchAgents } from "@/features/persona/services/personaApi";
 import type { AgentInfo } from "@/features/persona/types/persona";
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { isPageIndexSupported } from "@/services/pageindexApi";
 import { useAvatarStateStore } from "@/stores/avatarStateStore";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSessionDocumentStore } from "@/stores/sessionDocumentStore";
 import { useSessionStore } from "@/stores/sessionStore";
+import { useSettingsStore } from "@/stores/settingsStore";
+import { useShortcutStore } from "@/stores/shortcutStore";
 import { useToastStore } from "@/stores/toastStore";
 
 type ConnectorItem = {
@@ -72,6 +75,8 @@ function HomeContent() {
   } = useSessionStore();
   const { status, wsClient } = useConnectionStore();
   const { addToast } = useToastStore();
+  const shortcutStore = useShortcutStore();
+  const { openSettings } = useSettingsStore();
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [activeMainView, setActiveMainView] = useState<"chat" | "knowledge" | "persona">("chat");
   const [assistantVisible, setAssistantVisible] = useState(true);
@@ -149,6 +154,53 @@ function HomeContent() {
       setCurrentConversationId(activeSessionKey);
     }
   }, [activeSessionKey]);
+
+  // 注册快捷键
+  const shortcuts = useMemo(() => {
+    const s = shortcutStore.shortcuts;
+    return [
+      {
+        key: s.find((x) => x.id === "persona")?.key || "z",
+        ctrl: s.find((x) => x.id === "persona")?.ctrl ?? true,
+        shift: s.find((x) => x.id === "persona")?.shift ?? true,
+        action: "openPersona",
+        handler: () => {
+          setCurrentConversationId(null);
+          setActiveMainView("persona");
+        },
+      },
+      {
+        key: s.find((x) => x.id === "cron")?.key || "x",
+        ctrl: s.find((x) => x.id === "cron")?.ctrl ?? true,
+        shift: s.find((x) => x.id === "cron")?.shift ?? true,
+        action: "openCron",
+        handler: () => setCronJobsOpen(true),
+      },
+      {
+        key: s.find((x) => x.id === "agent")?.key || "c",
+        ctrl: s.find((x) => x.id === "agent")?.ctrl ?? true,
+        shift: s.find((x) => x.id === "agent")?.shift ?? true,
+        action: "openAgent",
+        handler: () => setAgentManageOpen(true),
+      },
+      {
+        key: s.find((x) => x.id === "settings")?.key || "v",
+        ctrl: s.find((x) => x.id === "settings")?.ctrl ?? true,
+        shift: s.find((x) => x.id === "settings")?.shift ?? true,
+        action: "openSettings",
+        handler: () => openSettings(),
+      },
+      {
+        key: s.find((x) => x.id === "home")?.key || "h",
+        ctrl: s.find((x) => x.id === "home")?.ctrl ?? true,
+        shift: s.find((x) => x.id === "home")?.shift ?? true,
+        action: "goHome",
+        handler: () => setActiveMainView("chat"),
+      },
+    ];
+  }, [shortcutStore.shortcuts, openSettings]);
+
+  useKeyboardShortcuts({ shortcuts });
 
   const loadConnectors = useCallback(async () => {
     if (!wsClient) return;
@@ -1446,6 +1498,7 @@ function HomeContent() {
         }}
         onOpenCronJobs={() => setCronJobsOpen(true)}
         onOpenAgentManage={() => setAgentManageOpen(true)}
+        onGoHome={() => setActiveMainView("chat")}
         assistantVisible={activeMainView !== "persona" && assistantVisible}
         onToggleAssistantVisible={() => setAssistantVisible(!assistantVisible)}
         showTopBar={activeMainView !== "persona"}

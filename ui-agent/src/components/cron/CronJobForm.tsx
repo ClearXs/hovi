@@ -9,7 +9,6 @@ import { Textarea } from "@/components/ui/textarea";
 import type {
   CronJob,
   CronJobCreate,
-  CronJobPatch,
   CronSchedule,
   CronPayload,
   CronDelivery,
@@ -159,12 +158,37 @@ export function CronJobForm({ job, onSubmit, onCancel, loading }: CronJobFormPro
   return (
     <div className="space-y-4">
       <Tabs defaultValue="basic" className="w-full">
-        <TabsList className="w-full justify-start">
-          <TabsTrigger value="basic">基本信息</TabsTrigger>
-          <TabsTrigger value="schedule">调度</TabsTrigger>
-          <TabsTrigger value="message">消息</TabsTrigger>
-          <TabsTrigger value="delivery">投递</TabsTrigger>
-          <TabsTrigger value="alert">告警</TabsTrigger>
+        <TabsList className="w-full justify-start border-b border-border-light rounded-none p-0 h-auto gap-0 bg-transparent">
+          <TabsTrigger
+            value="basic"
+            className="flex items-center gap-1.5 px-4 py-2.5 rounded-none border-b-2 border-transparent text-text-secondary data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:text-text-primary transition-colors"
+          >
+            <span className="text-sm">基本信息</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="schedule"
+            className="flex items-center gap-1.5 px-4 py-2.5 rounded-none border-b-2 border-transparent text-text-secondary data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:text-text-primary transition-colors"
+          >
+            <span className="text-sm">调度</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="message"
+            className="flex items-center gap-1.5 px-4 py-2.5 rounded-none border-b-2 border-transparent text-text-secondary data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:text-text-primary transition-colors"
+          >
+            <span className="text-sm">消息</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="delivery"
+            className="flex items-center gap-1.5 px-4 py-2.5 rounded-none border-b-2 border-transparent text-text-secondary data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:text-text-primary transition-colors"
+          >
+            <span className="text-sm">投递</span>
+          </TabsTrigger>
+          <TabsTrigger
+            value="alert"
+            className="flex items-center gap-1.5 px-4 py-2.5 rounded-none border-b-2 border-transparent text-text-secondary data-[state=active]:border-primary data-[state=active]:text-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none hover:text-text-primary transition-colors"
+          >
+            <span className="text-sm">告警</span>
+          </TabsTrigger>
         </TabsList>
 
         {/* Basic Info Tab */}
@@ -187,11 +211,11 @@ export function CronJobForm({ job, onSubmit, onCancel, loading }: CronJobFormPro
               className="mt-1"
             />
           </div>
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between py-2">
             <label className="text-sm font-medium">启用</label>
             <Switch checked={enabled} onCheckedChange={setEnabled} />
           </div>
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between py-2">
             <label className="text-sm font-medium">任务执行后删除</label>
             <Switch checked={deleteAfterRun} onCheckedChange={setDeleteAfterRun} />
           </div>
@@ -201,7 +225,7 @@ export function CronJobForm({ job, onSubmit, onCancel, loading }: CronJobFormPro
         <TabsContent value="schedule" className="space-y-4 mt-4">
           <div>
             <label className="text-sm font-medium">调度方式</label>
-            <div className="flex gap-2 mt-1">
+            <div className="flex gap-2 mt-2">
               <Button
                 variant={scheduleKind === "at" ? "default" : "outline"}
                 size="sm"
@@ -321,7 +345,7 @@ export function CronJobForm({ job, onSubmit, onCancel, loading }: CronJobFormPro
         <TabsContent value="delivery" className="space-y-4 mt-4">
           <div>
             <label className="text-sm font-medium">投递模式</label>
-            <div className="flex gap-2 mt-1">
+            <div className="flex gap-2 mt-2">
               <Button
                 variant={deliveryMode === "none" ? "default" : "outline"}
                 size="sm"
@@ -372,7 +396,7 @@ export function CronJobForm({ job, onSubmit, onCancel, loading }: CronJobFormPro
 
         {/* Alert Tab */}
         <TabsContent value="alert" className="space-y-4 mt-4">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between py-2">
             <label className="text-sm font-medium">启用失败告警</label>
             <Switch checked={alertEnabled} onCheckedChange={setAlertEnabled} />
           </div>
@@ -412,7 +436,7 @@ export function CronJobForm({ job, onSubmit, onCancel, loading }: CronJobFormPro
         </TabsContent>
       </Tabs>
 
-      <div className="flex justify-end gap-2 pt-4">
+      <div className="flex justify-end gap-2 pt-4 border-t border-border-light">
         <Button variant="outline" onClick={onCancel} disabled={loading}>
           取消
         </Button>

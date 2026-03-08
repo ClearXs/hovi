@@ -735,7 +735,7 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
       const limit = typeof p.limit === "number" && p.limit > 0 ? p.limit : 50;
       const offset = typeof p.offset === "number" && p.offset >= 0 ? p.offset : 0;
 
-      const payload = manager.listChunks({
+      const payload = await manager.listChunks({
         agentId,
         documentId: p.documentId,
         kbId: p.kbId,

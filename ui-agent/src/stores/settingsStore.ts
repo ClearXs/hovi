@@ -3,6 +3,7 @@ import { useConnectionStore } from "./connectionStore";
 
 export type SettingsTab =
   | "general"
+  | "shortcuts"
   | "skills"
   | "connectors"
   | "models"

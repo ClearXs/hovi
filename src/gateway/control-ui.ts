@@ -499,7 +499,9 @@ export function handleAgentFilesRequest(
   }
 
   // Parse /files/:agentId/:path*
-  const pathParts = pathname.slice("/files/".length).split("/").filter(Boolean);
+  // 先解码 URL 路径，处理中文文件名
+  const decodedPathname = decodeURIComponent(pathname);
+  const pathParts = decodedPathname.slice("/files/".length).split("/").filter(Boolean);
   if (pathParts.length < 2) {
     // Need at least agentId and one path component
     respondControlUiNotFound(res);

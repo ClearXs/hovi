@@ -1,13 +1,17 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { GripVertical } from "lucide-react";
+import { useEffect, useRef, useMemo, useState } from "react";
+import { KnowledgeChunksList } from "@/components/knowledge/KnowledgeChunksList";
 import { DocPreview } from "@/components/knowledge/preview/DocPreview";
-import { cn } from "@/lib/utils";
 import { useKnowledgeBaseStore } from "@/stores/knowledgeBaseStore";
 
 interface KnowledgeDocDetailProps {
   documentId: string | null;
 }
+
+const MIN_CHUNK_PANEL_WIDTH = 200;
+const DEFAULT_CHUNK_PANEL_WIDTH = 320;
 
 export function KnowledgeDocDetail({ documentId }: KnowledgeDocDetailProps) {
   const {
@@ -26,6 +30,14 @@ export function KnowledgeDocDetail({ documentId }: KnowledgeDocDetailProps) {
   } = useKnowledgeBaseStore();
 
   const chunkRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [chunkPanelWidth, setChunkPanelWidth] = useState(DEFAULT_CHUNK_PANEL_WIDTH);
+  const [isDragging, setIsDragging] = useState(false);
+
+  // 将 chunkIds 转换为 chunks 数组
+  const chunks = useMemo(() => {
+    return chunkIds.map((id) => chunksById[id]).filter(Boolean);
+  }, [chunkIds, chunksById]);
 
   useEffect(() => {
     if (documentId) {
@@ -54,58 +66,81 @@ export function KnowledgeDocDetail({ documentId }: KnowledgeDocDetailProps) {
     };
   }, [targetChunkId, selectChunk, clearTargetChunk]);
 
+  // 拖动处理
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
+
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!containerRef.current) return;
+      const containerRect = containerRef.current.getBoundingClientRect();
+      const newWidth = e.clientX - containerRect.left;
+      const clampedWidth = Math.max(
+        MIN_CHUNK_PANEL_WIDTH,
+        Math.min(newWidth, containerRect.width - MIN_CHUNK_PANEL_WIDTH),
+      );
+      setChunkPanelWidth(clampedWidth);
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+    };
+
+    document.addEventListener("mousemove", handleMouseMove);
+    document.addEventListener("mouseup", handleMouseUp);
+
+    return () => {
+      document.removeEventListener("mousemove", handleMouseMove);
+      document.removeEventListener("mouseup", handleMouseUp);
+    };
+  }, [isDragging]);
+
   if (!documentId) {
     return <div className="text-sm text-text-tertiary">请选择文档</div>;
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-sm">
+    <div className="h-full min-h-0">
       {isLoadingDetail ? (
         <div className="flex-1 rounded-lg border border-border-light bg-background-secondary/40 animate-pulse" />
       ) : (
-        <div className="grid flex-1 min-h-0 grid-cols-12 gap-sm">
-          <div className="col-span-4 flex h-full min-h-0 flex-col rounded-lg border border-border-light p-sm">
-            {isLoadingChunks ? (
-              <div className="space-y-xs">
-                {Array.from({ length: 6 }).map((_, index) => (
-                  <div
-                    key={index}
-                    className="rounded-md border border-border-light px-sm py-xs text-xs text-text-secondary animate-pulse"
-                  >
-                    Chunk {index + 1}
-                  </div>
-                ))}
-              </div>
-            ) : chunkIds.length === 0 ? (
-              <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-border-light px-sm text-xs text-text-tertiary">
-                暂无分块数据
-              </div>
-            ) : (
-              <div className="flex-1 space-y-1 overflow-auto pr-xs">
-                {chunkIds.map((id) => (
-                  <button
-                    key={id}
-                    onClick={() => selectChunk(id)}
-                    ref={(element) => {
-                      chunkRefs.current[id] = element;
-                    }}
-                    className={cn(
-                      "w-full rounded-md border px-xs py-1 text-left text-[11px] transition-colors",
-                      activeChunkId === id
-                        ? "border-primary/40 bg-primary/5 text-text-primary"
-                        : "border-border-light text-text-secondary hover:bg-background-secondary",
-                    )}
-                  >
-                    Chunk {chunksById[id]?.index ?? id}
-                  </button>
-                ))}
-              </div>
-            )}
+        <div ref={containerRef} className="flex h-full min-h-0">
+          {/* Chunk 列表面板 */}
+          <div
+            className="flex h-full min-h-0 flex-col rounded-l-lg border border-r-0 border-border-light overflow-hidden flex-shrink-0"
+            style={{ width: chunkPanelWidth }}
+          >
+            <KnowledgeChunksList
+              chunks={chunks}
+              activeChunkId={activeChunkId}
+              onSelectChunk={selectChunk}
+              isLoading={isLoadingChunks}
+            />
           </div>
-          <div className="col-span-8 flex h-full min-h-0 flex-col">
-            <div className="flex-1 h-full min-h-0 overflow-hidden">
-              <DocPreview detail={detail} highlightKeywords={searchHighlightKeywords} />
+
+          {/* 拖动分隔栏 */}
+          <div
+            className={`w-1 cursor-col-resize flex-shrink-0 group ${
+              isDragging ? "bg-primary" : "bg-transparent hover:bg-border"
+            }`}
+            onMouseDown={handleMouseDown}
+          >
+            <div className="flex h-full items-center justify-center">
+              <GripVertical
+                className={`h-5 w-5 transition-colors ${
+                  isDragging ? "text-white" : "text-transparent group-hover:text-text-tertiary"
+                }`}
+              />
             </div>
+          </div>
+
+          {/* 预览面板 */}
+          <div className="flex-1 h-full min-h-0 rounded-r-lg border border-l-0 border-border-light">
+            <DocPreview detail={detail} highlightKeywords={searchHighlightKeywords} />
           </div>
         </div>
       )}

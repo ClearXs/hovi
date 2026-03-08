@@ -74,6 +74,7 @@ interface SidebarProps {
   onOpenPersonaSettings?: () => void;
   onOpenCronJobs?: () => void;
   onOpenAgentManage?: () => void;
+  onGoHome?: () => void;
   assistantVisible?: boolean;
   onToggleAssistantVisible?: () => void;
   activeView?: "chat" | "knowledge" | "persona";
@@ -110,6 +111,7 @@ const Sidebar = ({
   onOpenPersonaSettings = () => {},
   onOpenCronJobs = () => {},
   onOpenAgentManage = () => {},
+  onGoHome = () => {},
   assistantVisible = true,
   onToggleAssistantVisible = () => {},
   activeView = "chat",
@@ -770,7 +772,10 @@ const Sidebar = ({
         {/* 品牌标识 - 展开状态（折叠按钮在右侧） */}
         <div className="p-lg flex-shrink-0">
           <div className="flex items-center justify-between gap-sm">
-            <div className="flex items-center gap-sm flex-1 min-w-0">
+            <div
+              className="flex items-center gap-sm flex-1 min-w-0 cursor-pointer hover:opacity-80"
+              onClick={onGoHome}
+            >
               <img
                 src="/img/logo.png"
                 alt="Logo"

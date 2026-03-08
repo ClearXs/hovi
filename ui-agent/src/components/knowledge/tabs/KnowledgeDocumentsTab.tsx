@@ -8,9 +8,10 @@ import {
   FileText,
   Pencil,
   Presentation,
+  RefreshCw,
   Trash2,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { KnowledgeDocDetail } from "@/components/knowledge/KnowledgeDocDetail";
 import { DropZone } from "@/components/knowledge/upload/DropZone";
 import { UploadQueue } from "@/components/knowledge/upload/UploadQueue";
@@ -63,6 +64,9 @@ export function KnowledgeDocumentsTab({
     deleteDocument,
     updateDocumentMetadata,
     activeKbId,
+    rebuildDocument,
+    isRebuilding,
+    rebuildProgress,
   } = useKnowledgeBaseStore();
   const [mode, setMode] = useState<"list" | "detail">("list");
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -78,6 +82,18 @@ export function KnowledgeDocumentsTab({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [deletingName, setDeletingName] = useState("");
+  const [rebuildingId, setRebuildingId] = useState<string | null>(null);
+
+  // 监听重建完成
+  useEffect(() => {
+    if (!isRebuilding && rebuildingId) {
+      // 延迟清理，让用户看到完成状态
+      const timer = setTimeout(() => {
+        setRebuildingId(null);
+      }, 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [isRebuilding, rebuildingId]);
 
   const {
     items: uploadQueue,
@@ -376,7 +392,7 @@ export function KnowledgeDocumentsTab({
                       <DropdownMenuTrigger asChild>
                         <button
                           type="button"
-                          className="rounded-md p-1 text-text-tertiary transition-colors hover:bg-background-secondary hover:text-text-primary"
+                          className="rounded-md p-1 text-text-tertiary opacity-0 transition-opacity hover:bg-background-secondary hover:text-text-primary group-hover:opacity-100"
                           onClick={(event) => event.stopPropagation()}
                           aria-label="更多操作"
                         >
@@ -387,7 +403,22 @@ export function KnowledgeDocumentsTab({
                         align="end"
                         className="w-36"
                         onClick={(event) => event.stopPropagation()}
+                        onMouseEnter={(e) => {
+                          // 让 dropdown 保持打开状态
+                        }}
                       >
+                        <DropdownMenuItem
+                          onClick={() => {
+                            setRebuildingId(id);
+                            void rebuildDocument(id);
+                          }}
+                          disabled={isRebuilding}
+                        >
+                          <RefreshCw
+                            className={`mr-2 h-4 w-4 ${isRebuilding && rebuildingId === id ? "animate-spin" : ""}`}
+                          />
+                          重建
+                        </DropdownMenuItem>
                         <DropdownMenuItem
                           onClick={() => {
                             const doc = documentsById[id];
@@ -420,6 +451,22 @@ export function KnowledgeDocumentsTab({
                     {documentsById[id]?.indexed ? "已索引" : "索引中"} ·{" "}
                     {documentsById[id]?.size ? (documentsById[id].size / 1024).toFixed(1) : "0"} KB
                   </div>
+                  {/* 重建进度显示 */}
+                  {rebuildingId === id && isRebuilding && rebuildProgress && (
+                    <div className="mt-1 flex items-center gap-1 text-[10px]">
+                      <RefreshCw className="h-3 w-3 animate-spin text-primary" />
+                      <span className="text-primary">
+                        {rebuildProgress.vectorized ? "向量化完成" : "向量化中..."}
+                        {rebuildProgress.graphBuilt ? " · 图谱完成" : " · 图谱构建中..."}
+                      </span>
+                    </div>
+                  )}
+                  {rebuildingId === id && isRebuilding && !rebuildProgress && (
+                    <div className="mt-1 flex items-center gap-1 text-[10px] text-primary">
+                      <RefreshCw className="h-3 w-3 animate-spin" />
+                      重建中...
+                    </div>
+                  )}
                 </div>
               ))
             )}

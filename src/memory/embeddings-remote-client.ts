@@ -1,10 +1,8 @@
 import { requireApiKey, resolveApiKeyForProvider } from "../agents/model-auth.js";
-import {
-  normalizeResolvedSecretInputString,
-  normalizeSecretInput,
-} from "../config/types.secrets.js";
+import { normalizeResolvedSecretInputString } from "../config/types.secrets.js";
 import type { SsrFPolicy } from "../infra/net/ssrf.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
+import { normalizeSecretInput } from "../utils/normalize-secret-input.js";
 import type { EmbeddingProviderOptions } from "./embeddings.js";
 import { buildRemoteBaseUrlPolicy } from "./remote-http.js";
 

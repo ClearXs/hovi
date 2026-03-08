@@ -1,6 +1,6 @@
 "use client";
 
-import { Settings, Zap, Bot, Palette, Cog, Plug, DollarSign } from "lucide-react";
+import { Settings, Zap, Bot, Palette, Cog, Plug, DollarSign, Keyboard } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { useSettingsStore, type SettingsTab } from "@/stores/settingsStore";
@@ -10,10 +10,12 @@ import { ConnectorsTab } from "./tabs/ConnectorsTab";
 import { GeneralSettingsTab } from "./tabs/GeneralSettingsTab";
 import { ModelsTab } from "./tabs/ModelsTab";
 import { QuotaTab } from "./tabs/QuotaTab";
+import { ShortcutsTab } from "./tabs/ShortcutsTab";
 import { SkillsTab } from "./tabs/SkillsTab";
 
 const tabs: { value: SettingsTab; label: string; icon: React.ReactNode }[] = [
   { value: "general", label: "通用", icon: <Settings className="w-4 h-4" /> },
+  { value: "shortcuts", label: "快捷键", icon: <Keyboard className="w-4 h-4" /> },
   { value: "skills", label: "Skills", icon: <Zap className="w-4 h-4" /> },
   { value: "connectors", label: "连接器", icon: <Plug className="w-4 h-4" /> },
   { value: "models", label: "模型", icon: <Bot className="w-4 h-4" /> },
@@ -53,6 +55,9 @@ export function SettingsDialog() {
           <div className="flex-1 overflow-y-auto px-6 py-4">
             <TabsContent value="general" className="mt-0 h-full">
               <GeneralSettingsTab onClose={closeSettings} />
+            </TabsContent>
+            <TabsContent value="shortcuts" className="mt-0 h-full">
+              <ShortcutsTab />
             </TabsContent>
             <TabsContent value="skills" className="mt-0 h-full">
               <SkillsTab />

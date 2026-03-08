@@ -80,12 +80,17 @@ export type KnowledgeDetail = {
 export type KnowledgeChunk = {
   id: string;
   index: number;
-  text: string;
+  content: string; // 后端返回的字段名
   tokens?: number;
   sourcePage?: number | null;
   status?: string;
   startLine?: number;
   endLine?: number;
+  // 兼容旧字段
+  text?: string;
+  // 额外用于 UI 展示的字段
+  charCount?: number; // 字符数
+  previewText?: string; // 预览文本（前200字符）
 };
 
 export type KnowledgeChunksResponse = {

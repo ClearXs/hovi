@@ -232,6 +232,7 @@ function CameraController() {
 
 export interface VrmViewerProps {
   modelUrl: string | null;
+  sceneUrl?: string | null;
   motionUrl?: string | null;
   motionConfig?: MotionConfig;
   /** Avatar state from tool events */
@@ -246,10 +247,50 @@ export interface VrmViewerRef {
 }
 
 export const VrmViewer = forwardRef<VrmViewerRef, VrmViewerProps>(
-  ({ modelUrl, motionUrl = null, motionConfig, avatarState, onVrmLoad, onProgress }, ref) => {
+  (
+    {
+      modelUrl,
+      sceneUrl = null,
+      motionUrl = null,
+      motionConfig,
+      avatarState,
+      onVrmLoad,
+      onProgress,
+    },
+    ref,
+  ) => {
     const avatarControllerRef = useRef<AvatarController | null>(null);
     const prevAvatarStateRef = useRef<AvatarStatePayload | null>(null);
     const isMountedRef = useRef(true);
+    const sceneRef = useRef<THREE.Scene | null>(null);
+    const sceneGltfRef = useRef<THREE.Object3D | null>(null);
+
+    // 加载场景 GLTF
+    useEffect(() => {
+      if (!sceneRef.current) return;
+
+      // 移除之前的场景
+      if (sceneGltfRef.current) {
+        sceneRef.current.remove(sceneGltfRef.current);
+        sceneGltfRef.current = null;
+      }
+
+      if (!sceneUrl) return;
+
+      const loader = new GLTFLoader();
+      loader.load(
+        sceneUrl,
+        (gltf) => {
+          if (!isMountedRef.current) return;
+          sceneGltfRef.current = gltf.scene;
+          sceneRef.current?.add(gltf.scene);
+        },
+        undefined,
+        (error) => {
+          console.error("Failed to load scene:", error);
+        },
+      );
+    }, [sceneUrl]);
 
     // 组件卸载时设置标志
     useEffect(() => {
@@ -337,6 +378,8 @@ export const VrmViewer = forwardRef<VrmViewerRef, VrmViewerProps>(
             onVrmLoad={onVrmLoad}
             onProgress={onProgress}
           />
+          {/* 场景引用组件 */}
+          <SceneRef ref={sceneRef} />
         </Canvas>
       </div>
     );
@@ -344,5 +387,18 @@ export const VrmViewer = forwardRef<VrmViewerRef, VrmViewerProps>(
 );
 
 VrmViewer.displayName = "VrmViewer";
+
+// 场景引用组件 - 用于获取 Three.js scene 引用
+const SceneRef = forwardRef<THREE.Scene>((_, ref) => {
+  const { scene } = useThree();
+  useEffect(() => {
+    if (ref && "current" in ref) {
+      (ref as React.MutableRefObject<THREE.Scene | null>).current = scene;
+    }
+  }, [scene]);
+  return null;
+});
+
+SceneRef.displayName = "SceneRef";
 
 export default VrmViewer;

@@ -10,7 +10,8 @@
 }
 
 /* 防止横向滚动，强制长单词换行 */
-pre, code {
+pre,
+code {
   overflow-wrap: break-word !important;
   word-break: break-all !important;
   white-space: pre-wrap !important;

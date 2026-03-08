@@ -69,6 +69,7 @@ export function VirtualAssistantPage({ onClose }: VirtualAssistantPageProps) {
   // 状态
   const [showSubtitles, setShowSubtitles] = useState(true);
   const [vrmUrl, setVrmUrl] = useState<string | null>(null);
+  const [sceneUrl, setSceneUrl] = useState<string | null>(null);
   const [motionUrl, setMotionUrl] = useState<string | null>(null);
   const [motionConfig, setMotionConfig] = useState<MotionConfig | null>(null);
   const [vrmLoading, setVrmLoading] = useState(false);
@@ -123,6 +124,20 @@ export function VirtualAssistantPage({ onClose }: VirtualAssistantPageProps) {
       }
     },
     [vrmUrl],
+  );
+
+  // 场景选择 - 加载 GLTF 场景
+  const handleSceneSelect = useCallback(
+    (scene: { name: string; main_file: string; r_path: string } | null) => {
+      if (!scene || !scene.main_file) {
+        setSceneUrl(null);
+        return;
+      }
+      // 构建场景 URL: /files/{agentId}/{main_file}，和 motion 一样
+      const url = `/files/${AGENT_ID}/${scene.main_file}`;
+      setSceneUrl(url);
+    },
+    [],
   );
 
   // 加载 VRM 配置
@@ -298,6 +313,7 @@ export function VirtualAssistantPage({ onClose }: VirtualAssistantPageProps) {
           <VrmViewer
             ref={vrmViewerRef}
             modelUrl={vrmUrl}
+            sceneUrl={sceneUrl}
             motionUrl={motionUrl}
             motionConfig={motionConfig}
             avatarState={avatarState}
@@ -358,6 +374,7 @@ export function VirtualAssistantPage({ onClose }: VirtualAssistantPageProps) {
               onClose={() => setIsExpanded(false)}
               onSave={loadConfig}
               onPreviewMotion={handlePreviewMotion}
+              onSceneSelect={handleSceneSelect}
             />
           </div>
         </div>

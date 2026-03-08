@@ -52,6 +52,7 @@ interface MainLayoutProps {
   onOpenPersonaSettings?: () => void;
   onOpenCronJobs?: () => void;
   onOpenAgentManage?: () => void;
+  onGoHome?: () => void;
   assistantVisible?: boolean;
   onToggleAssistantVisible?: () => void;
   activeView?: "chat" | "knowledge" | "persona";
@@ -95,6 +96,7 @@ const MainLayout = ({
   onOpenPersonaSettings = () => {},
   onOpenCronJobs = () => {},
   onOpenAgentManage = () => {},
+  onGoHome = () => {},
   assistantVisible = true,
   onToggleAssistantVisible = () => {},
   activeView = "chat",
@@ -138,6 +140,7 @@ const MainLayout = ({
             onOpenPersonaSettings={onOpenPersonaSettings}
             onOpenCronJobs={onOpenCronJobs}
             onOpenAgentManage={onOpenAgentManage}
+            onGoHome={onGoHome}
             assistantVisible={assistantVisible}
             onToggleAssistantVisible={onToggleAssistantVisible}
             activeView={activeView}

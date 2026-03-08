@@ -38,6 +38,8 @@ interface SettingsPanelProps {
   onSave?: () => void;
   /** 预览动作回调 */
   onPreviewMotion?: (motion: MotionItem) => void;
+  /** 场景选择回调 */
+  onSceneSelect?: (scene: { name: string; main_file: string; r_path: string } | null) => void;
 }
 
 // 预定义的情感动作选项（根据设计文档）
@@ -323,6 +325,7 @@ export function SettingsPanel({
   onClose,
   onSave,
   onPreviewMotion,
+  onSceneSelect,
 }: SettingsPanelProps) {
   const wsClient = useConnectionStore((s) => s.wsClient);
 
@@ -491,10 +494,6 @@ export function SettingsPanel({
         activated: s.active,
       }));
       setScenes(mappedScenes);
-      const activatedScene = mappedScenes.find((s: LocalScene) => s.activated);
-      if (activatedScene) {
-        setCurrentSceneId(activatedScene.id);
-      }
     } catch (error) {
       console.error("Failed to load data:", error);
     } finally {
@@ -541,7 +540,6 @@ export function SettingsPanel({
   };
 
   const handleVrmUpload = async (file: File) => {
-    console.log("VRM upload started:", file.name, "wsClient:", !!wsClient);
     if (!wsClient) {
       console.error("Missing wsClient");
       return;
@@ -566,7 +564,6 @@ export function SettingsPanel({
       const fileName = `${agentId}/models/${file.name}`;
       // persona.json 中只保存相对路径（不带 agentId 前缀），例如 models/avatar.vrm
       const configVrmPath = `models/${file.name}`;
-      console.log("Uploading VRM to:", fileName);
       const result = await uploadAgentFile(
         wsClient,
         agentId,
@@ -574,10 +571,8 @@ export function SettingsPanel({
         base64,
         "model/gltf-binary",
       );
-      console.log("VRM upload result:", result);
 
       setPersonaConfig((prev) => ({ ...prev, vrm: configVrmPath }));
-      console.log("Updated personaConfig.vrm to:", configVrmPath);
 
       // 自动保存配置
       await setAgentFile(
@@ -595,7 +590,6 @@ export function SettingsPanel({
           tts: ttsConfig,
         }),
       );
-      console.log("Auto-saved persona.json with VRM path");
 
       // 触发刷新回调，让页面重新加载 VRM
       onSave?.();
@@ -824,20 +818,8 @@ export function SettingsPanel({
           thumb: thumbPath || undefined,
           main_file: mainFile || undefined,
         });
-        setScenes(
-          scenes.map((s) =>
-            s.id === editingSceneId
-              ? {
-                  ...s,
-                  name: sceneName,
-                  description: sceneForm.description,
-                  r_path: `scenes/${sceneName}/`,
-                  thumb: thumbPath,
-                  main_file: mainFile || s.main_file,
-                }
-              : s,
-          ),
-        );
+        // 重新加载场景列表以确保显示最新数据
+        await loadData();
       } else {
         // 添加模式：创建场景
         const result = await createScene(wsClient, {
@@ -848,8 +830,12 @@ export function SettingsPanel({
           main_file: mainFile || "scene.json",
           thumb: thumbPath || undefined,
         });
-        if (result.ok && result.scene) {
-          setScenes([...scenes, { ...result.scene, activated: false }]);
+        // 场景创建成功后会返回 scene 对象
+        if (result.scene) {
+          // 重新加载场景列表以确保显示最新数据
+          await loadData();
+        } else {
+          console.error("Failed to create scene:", result);
         }
       }
 
@@ -872,6 +858,18 @@ export function SettingsPanel({
   const handleActivateScene = async (sceneId: string) => {
     if (!wsClient) return;
     try {
+      const selectedScene = scenes.find((s) => s.id === sceneId);
+      if (!selectedScene) return;
+
+      // 调用场景选择回调加载场景
+      if (onSceneSelect && selectedScene.main_file) {
+        onSceneSelect({
+          name: selectedScene.name,
+          main_file: selectedScene.main_file,
+          r_path: selectedScene.r_path || "",
+        });
+      }
+
       const updatedScenes = scenes.map((s) => ({
         ...s,
         activated: s.id === sceneId,
@@ -989,7 +987,6 @@ export function SettingsPanel({
                     onClick={(e) => {
                       e.preventDefault();
                       e.stopPropagation();
-                      console.log("Upload button clicked");
                       document.getElementById("vrm-upload-input")?.click();
                     }}
                   >
@@ -1005,7 +1002,6 @@ export function SettingsPanel({
                     accept=".vrm"
                     className="hidden"
                     onChange={(e) => {
-                      console.log("File selected:", e.target.files);
                       const file = e.target.files?.[0];
                       if (file) handleVrmUpload(file);
                     }}
@@ -1190,36 +1186,30 @@ export function SettingsPanel({
                     >
                       <span className="truncate flex-1">{scene.name}</span>
                       <div className="flex items-center gap-2 ml-2">
-                        {scene.activated ? (
-                          <span className="text-xs bg-primary text-primary-foreground px-2 py-1 rounded">
-                            激活
-                          </span>
-                        ) : (
-                          <>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-5 w-5"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleEditScene(scene);
-                              }}
-                            >
-                              <Edit className="w-3 h-3" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-5 w-5"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDeleteScene(scene.id);
-                              }}
-                            >
-                              <Trash2 className="w-3 h-3 text-destructive" />
-                            </Button>
-                          </>
-                        )}
+                        {/* 始终显示编辑和删除按钮 */}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-5 w-5"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleEditScene(scene);
+                          }}
+                        >
+                          <Edit className="w-3 h-3" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-5 w-5"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteScene(scene.id);
+                          }}
+                        >
+                          <Trash2 className="w-3 h-3 text-destructive" />
+                        </Button>
+                        {/* 已移除激活标签 */}
                       </div>
                     </div>
                   ))
@@ -1250,6 +1240,7 @@ export function SettingsPanel({
                           onChange={(e) => {
                             const file = e.target.files?.[0];
                             if (file) {
+                              setSceneFile(file);
                               // 从文件名提取场景名称
                               const sceneName = file.name.replace(/\.[^.]+$/, "");
                               setSceneForm((prev) => ({ ...prev, name: sceneName }));
@@ -1257,12 +1248,21 @@ export function SettingsPanel({
                           }}
                         />
                         <label htmlFor="scene-file-upload" className="cursor-pointer">
-                          <div className="flex flex-col items-center gap-1">
-                            <Upload className="w-5 h-5 text-muted-foreground" />
-                            <span className="text-xs text-muted-foreground">
-                              点击上传场景文件 (.gltf, .glb)
-                            </span>
-                          </div>
+                          {sceneFile ? (
+                            <div className="flex items-center justify-center gap-2">
+                              <Upload className="w-4 h-4 text-muted-foreground" />
+                              <span className="text-xs text-muted-foreground">
+                                {sceneFile.name}
+                              </span>
+                            </div>
+                          ) : (
+                            <div className="flex flex-col items-center gap-1">
+                              <Upload className="w-5 h-5 text-muted-foreground" />
+                              <span className="text-xs text-muted-foreground">
+                                点击上传场景文件 (.gltf, .glb)
+                              </span>
+                            </div>
+                          )}
                         </label>
                       </div>
                     </div>

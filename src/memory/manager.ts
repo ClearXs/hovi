@@ -274,6 +274,9 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
     log.info(`knowledge: embedChunksInBatches completed, got ${embeddings.length} embeddings`);
     const sample = embeddings.find((embedding) => embedding.length > 0);
     const vectorReady = sample ? await this.ensureVectorReady(sample.length) : false;
+    log.info(
+      `knowledge: vectorReady=${vectorReady}, vector.enabled=${this.vector.enabled}, vector.available=${this.vector.available}`,
+    );
     const now = Date.now();
 
     // Delete existing chunks for this document
@@ -312,6 +315,7 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
         )
       : null;
 
+    log.info(`knowledge: about to insert ${chunks.length} chunks, vectorReady=${vectorReady}`);
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
       const chunkId = `${pathKey}:${i}`;
@@ -319,18 +323,23 @@ export class MemoryIndexManager extends MemoryManagerEmbeddingOps implements Mem
       const embedding = JSON.stringify(embeddings[i] || []);
       const hash = hashText(text);
 
-      insertChunk.run(
-        chunkId,
-        pathKey,
-        "knowledge",
-        chunk.startLine,
-        chunk.endLine,
-        hash,
-        this.provider.model,
-        text,
-        embedding,
-        now,
-      );
+      try {
+        insertChunk.run(
+          chunkId,
+          pathKey,
+          "knowledge",
+          chunk.startLine,
+          chunk.endLine,
+          hash,
+          this.provider.model,
+          text,
+          embedding,
+          now,
+        );
+        log.info(`knowledge: inserted chunk ${i}: ${chunkId}`);
+      } catch (err) {
+        log.error(`knowledge: failed to insert chunk ${i}: ${String(err)}`);
+      }
 
       if (insertFts) {
         insertFts.run(
