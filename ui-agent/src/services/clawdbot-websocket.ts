@@ -360,6 +360,14 @@ export class ClawdbotWebSocketClient {
       params: params as Record<string, unknown>,
     };
 
+    // Determine timeout based on method (long-running operations need longer timeout)
+    const longRunningMethods = [
+      "knowledge.rebuild",
+      "knowledge.graph.build",
+      "knowledge.graph.buildAll",
+    ];
+    const timeout = longRunningMethods.includes(method) ? 180000 : 30000; // 3 min for rebuild, 30s default
+
     return new Promise((resolve, reject) => {
       // Set up response handler
       this.responseHandlers.set(id, (response) => {
@@ -378,13 +386,13 @@ export class ClawdbotWebSocketClient {
         reject(error);
       }
 
-      // Request timeout (30 seconds)
+      // Request timeout
       setTimeout(() => {
         if (this.responseHandlers.has(id)) {
           this.responseHandlers.delete(id);
           reject(new Error(`Request ${method} timeout`));
         }
-      }, 30000);
+      }, timeout);
     });
   }
 

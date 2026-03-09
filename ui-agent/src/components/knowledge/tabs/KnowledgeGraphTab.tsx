@@ -308,6 +308,12 @@ export function KnowledgeGraphTab() {
       ],
     });
 
+    // 确保 graph 成功创建
+    if (!graph) {
+      console.error("Failed to create graph");
+      return;
+    }
+
     // 事件处理
     graph.on("node:click", (evt: any) => {
       const { item } = evt;
