@@ -296,16 +296,9 @@ export function KnowledgeGraphTab() {
         },
         // 小组件
         plugins: [
-          // 小地图
+          // 小地图 - G6 5.x
           new Minimap({
-            container: minimapRef.current || undefined,
-            size: [120, 80],
-            viewportBackFillStyle: "#F3F4F6",
-            viewportBackStrokeStyle: "#E5E7EB",
-            nodeBackFillStyle: "#D1D5DB",
-            nodeBackStrokeStyle: "#9CA3AF",
-            edgeBackFillStyle: "#E5E7EB",
-            edgeBackStrokeStyle: "#E5E7EB",
+            size: [150, 100],
           }),
         ],
       });
