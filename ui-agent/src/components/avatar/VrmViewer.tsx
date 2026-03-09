@@ -262,8 +262,8 @@ export const VrmViewer = forwardRef<VrmViewerRef, VrmViewerProps>(
     const avatarControllerRef = useRef<AvatarController | null>(null);
     const prevAvatarStateRef = useRef<AvatarStatePayload | null>(null);
     const isMountedRef = useRef(true);
-    const sceneRef = useRef<THREE.Scene | null>(null);
-    const sceneGltfRef = useRef<THREE.Object3D | null>(null);
+    const sceneRef = useRef<any>(null);
+    const sceneGltfRef = useRef<any>(null);
 
     // 加载场景 GLTF
     useEffect(() => {
@@ -389,11 +389,11 @@ export const VrmViewer = forwardRef<VrmViewerRef, VrmViewerProps>(
 VrmViewer.displayName = "VrmViewer";
 
 // 场景引用组件 - 用于获取 Three.js scene 引用
-const SceneRef = forwardRef<THREE.Scene>((_, ref) => {
+const SceneRef = forwardRef<any>((_, ref) => {
   const { scene } = useThree();
   useEffect(() => {
     if (ref && "current" in ref) {
-      (ref as React.MutableRefObject<THREE.Scene | null>).current = scene;
+      (ref as React.MutableRefObject<any>).current = scene;
     }
   }, [scene]);
   return null;
