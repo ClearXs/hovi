@@ -6,7 +6,8 @@
 import type { DatabaseSync } from "node:sqlite";
 import type { OpenClawConfig } from "../config/config.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
-import { extractTriplesViaLlm, hashText, type KnowledgeGraphSettings } from "./knowledge-graph.js";
+import { hashText } from "./internal.js";
+import { extractTriplesViaLlm, type KnowledgeGraphSettings } from "./knowledge-graph.js";
 import {
   type KnowledgeGraphBuildTask,
   type KnowledgeGraphSearchResult,
