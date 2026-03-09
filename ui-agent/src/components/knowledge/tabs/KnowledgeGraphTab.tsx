@@ -202,17 +202,20 @@ export function KnowledgeGraphTab() {
         "click-select",
         "hover-element",
       ],
-      // 布局 - 使用 gForce 对大规模图谱更友好
+      // 布局 - 使用 d3-force
       layout: {
-        type: "gForce",
+        type: "d3-force",
         preventOverlap: true,
-        nodeStrength: 1000,
-        edgeStrength: 200,
-        linkDistance: 80,
-        nodeSize: 40,
-        damping: 0.9,
-        maxIteration: 2000,
-        gravity: 10,
+        alphaDecay: 0.1,
+        alphaMin: 0.01,
+        velocityDecay: 0.6,
+        iterations: 150,
+        force: {
+          center: { x: 0.5, y: 0.5, strength: 0.1 },
+          charge: { strength: -400, distanceMax: 600 },
+          link: { distance: 100, strength: 0.8 },
+        },
+        collide: { radius: 40, strength: 0.8, iterations: 3 },
       },
       // 默认节点配置
       node: {
