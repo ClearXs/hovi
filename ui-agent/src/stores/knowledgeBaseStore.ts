@@ -126,6 +126,7 @@ interface KnowledgeBaseState {
     kbId?: string;
     vectorization?: Partial<KnowledgeSettingsResponse["vectorization"]>;
     graph?: Partial<KnowledgeSettingsResponse["graph"]>;
+    search?: { includeInMemorySearch?: boolean };
   }) => Promise<void>;
   loadBaseSettings: () => Promise<void>;
   updateBaseSettings: (params: {
