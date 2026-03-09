@@ -184,129 +184,135 @@ export function KnowledgeGraphTab() {
     const width = containerRef.current.clientWidth;
     const height = containerRef.current.clientHeight || 500;
 
-    const graph = new Graph({
-      container: containerRef.current,
-      width,
-      height,
-      autoFit: "view",
-      padding: 40,
-      // 交互行为
-      behaviors: [
-        "drag-canvas",
-        "zoom-canvas",
-        {
-          type: "drag-node",
-          enableDelegate: true,
-          onlyChangeNodeSize: false,
+    let graph;
+    try {
+      graph = new Graph({
+        container: containerRef.current,
+        width,
+        height,
+        autoFit: "view",
+        padding: 40,
+        // 交互行为
+        behaviors: [
+          "drag-canvas",
+          "zoom-canvas",
+          {
+            type: "drag-node",
+            enableDelegate: true,
+            onlyChangeNodeSize: false,
+          },
+          "click-select",
+          "hover-element",
+        ],
+        // 布局 - 使用 d3-force
+        layout: {
+          type: "d3-force",
+          preventOverlap: true,
+          alphaDecay: 0.1,
+          alphaMin: 0.01,
+          velocityDecay: 0.6,
+          iterations: 150,
+          force: {
+            center: { x: 0.5, y: 0.5, strength: 0.1 },
+            charge: { strength: -400, distanceMax: 600 },
+            link: { distance: 100, strength: 0.8 },
+          },
+          collide: { radius: 40, strength: 0.8, iterations: 3 },
         },
-        "click-select",
-        "hover-element",
-      ],
-      // 布局 - 使用 d3-force
-      layout: {
-        type: "d3-force",
-        preventOverlap: true,
-        alphaDecay: 0.1,
-        alphaMin: 0.01,
-        velocityDecay: 0.6,
-        iterations: 150,
-        force: {
-          center: { x: 0.5, y: 0.5, strength: 0.1 },
-          charge: { strength: -400, distanceMax: 600 },
-          link: { distance: 100, strength: 0.8 },
-        },
-        collide: { radius: 40, strength: 0.8, iterations: 3 },
-      },
-      // 默认节点配置
-      node: {
-        type: "circle",
-        size: 40,
-        style: {
-          lineWidth: 2,
-          fill: "#F3F4F6",
-          stroke: "#6B7280",
-          cursor: "pointer",
-        },
-        labelCfg: {
-          position: "center",
-          offset: 0,
+        // 默认节点配置
+        node: {
+          type: "circle",
+          size: 40,
           style: {
-            fontSize: 10,
-            fill: "#1F2937",
-            fontWeight: 500,
+            lineWidth: 2,
+            fill: "#F3F4F6",
+            stroke: "#6B7280",
+            cursor: "pointer",
           },
-        },
-        stateStyles: {
-          hover: {
-            lineWidth: 3,
-            shadowColor: "#6366F1",
-            shadowBlur: 10,
+          labelCfg: {
+            position: "center",
+            offset: 0,
+            style: {
+              fontSize: 10,
+              fill: "#1F2937",
+              fontWeight: 500,
+            },
           },
-          selected: {
-            lineWidth: 3,
-            stroke: "#6366F1",
-          },
-          dimmed: {
-            opacity: 0.2,
-          },
-        },
-      },
-      // 默认边配置
-      edge: {
-        type: "quadratic", // 曲线边避免重叠
-        style: {
-          stroke: "#9CA3AF",
-          lineWidth: 1.5,
-          endArrow: {
-            path: "M 0,0 L 6,3 L 6,-3 Z",
-            fill: "#9CA3AF",
-          },
-          cursor: "pointer",
-        },
-        labelCfg: {
-          autoRotate: true,
-          refY: 10,
-          style: {
-            fontSize: 9,
-            fill: "#6B7280",
-            background: {
-              fill: "#FFFFFF",
-              padding: [2, 2, 2, 2],
-              radius: 2,
+          stateStyles: {
+            hover: {
+              lineWidth: 3,
+              shadowColor: "#6366F1",
+              shadowBlur: 10,
+            },
+            selected: {
+              lineWidth: 3,
+              stroke: "#6366F1",
+            },
+            dimmed: {
+              opacity: 0.2,
             },
           },
         },
-        stateStyles: {
-          hover: {
-            stroke: "#6366F1",
-            lineWidth: 2,
+        // 默认边配置
+        edge: {
+          type: "quadratic", // 曲线边避免重叠
+          style: {
+            stroke: "#9CA3AF",
+            lineWidth: 1.5,
+            endArrow: {
+              path: "M 0,0 L 6,3 L 6,-3 Z",
+              fill: "#9CA3AF",
+            },
+            cursor: "pointer",
           },
-          dimmed: {
-            opacity: 0.2,
+          labelCfg: {
+            autoRotate: true,
+            refY: 10,
+            style: {
+              fontSize: 9,
+              fill: "#6B7280",
+              background: {
+                fill: "#FFFFFF",
+                padding: [2, 2, 2, 2],
+                radius: 2,
+              },
+            },
+          },
+          stateStyles: {
+            hover: {
+              stroke: "#6366F1",
+              lineWidth: 2,
+            },
+            dimmed: {
+              opacity: 0.2,
+            },
           },
         },
-      },
-      // 动画
-      animate: true,
-      animateCfg: {
-        duration: 500,
-        easing: "easePolyOut",
-      },
-      // 小组件
-      plugins: [
-        // 小地图
-        new Minimap({
-          container: minimapRef.current || undefined,
-          size: [120, 80],
-          viewportBackFillStyle: "#F3F4F6",
-          viewportBackStrokeStyle: "#E5E7EB",
-          nodeBackFillStyle: "#D1D5DB",
-          nodeBackStrokeStyle: "#9CA3AF",
-          edgeBackFillStyle: "#E5E7EB",
-          edgeBackStrokeStyle: "#E5E7EB",
-        }),
-      ],
-    });
+        // 动画
+        animate: true,
+        animateCfg: {
+          duration: 500,
+          easing: "easePolyOut",
+        },
+        // 小组件
+        plugins: [
+          // 小地图
+          new Minimap({
+            container: minimapRef.current || undefined,
+            size: [120, 80],
+            viewportBackFillStyle: "#F3F4F6",
+            viewportBackStrokeStyle: "#E5E7EB",
+            nodeBackFillStyle: "#D1D5DB",
+            nodeBackStrokeStyle: "#9CA3AF",
+            edgeBackFillStyle: "#E5E7EB",
+            edgeBackStrokeStyle: "#E5E7EB",
+          }),
+        ],
+      });
+    } catch (error) {
+      console.error("Failed to create graph:", error);
+      return;
+    }
 
     // 确保 graph 成功创建
     if (!graph) {
