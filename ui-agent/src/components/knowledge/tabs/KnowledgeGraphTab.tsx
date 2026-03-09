@@ -1,6 +1,6 @@
 "use client";
 
-import { Graph } from "@antv/g6";
+import { Graph, Minimap } from "@antv/g6";
 import {
   RefreshCw,
   Download,
@@ -277,7 +277,7 @@ export function KnowledgeGraphTab() {
       // 小组件
       plugins: [
         // 小地图
-        new (Graph as any).Minimap({
+        new Minimap({
           container: minimapRef.current || undefined,
           size: [120, 80],
           viewportBackFillStyle: "#F3F4F6",
