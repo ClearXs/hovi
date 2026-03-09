@@ -14,8 +14,9 @@ vi.mock("../agents/pi-embedded.js", () => ({
     payloads: [
       {
         text:
-          '{"h":{"name":"A"},"r":{"type":"rel"},"t":{"name":"B"}}\n' +
-          '{"h":{"name":"B"},"r":{"type":"rel"},"t":{"name":"C"}}\n',
+          `entity${TUPLE_DELIMITER}实体A${TUPLE_DELIMITER}Concept${TUPLE_DELIMITER}概念A${COMPLETION_DELIMITER}\n` +
+          `entity${TUPLE_DELIMITER}实体B${TUPLE_DELIMITER}Concept${TUPLE_DELIMITER}概念B${COMPLETION_DELIMITER}\n` +
+          `relation${TUPLE_DELIMITER}实体A${TUPLE_DELIMITER}实体B${TUPLE_DELIMITER}相关${TUPLE_DELIMITER}关系描述${COMPLETION_DELIMITER}\n`,
       },
     ],
   })),

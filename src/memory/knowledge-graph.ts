@@ -44,6 +44,9 @@ export type KnowledgeGraphExtractionResult = {
   triples: KnowledgeGraphTripleInput[];
   rawText: string;
   targetTriples: number;
+  // LightRAG 格式解析结果
+  entities?: Array<{ name: string; type: string; description: string }>;
+  relations?: Array<{ source: string; target: string; keywords: string; description: string }>;
 };
 
 export function computeTargetTriples(params: {
@@ -70,7 +73,8 @@ export async function extractTriplesViaLlm(params: {
   const targetTriples = computeTargetTriples({ text, settings });
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-kg-"));
   const sessionFile = path.join(tempDir, "session.jsonl");
-  const prompt = buildTripleExtractionPrompt(text, targetTriples);
+  // 使用 LightRAG 格式的 prompt
+  const prompt = buildTripleExtractionPrompt(text);
   try {
     const result = await runEmbeddedPiAgent({
       sessionId: `kb-graph-${agentId}-${Date.now()}`,
@@ -87,8 +91,22 @@ export async function extractTriplesViaLlm(params: {
       disableTools: true,
     });
     const rawText = extractResponseText(result.payloads ?? []);
-    const triples = parseTriples(rawText).slice(0, targetTriples);
-    return { triples, rawText, targetTriples };
+    // 解析 LightRAG 格式输出
+    const parsed = parseTriplesOutput(rawText);
+    // 转换为旧格式以保持兼容性
+    const triples = parsed.entities.map((e) => ({
+      h: { name: e.name },
+      r: { type: e.type },
+      t: { name: e.description },
+    }));
+    // 同时保留新的解析结果
+    return {
+      triples: triples.slice(0, targetTriples),
+      rawText,
+      targetTriples,
+      entities: parsed.entities,
+      relations: parsed.relations,
+    };
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }
@@ -143,11 +161,7 @@ function normalizeRelation(
   return { ...relation, type };
 }
 
-function buildTripleExtractionPrompt(
-  text: string,
-  targetTriples: number,
-  language: string = "zh",
-): string {
+function buildTripleExtractionPrompt(text: string, language: string = "zh"): string {
   const entityTypes =
     language === "zh"
       ? "人物、生物、组织、地点、事件、概念、方法、内容、数据、产物、自然物体"
@@ -192,47 +206,6 @@ ${text.slice(0, 16000)}
 function extractResponseText(payloads: Array<{ text?: string }>): string {
   const text = payloads.map((payload) => payload.text ?? "").join("\n");
   return text.trim();
-}
-
-function parseTriples(rawText: string): KnowledgeGraphTripleInput[] {
-  const cleaned = stripCodeFences(rawText);
-  if (!cleaned) {
-    return [];
-  }
-  const trimmed = cleaned.trim();
-  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-    try {
-      const parsed = JSON.parse(trimmed) as KnowledgeGraphTripleInput[];
-      return parsed
-        .map(normalizeTriple)
-        .filter((triple): triple is KnowledgeGraphTripleInput => Boolean(triple));
-    } catch {
-      return [];
-    }
-  }
-  const lines = trimmed
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const triples: KnowledgeGraphTripleInput[] = [];
-  for (const line of lines) {
-    try {
-      const parsed = JSON.parse(line) as KnowledgeGraphTripleInput;
-      const normalized = normalizeTriple(parsed);
-      if (normalized) {
-        triples.push(normalized);
-      }
-    } catch {
-      continue;
-    }
-  }
-  return triples;
-}
-
-function stripCodeFences(text: string): string {
-  let output = text.replace(/```(?:jsonl|json)?/gi, "");
-  output = output.replace(/```/g, "");
-  return output.trim();
 }
 
 export function hashTripleKey(triple: KnowledgeGraphTripleInput): string {

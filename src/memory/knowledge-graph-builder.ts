@@ -4,8 +4,9 @@
  */
 
 import type { DatabaseSync } from "node:sqlite";
+import type { OpenClawConfig } from "../config/config.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
-import { hashText } from "./internal.js";
+import { extractTriplesViaLlm, hashText, type KnowledgeGraphSettings } from "./knowledge-graph.js";
 import {
   type KnowledgeGraphBuildTask,
   type KnowledgeGraphSearchResult,
@@ -26,6 +27,10 @@ export class KnowledgeGraphBuilder {
   private maxEntities: number;
   private extractionTimeout: number;
   private task: KnowledgeGraphBuildTask;
+  private cfg: OpenClawConfig;
+  private workspaceDir: string;
+  private agentDir: string;
+  private settings: KnowledgeGraphSettings;
 
   constructor(params: {
     db: DatabaseSync;
@@ -34,6 +39,10 @@ export class KnowledgeGraphBuilder {
     agentId: string;
     maxEntities?: number;
     extractionTimeout?: number;
+    cfg: OpenClawConfig;
+    workspaceDir: string;
+    agentDir: string;
+    settings: KnowledgeGraphSettings;
   }) {
     this.db = params.db;
     this.kbId = params.kbId;
@@ -41,6 +50,10 @@ export class KnowledgeGraphBuilder {
     this.agentId = params.agentId;
     this.maxEntities = params.maxEntities || 100;
     this.extractionTimeout = params.extractionTimeout || 60000;
+    this.cfg = params.cfg;
+    this.workspaceDir = params.workspaceDir;
+    this.agentDir = params.agentDir;
+    this.settings = params.settings;
 
     // Initialize task
     this.task = {
@@ -135,21 +148,35 @@ export class KnowledgeGraphBuilder {
   }
 
   private async processChunk(chunk: { id: string; text: string }): Promise<void> {
-    // Simple entity extraction (placeholder - real impl would use LLM)
-    const entities = this.extractSimpleEntities(chunk.text);
+    // Use LLM-based extraction (LightRAG format)
+    const result = await extractTriplesViaLlm({
+      text: chunk.text,
+      settings: this.settings,
+      cfg: this.cfg,
+      agentId: this.agentId,
+      workspaceDir: this.workspaceDir,
+      agentDir: this.agentDir,
+    });
 
     // Insert entities
-    for (const entity of entities) {
-      const entityId = this.insertEntity(entity.name, entity.type);
-      if (entity.description) {
-        this.insertEntityDescription(entityId, entity.description);
+    if (result.entities) {
+      for (const entity of result.entities) {
+        const entityId = this.insertEntity(entity.name, entity.type);
+        if (entity.description) {
+          this.insertEntityDescription(entityId, entity.description);
+        }
       }
     }
 
-    // Extract relations between entities in same chunk
-    const relations = this.extractSimpleRelations(chunk.text, entities);
-    for (const relation of relations) {
-      this.insertRelation(relation);
+    // Insert relations
+    if (result.relations) {
+      for (const relation of result.relations) {
+        this.insertRelation({
+          source: relation.source,
+          target: relation.target,
+          keywords: relation.keywords,
+        });
+      }
     }
   }
 

@@ -12,10 +12,10 @@ import {
   getGraphBuildTask,
 } from "./knowledge-graph-builder.js";
 import {
+  type KnowledgeGraphSettings,
   extractTriplesViaLlm,
   hashTripleKey,
   writeTriplesJsonl,
-  type KnowledgeGraphSettings,
   type KnowledgeGraphTripleInput,
 } from "./knowledge-graph.js";
 import { ProcessorRegistry, type ProcessorOptions } from "./knowledge-processor.js";
@@ -165,15 +165,21 @@ export type KnowledgeVectorizationSettings = {
 
 export type KnowledgeGraphSettingsState = KnowledgeBaseGraphConfig;
 
+export type KnowledgeSearchSettingsState = {
+  includeInMemorySearch: boolean;
+};
+
 export type KnowledgeSettings = {
   vectorization: KnowledgeVectorizationSettings;
   graph: KnowledgeGraphSettingsState;
+  search: KnowledgeSearchSettingsState;
   updatedAt?: number;
 };
 
 export type UpdateKnowledgeSettingsParams = {
   vectorization?: Partial<KnowledgeVectorizationSettings>;
   graph?: Partial<KnowledgeGraphSettingsState>;
+  search?: Partial<KnowledgeSearchSettingsState>;
 };
 
 const DEFAULT_CHUNK_CONFIG: KnowledgeChunkConfig = {
@@ -579,9 +585,13 @@ export class KnowledgeManager {
       triplesPerKTokens: graphOverrides.triplesPerKTokens ?? 10,
       maxDepth: graphOverrides.maxDepth ?? 3,
     };
+    const search: KnowledgeSearchSettingsState = {
+      includeInMemorySearch: config.search.includeInMemorySearch,
+    };
     return {
       vectorization,
       graph,
+      search,
       updatedAt: row?.updated_at,
     };
   }
@@ -593,35 +603,41 @@ export class KnowledgeManager {
     }
     const row = this.db
       .prepare(
-        `SELECT owner_agent_id, vector_config, graph_config, updated_at
+        `SELECT owner_agent_id, vector_config, graph_config, search_config, updated_at
          FROM kb_settings WHERE owner_agent_id = ?`,
       )
-      .get(agentId) as KnowledgeBaseSettings | undefined;
+      .get(agentId) as (KnowledgeBaseSettings & { search_config?: string }) | undefined;
     const vectorOverrides = row?.vector_config
       ? (JSON.parse(row.vector_config) as Partial<KnowledgeVectorizationSettings>)
       : {};
     const graphOverrides = row?.graph_config
       ? (JSON.parse(row.graph_config) as Partial<KnowledgeGraphSettingsState>)
       : {};
+    const searchOverrides = row?.search_config
+      ? (JSON.parse(row.search_config) as Partial<KnowledgeSearchSettingsState>)
+      : {};
     const nextVector = { ...vectorOverrides, ...params.vectorization };
     const nextGraph = { ...graphOverrides, ...params.graph };
+    const nextSearch = { ...searchOverrides, ...params.search };
     if (nextGraph.extractor && nextGraph.extractor !== "llm") {
       throw new Error("graph extractor is invalid, only 'llm' is supported");
     }
     const updatedAt = Date.now();
     this.db
       .prepare(
-        `INSERT INTO kb_settings (owner_agent_id, vector_config, graph_config, updated_at)
-         VALUES (?, ?, ?, ?)
+        `INSERT INTO kb_settings (owner_agent_id, vector_config, graph_config, search_config, updated_at)
+         VALUES (?, ?, ?, ?, ?)
          ON CONFLICT(owner_agent_id) DO UPDATE SET
            vector_config=excluded.vector_config,
            graph_config=excluded.graph_config,
+           search_config=excluded.search_config,
            updated_at=excluded.updated_at`,
       )
       .run(
         agentId,
         Object.keys(nextVector).length ? JSON.stringify(nextVector) : null,
         Object.keys(nextGraph).length ? JSON.stringify(nextGraph) : null,
+        Object.keys(nextSearch).length ? JSON.stringify(nextSearch) : null,
         updatedAt,
       );
     return this.getSettings(agentId);
@@ -2109,6 +2125,10 @@ export class KnowledgeManager {
       agentId: params.agentId,
       maxEntities: settings.graph.maxEntities,
       extractionTimeout: settings.graph.extractionTimeout,
+      cfg: this.cfg,
+      workspaceDir: this.baseDir,
+      agentDir: resolveAgentDir(this.cfg, params.agentId),
+      settings: settings.graph as KnowledgeGraphSettings,
     });
 
     // Build in background (fire and forget)
@@ -2158,6 +2178,10 @@ export class KnowledgeManager {
         agentId: params.agentId,
         maxEntities: settings.graph.maxEntities,
         extractionTimeout: settings.graph.extractionTimeout,
+        cfg: this.cfg,
+        workspaceDir: this.baseDir,
+        agentDir: resolveAgentDir(this.cfg, params.agentId),
+        settings: settings.graph as KnowledgeGraphSettings,
       });
 
       // Build in background

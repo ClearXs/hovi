@@ -1,5 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it, beforeEach, vi } from "vitest";
+import type { OpenClawConfig } from "../config/config.js";
 import {
   KnowledgeGraphSearcher,
   clearKnowledgeGraph,
@@ -14,6 +15,17 @@ vi.mock("../logging/subsystem.js", () => ({
     warn: vi.fn(),
     info: vi.fn(),
     debug: vi.fn(),
+  })),
+}));
+
+// Mock extractTriplesViaLlm
+vi.mock("./knowledge-graph.js", () => ({
+  extractTriplesViaLlm: vi.fn(async () => ({
+    triples: [],
+    rawText: "",
+    targetTriples: 0,
+    entities: [],
+    relations: [],
   })),
 }));
 
@@ -37,6 +49,17 @@ describe("KnowledgeGraphBuilder", () => {
       agentId: "agent-1",
       maxEntities: 10,
       extractionTimeout: 5000,
+      cfg: {} as OpenClawConfig,
+      workspaceDir: "/tmp",
+      agentDir: "/tmp",
+      settings: {
+        enabled: true,
+        extractor: "llm",
+        minTriples: 3,
+        maxTriples: 50,
+        triplesPerKTokens: 10,
+        maxDepth: 3,
+      },
     });
 
     const task = builder.getTaskStatus();
