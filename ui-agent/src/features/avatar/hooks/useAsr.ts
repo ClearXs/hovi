@@ -80,8 +80,22 @@ export function useAsr(options: UseAsrOptions = {}): UseAsrReturn {
 
   // Start recognition using Gateway ASR (MediaRecorder + RPC)
   const startGateway = useCallback(async () => {
+    console.log(
+      "[useAsr] startGateway called, wsClient:",
+      !!wsClient,
+      "wsClient.isConnected:",
+      wsClient?.isConnected?.(),
+    );
+
     if (!wsClient) {
+      console.error("[useAsr] WebSocket client not connected!");
       setError("WebSocket client not connected");
+      return;
+    }
+
+    if (!wsClient.isConnected()) {
+      console.error("[useAsr] WebSocket not connected!");
+      setError("WebSocket not connected");
       return;
     }
 
@@ -103,27 +117,41 @@ export function useAsr(options: UseAsrOptions = {}): UseAsrReturn {
       };
 
       mediaRecorder.onstop = async () => {
+        console.log("[useAsr] Recording stopped, audio chunks:", audioChunksRef.current.length);
+
         // Convert audio chunks to blob
         const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        console.log("[useAsr] Audio blob size:", audioBlob.size);
 
         // Convert to base64
         const reader = new FileReader();
         reader.readAsDataURL(audioBlob);
         reader.onloadend = async () => {
           const base64 = (reader.result as string).split(",")[1];
+          console.log("[useAsr] Sending to ASR, base64 length:", base64.length);
 
           try {
             // Send to Gateway ASR
-            const result = await wsClient.sendRequest<{ text: string }>("asr.transcribe", {
-              audioBase64: base64,
-              language,
-            });
+            const result = await wsClient.sendRequest<{ text: string; error?: string }>(
+              "asr.transcribe",
+              {
+                audioBase64: base64,
+                language,
+              },
+            );
+
+            console.log("[useAsr] ASR result:", result);
 
             if (result.text) {
               setTranscript(result.text);
               onResult?.(result.text);
+            } else if (result.error) {
+              console.error("[useAsr] ASR error:", result.error);
+              setError(result.error);
+              onError?.(result.error);
             }
           } catch (err) {
+            console.error("[useAsr] ASR request failed:", err);
             const errorMsg = err instanceof Error ? err.message : "ASR transcription failed";
             setError(errorMsg);
             onError?.(errorMsg);
@@ -139,7 +167,9 @@ export function useAsr(options: UseAsrOptions = {}): UseAsrReturn {
       mediaRecorderRef.current = mediaRecorder;
       mediaRecorder.start(100); // Collect data every 100ms
       setIsListening(true);
+      console.log("[useAsr] Recording started, useGateway:", useGateway);
     } catch (err) {
+      console.error("[useAsr] Failed to start recording:", err);
       const errorMsg = err instanceof Error ? err.message : "Failed to start recording";
       setError(errorMsg);
       onError?.(errorMsg);
@@ -148,9 +178,12 @@ export function useAsr(options: UseAsrOptions = {}): UseAsrReturn {
 
   // Main start function
   const start = useCallback(() => {
+    console.log("[useAsr] start called, useGateway:", useGateway, "wsClient:", !!wsClient);
     if (useGateway && wsClient) {
+      console.log("[useAsr] Using Gateway mode");
       startGateway();
     } else {
+      console.log("[useAsr] Using Web Speech API");
       startWebSpeech();
     }
   }, [useGateway, wsClient, startGateway, startWebSpeech]);
