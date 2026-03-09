@@ -117,6 +117,15 @@ export function KnowledgeGraphTab() {
   const graphRef = useRef<Graph | null>(null);
   const minimapRef = useRef<HTMLDivElement>(null);
 
+  // 邻居缓存 - 用于悬停高亮
+  const neighborCacheRef = useRef<{
+    nodeNeighbors: Map<string, Set<string>>;
+    edgeNeighbors: Map<string, Set<string>>;
+  }>({
+    nodeNeighbors: new Map(),
+    edgeNeighbors: new Map(),
+  });
+
   const [stats, setStats] = useState<KnowledgeGraphStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [building, setBuilding] = useState(false);
@@ -234,6 +243,9 @@ export function KnowledgeGraphTab() {
             lineWidth: 3,
             stroke: "#6366F1",
           },
+          dimmed: {
+            opacity: 0.2,
+          },
         },
       },
       // 默认边配置
@@ -265,6 +277,9 @@ export function KnowledgeGraphTab() {
           hover: {
             stroke: "#6366F1",
             lineWidth: 2,
+          },
+          dimmed: {
+            opacity: 0.2,
           },
         },
       },
@@ -311,12 +326,45 @@ export function KnowledgeGraphTab() {
 
     graph.on("node:mouseenter", (evt: any) => {
       const { item } = evt;
-      graph.setItemState(item, "hover", true);
+      const nodeId = item.getID();
+      const { nodeNeighbors, edgeNeighbors } = neighborCacheRef.current;
+      const neighbors = nodeNeighbors.get(nodeId) || new Set();
+      const relatedEdges = edgeNeighbors.get(nodeId) || new Set();
+
+      // 高亮相邻节点和边
+      graph.getNodes().forEach((node) => {
+        const id = node.getID();
+        if (id === nodeId || neighbors.has(id)) {
+          graph.setItemState(node, "hover", true);
+        } else {
+          graph.setItemState(node, "dimmed", true);
+        }
+      });
+
+      graph.getEdges().forEach((edge) => {
+        const id = edge.getID();
+        if (relatedEdges.has(id)) {
+          graph.setItemState(edge, "hover", true);
+        } else {
+          graph.setItemState(edge, "dimmed", true);
+        }
+      });
     });
 
     graph.on("node:mouseleave", (evt: any) => {
       const { item } = evt;
-      graph.setItemState(item, "hover", false);
+      const nodeId = item.getID();
+
+      // 清除所有高亮状态
+      graph.getNodes().forEach((node) => {
+        graph.setItemState(node, "hover", false);
+        graph.setItemState(node, "dimmed", false);
+      });
+
+      graph.getEdges().forEach((edge) => {
+        graph.setItemState(edge, "hover", false);
+        graph.setItemState(edge, "dimmed", false);
+      });
     });
 
     graphRef.current = graph;
@@ -386,6 +434,24 @@ export function KnowledgeGraphTab() {
           },
         };
       });
+
+      // 填充邻居缓存
+      const nodeNeighbors = new Map<string, Set<string>>();
+      const edgeNeighbors = new Map<string, Set<string>>();
+      for (const edge of graphData.edges) {
+        if (!nodeNeighbors.has(edge.source)) nodeNeighbors.set(edge.source, new Set());
+        nodeNeighbors.get(edge.source)!.add(edge.target);
+
+        if (!nodeNeighbors.has(edge.target)) nodeNeighbors.set(edge.target, new Set());
+        nodeNeighbors.get(edge.target)!.add(edge.source);
+
+        if (!edgeNeighbors.has(edge.source)) edgeNeighbors.set(edge.source, new Set());
+        edgeNeighbors.get(edge.source)!.add(edge.id);
+
+        if (!edgeNeighbors.has(edge.target)) edgeNeighbors.set(edge.target, new Set());
+        edgeNeighbors.get(edge.target)!.add(edge.id);
+      }
+      neighborCacheRef.current = { nodeNeighbors, edgeNeighbors };
 
       graphRef.current.setData({ nodes, edges });
       graphRef.current.render();
