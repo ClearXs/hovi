@@ -5,6 +5,24 @@ import { runEmbeddedPiAgent } from "../agents/pi-embedded.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { hashText } from "./internal.js";
 
+// LightRAG 常量（参考 https://github.com/HKUDS/LightRAG）
+export const TUPLE_DELIMITER = "<|#|>";
+export const COMPLETION_DELIMITER = "<|COMPLETE|>";
+
+export const DEFAULT_ENTITY_TYPES = [
+  "Person", // 人物
+  "Creature", // 生物
+  "Organization", // 组织
+  "Location", // 地点
+  "Event", // 事件
+  "Concept", // 概念
+  "Method", // 方法
+  "Content", // 内容
+  "Data", // 数据
+  "Artifact", // 产物
+  "NaturalObject", // 自然物体
+];
+
 export type KnowledgeGraphSettings = {
   enabled: boolean;
   extractor: "llm";
@@ -125,17 +143,50 @@ function normalizeRelation(
   return { ...relation, type };
 }
 
-function buildTripleExtractionPrompt(text: string, targetTriples: number): string {
-  return [
-    "Extract knowledge graph triples from the text below.",
-    `Return up to ${targetTriples} triples in JSONL format.`,
-    "Each line must be a JSON object with keys: h, r, t.",
-    "h and t must include a name field. r must include a type field.",
-    "Do not include explanations, code fences, or markdown. JSONL only.",
-    "",
-    "Text:",
-    text.slice(0, 16000),
-  ].join("\n");
+function buildTripleExtractionPrompt(
+  text: string,
+  targetTriples: number,
+  language: string = "zh",
+): string {
+  const entityTypes =
+    language === "zh"
+      ? "人物、生物、组织、地点、事件、概念、方法、内容、数据、产物、自然物体"
+      : "Person, Creature, Organization, Location, Event, Concept, Method, Content, Data, Artifact, NaturalObject";
+
+  const systemPrompt = `---Role---
+You are a Knowledge Graph Specialist responsible for extracting entities and relationships from the input text.
+
+---Instructions---
+1. **Entity Extraction:**
+   - Identify meaningful entities
+   - Extract: entity_name, entity_type, entity_description
+   - Format: entity${TUPLE_DELIMITER}entity_name${TUPLE_DELIMITER}entity_type${TUPLE_DELIMITER}entity_description
+
+2. **Relationship Extraction:**
+   - Identify direct relationships between entities
+   - Decompose N-ary relationships into binary pairs
+   - Extract: source_entity, target_entity, relationship_keywords, relationship_description
+   - Format: relation${TUPLE_DELIMITER}source${TUPLE_DELIMITER}target${TUPLE_DELIMITER}keywords${TUPLE_DELIMITER}description
+
+3. Use ${TUPLE_DELIMITER} as delimiter
+
+4. Entity types: ${entityTypes}
+
+5. Output in ${language}
+
+6. Output ${COMPLETION_DELIMITER} when complete
+`;
+
+  const userPrompt = `---Task---
+Extract entities and relationships from the text below.
+
+---Data---
+${text.slice(0, 16000)}
+
+---Output---
+`;
+
+  return [systemPrompt, userPrompt].join("\n");
 }
 
 function extractResponseText(payloads: Array<{ text?: string }>): string {
@@ -189,4 +240,48 @@ export function hashTripleKey(triple: KnowledgeGraphTripleInput): string {
   const t = typeof triple.t === "string" ? triple.t : triple.t.name;
   const r = typeof triple.r === "string" ? triple.r : triple.r.type;
   return hashText(`${h}::${r}::${t}`);
+}
+
+/**
+ * 解析 LightRAG 格式的输出
+ * 格式: entity<|#|>name<|#|>type<|#|>description
+ *       relation<|#|>source<|#|>target<|#|>keywords<|#|>description
+ */
+export function parseTriplesOutput(output: string): {
+  entities: Array<{ name: string; type: string; description: string }>;
+  relations: Array<{ source: string; target: string; keywords: string; description: string }>;
+} {
+  // 先移除 COMPLETION_DELIMITER 及其后的内容
+  const cleanOutput = output.split(COMPLETION_DELIMITER)[0];
+  const lines = cleanOutput
+    .split("\n")
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const entities: Array<{ name: string; type: string; description: string }> = [];
+  const relations: Array<{
+    source: string;
+    target: string;
+    keywords: string;
+    description: string;
+  }> = [];
+
+  for (const line of lines) {
+    const parts = line.split(TUPLE_DELIMITER);
+    if (parts[0] === "entity" && parts.length >= 4) {
+      entities.push({
+        name: parts[1]?.trim() || "",
+        type: parts[2]?.trim() || "NaturalObject",
+        description: parts[3]?.trim() || "",
+      });
+    } else if (parts[0] === "relation" && parts.length >= 5) {
+      relations.push({
+        source: parts[1]?.trim() || "",
+        target: parts[2]?.trim() || "",
+        keywords: parts[3]?.trim() || "",
+        description: parts[4]?.trim() || "",
+      });
+    }
+  }
+
+  return { entities, relations };
 }

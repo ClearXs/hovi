@@ -3,6 +3,9 @@ import type { OpenClawConfig } from "../config/config.js";
 import {
   computeTargetTriples,
   extractTriplesViaLlm,
+  parseTriplesOutput,
+  TUPLE_DELIMITER,
+  COMPLETION_DELIMITER,
   type KnowledgeGraphSettings,
 } from "./knowledge-graph.js";
 
@@ -51,5 +54,71 @@ describe("knowledge-graph", () => {
     expect(result.triples[0]).toHaveProperty("h");
     expect(result.triples[0]).toHaveProperty("r");
     expect(result.triples[0]).toHaveProperty("t");
+  });
+
+  describe("parseTriplesOutput", () => {
+    it("should parse entity line correctly", () => {
+      const output = `entity${TUPLE_DELIMITER}特斯拉公司${TUPLE_DELIMITER}Organization${TUPLE_DELIMITER}电动汽车制造商${COMPLETION_DELIMITER}`;
+      const result = parseTriplesOutput(output);
+
+      expect(result.entities).toHaveLength(1);
+      expect(result.entities[0].name).toBe("特斯拉公司");
+      expect(result.entities[0].type).toBe("Organization");
+      expect(result.entities[0].description).toBe("电动汽车制造商");
+    });
+
+    it("should parse relation line correctly", () => {
+      const output = `relation${TUPLE_DELIMITER}特斯拉公司${TUPLE_DELIMITER}Model Y${TUPLE_DELIMITER}发布、生产${TUPLE_DELIMITER}特斯拉发布了Model Y${COMPLETION_DELIMITER}`;
+      const result = parseTriplesOutput(output);
+
+      expect(result.relations).toHaveLength(1);
+      expect(result.relations[0].source).toBe("特斯拉公司");
+      expect(result.relations[0].target).toBe("Model Y");
+      expect(result.relations[0].keywords).toBe("发布、生产");
+      expect(result.relations[0].description).toBe("特斯拉发布了Model Y");
+    });
+
+    it("should handle multiple entities and relations", () => {
+      // 只有最后一行有 COMPLETION_DELIMITER
+      const output = `entity${TUPLE_DELIMITER}特斯拉公司${TUPLE_DELIMITER}Organization${TUPLE_DELIMITER}公司
+entity${TUPLE_DELIMITER}Model Y${TUPLE_DELIMITER}Artifact${TUPLE_DELIMITER}车型
+relation${TUPLE_DELIMITER}特斯拉公司${TUPLE_DELIMITER}Model Y${TUPLE_DELIMITER}发布${TUPLE_DELIMITER}发布车型
+${COMPLETION_DELIMITER}`;
+
+      const result = parseTriplesOutput(output);
+
+      expect(result.entities).toHaveLength(2);
+      expect(result.relations).toHaveLength(1);
+      expect(result.entities[0].name).toBe("特斯拉公司");
+      expect(result.entities[1].name).toBe("Model Y");
+      expect(result.relations[0].source).toBe("特斯拉公司");
+    });
+
+    it("should use NaturalObject as default type for entity", () => {
+      const output = `entity${TUPLE_DELIMITER}某物${TUPLE_DELIMITER}${TUPLE_DELIMITER}描述
+${COMPLETION_DELIMITER}`;
+      const result = parseTriplesOutput(output);
+
+      expect(result.entities[0].type).toBe("NaturalObject");
+    });
+
+    it("should handle empty output", () => {
+      const result = parseTriplesOutput("");
+      expect(result.entities).toHaveLength(0);
+      expect(result.relations).toHaveLength(0);
+    });
+
+    it("should ignore invalid lines", () => {
+      const output = `invalid line
+entity${TUPLE_DELIMITER}特斯拉公司${TUPLE_DELIMITER}Organization${TUPLE_DELIMITER}公司
+another invalid
+relation${TUPLE_DELIMITER}特斯拉公司${TUPLE_DELIMITER}Model Y${TUPLE_DELIMITER}发布${TUPLE_DELIMITER}发布车型
+${COMPLETION_DELIMITER}`;
+
+      const result = parseTriplesOutput(output);
+
+      expect(result.entities).toHaveLength(1);
+      expect(result.relations).toHaveLength(1);
+    });
   });
 });
