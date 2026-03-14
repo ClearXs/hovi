@@ -7,7 +7,7 @@ import { InferenceSession, Tensor } from "onnxruntime-node";
 import { getLogger } from "../logging.js";
 import type { TranscriptionResult, AsrModelSize } from "./types.js";
 
-const logger = getLogger("asr:sherpa");
+const logger = getLogger();
 
 export interface SherpaAsrConfig {
   runtimeDir?: string;

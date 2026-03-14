@@ -393,6 +393,13 @@ export function subscribeEmbeddedPiSession(params: SubscribeEmbeddedPiSessionPar
     if (!params.enforceFinalTag) {
       state.inlineCode = finalCodeSpans.inlineState;
       FINAL_TAG_SCAN_RE.lastIndex = 0;
+      // Check if there are any <final> tags in the text
+      FINAL_TAG_SCAN_RE.lastIndex = 0;
+      const hasFinalTag = FINAL_TAG_SCAN_RE.test(processed);
+      if (!hasFinalTag) {
+        // No <final> tags - return the original text instead of empty string
+        return processed;
+      }
       return stripTagsOutsideCodeSpans(processed, FINAL_TAG_SCAN_RE, finalCodeSpans.isInside);
     }
 

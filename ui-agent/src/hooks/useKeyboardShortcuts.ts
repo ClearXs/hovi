@@ -22,13 +22,15 @@ export function useKeyboardShortcuts({ shortcuts, enabled = true }: UseKeyboardS
     if (!enabled) return;
 
     const handleKeyDown = (event: KeyboardEvent) => {
+      // Don't process during IME composition
+      if (event.isComposing) {
+        return;
+      }
+
       // Don't trigger shortcuts when typing in input fields
       const target = event.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) {
-        // Exception: Allow Esc key even in input fields
-        if (event.key !== "Escape") {
-          return;
-        }
+        return;
       }
 
       for (const shortcut of shortcuts) {

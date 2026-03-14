@@ -120,6 +120,7 @@ interface KnowledgeBaseState {
   }) => Promise<void>;
   selectDocument: (id: string | null) => Promise<void>;
   loadChunks: (documentId: string, params?: { offset?: number; limit?: number }) => Promise<void>;
+  loadMoreChunks: (documentId: string) => Promise<void>;
   selectChunk: (chunkId: string | null) => void;
   loadSettings: () => Promise<void>;
   updateSettings: (params: {
@@ -183,7 +184,7 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
   chunkIds: [],
   chunkTotal: 0,
   chunkOffset: 0,
-  chunkLimit: 50,
+  chunkLimit: 100,
   activeChunkId: null,
   isLoadingChunks: false,
   settings: null,
@@ -410,6 +411,45 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         chunkTotal: result.total,
         chunkOffset: result.offset,
         chunkLimit: nextLimit,
+      });
+    } finally {
+      set({ isLoadingChunks: false });
+    }
+  },
+
+  loadMoreChunks: async (documentId) => {
+    const { chunkLimit, chunkOffset, chunkTotal, chunksById, chunkIds } = get();
+    const nextOffset = chunkOffset + chunkLimit;
+
+    // 如果已经加载完所有数据，不再请求
+    if (nextOffset >= chunkTotal) {
+      return;
+    }
+
+    set({ isLoadingChunks: true });
+    try {
+      const result = await listKnowledgeChunks({
+        documentId,
+        kbId: get().activeKbId ?? undefined,
+        limit: chunkLimit,
+        offset: nextOffset,
+      });
+
+      // 追加新的 chunks
+      const newChunksById = { ...chunksById };
+      const newChunkIds = [...chunkIds];
+      result.chunks.forEach((chunk) => {
+        if (!newChunksById[chunk.id]) {
+          newChunksById[chunk.id] = chunk;
+          newChunkIds.push(chunk.id);
+        }
+      });
+
+      set({
+        chunksById: newChunksById,
+        chunkIds: newChunkIds,
+        chunkTotal: result.total,
+        chunkOffset: result.offset,
       });
     } finally {
       set({ isLoadingChunks: false });

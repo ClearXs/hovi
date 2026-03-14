@@ -267,7 +267,7 @@ describe("memory search config", () => {
         defaults: {
           memorySearch: {
             provider: "openai",
-            sources: ["memory"],
+            sources: ["memory"] as Array<"memory" | "sessions" | "knowledge">,
           },
           tools: {
             knowledgeBase: {
@@ -279,7 +279,7 @@ describe("memory search config", () => {
           },
         },
       },
-    };
+    } as unknown as OpenClawConfig;
     const resolved = resolveMemorySearchConfig(cfg, "main");
     expect(resolved?.sources).toContain("knowledge");
   });

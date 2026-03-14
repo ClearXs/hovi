@@ -130,6 +130,9 @@ export function KnowledgeSettingsTab() {
   const [graphProvider, setGraphProvider] = useState("auto");
   const [graphModel, setGraphModel] = useState("");
 
+  const [includeInMemorySearch, setIncludeInMemorySearch] = useState(true);
+  const [searchDirty, setSearchDirty] = useState(false);
+
   const [providerOptions, setProviderOptions] = useState<string[]>(["auto"]);
   const [modelsByProvider, setModelsByProvider] = useState<Record<string, string[]>>({ auto: [] });
   const [systemDefaultModel, setSystemDefaultModel] = useState("");
@@ -344,7 +347,7 @@ export function KnowledgeSettingsTab() {
 
   useEffect(() => {
     if (!settings) return;
-    if (vectorDirty || graphDirty) return;
+    if (vectorDirty || graphDirty || searchDirty) return;
     if (!settings.vectorization) return;
     if (!settings.graph) return;
     const vectorProviderValue = settings.vectorization.provider || fallbackProvider || "auto";
@@ -359,7 +362,10 @@ export function KnowledgeSettingsTab() {
     setGraphExtractor(settings.graph.extractor || "llm");
     setGraphProvider(graphProviderValue);
     setGraphModel(graphModelValue);
-  }, [fallbackProvider, graphDirty, resolveDefaultModel, settings, vectorDirty]);
+
+    // 加载 search 配置
+    setIncludeInMemorySearch(settings.search?.includeInMemorySearch ?? true);
+  }, [fallbackProvider, graphDirty, resolveDefaultModel, searchDirty, settings, vectorDirty]);
 
   if (!activeKbId) {
     return (
@@ -706,17 +712,26 @@ export function KnowledgeSettingsTab() {
             onClick={async () => {
               setSettingsError(null);
               try {
-                await updateBaseSettings({
-                  settings: {
-                    retrieval: {
-                      mode: retrievalMode,
-                      topK: retrievalTopK,
-                      minScore: retrievalMinScore,
-                      hybridAlpha,
+                await Promise.all([
+                  updateSettings({
+                    kbId: activeKbId ?? undefined,
+                    search: {
+                      includeInMemorySearch,
                     },
-                  },
-                });
+                  }),
+                  updateBaseSettings({
+                    settings: {
+                      retrieval: {
+                        mode: retrievalMode,
+                        topK: retrievalTopK,
+                        minScore: retrievalMinScore,
+                        hybridAlpha,
+                      },
+                    },
+                  }),
+                ]);
                 setBaseRetrievalDirty(false);
+                setSearchDirty(false);
                 addToast({ title: "检索设置已保存", variant: "success" });
               } catch (error) {
                 setSettingsError(error instanceof Error ? error.message : "检索设置保存失败");
@@ -780,6 +795,20 @@ export function KnowledgeSettingsTab() {
               />
             </SettingRow>
           ) : null}
+          <SettingRow
+            title="对话时自动搜索"
+            description="在普通对话中自动搜索该知识库内容，无需手动触发。"
+          >
+            <input
+              type="checkbox"
+              checked={includeInMemorySearch}
+              onChange={(e) => {
+                setSearchDirty(true);
+                setIncludeInMemorySearch(e.target.checked);
+              }}
+              className="h-4 w-4"
+            />
+          </SettingRow>
           {baseValidationError ? (
             <div className="text-xs text-error">{baseValidationError}</div>
           ) : null}

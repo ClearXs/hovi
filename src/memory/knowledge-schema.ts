@@ -46,6 +46,7 @@ export function ensureKnowledgeSchema(db: DatabaseSync): void {
       owner_agent_id TEXT PRIMARY KEY,
       vector_config TEXT,
       graph_config TEXT,
+      search_config TEXT,
       updated_at INTEGER NOT NULL
     )
   `);

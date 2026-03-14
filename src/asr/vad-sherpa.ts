@@ -5,7 +5,7 @@ import path from "node:path";
 import { InferenceSession, Tensor } from "onnxruntime-node";
 import { getLogger } from "../logging.js";
 
-const logger = getLogger("asr:vad-sherpa");
+const logger = getLogger();
 
 export interface SherpaVadConfig {
   runtimeDir: string;

@@ -177,6 +177,10 @@ export function FloatingPanelContent({ children, className }: FloatingPanelConte
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      // Don't handle Escape during IME composition
+      if (event.isComposing) {
+        return;
+      }
       if (event.key === "Escape") closeFloatingPanel();
     };
     document.addEventListener("keydown", handleKeyDown);

@@ -1,5 +1,31 @@
 "use client";
 
+// PDF.js 全局类型声明
+interface PdfJsLib {
+  GlobalWorkerOptions: { workerSrc: string };
+  getDocument: (src: string) => {
+    promise: Promise<{
+      numPages: number;
+      getPage: (
+        pageNumber: number,
+      ) => Promise<{
+        getViewport: (options: { scale: number }) => { width: number; height: number };
+        render: (options: {
+          canvas: HTMLCanvasElement;
+          canvasContext: CanvasRenderingContext2D;
+          viewport: { width: number; height: number };
+        }) => { promise: Promise<void> };
+      }>;
+    }>;
+  };
+}
+
+declare global {
+  interface Window {
+    pdfjsLib?: PdfJsLib;
+  }
+}
+
 import Editor from "@monaco-editor/react";
 import {
   ChevronLeft,
@@ -70,13 +96,15 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
   const [pdfPages, setPdfPages] = useState(0);
   const [pdfPage, setPdfPage] = useState(1);
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [pdfError, setPdfError] = useState<string | null>(null);
   const [pdfSearch, setPdfSearch] = useState("");
   const [pdfSearchStatus, setPdfSearchStatus] = useState<string | null>(null);
   const [pptxPreviewUrl, setPptxPreviewUrl] = useState<string | null>(null);
   const [pptxPreviewLoading, setPptxPreviewLoading] = useState(false);
   const [pptxPreviewError, setPptxPreviewError] = useState<string | null>(null);
   const pdfCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const pdfDocRef = useRef<import("pdfjs-dist").PDFDocumentProxy | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const pdfDocRef = useRef<any>(null);
   const pdfRenderingRef = useRef(false);
 
   // JSON 编辑器状态
@@ -144,6 +172,24 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
     initialY: 0,
   });
 
+  // PDF 工具栏状态
+  const [pdfToolbarPos, setPdfToolbarPos] = useState({ x: 16, y: 16 });
+  const [pdfToolbarExpanded, setPdfToolbarExpanded] = useState(true);
+  const pdfToolbarRef = useRef<HTMLDivElement | null>(null);
+  const pdfDragRef = useRef<{
+    dragging: boolean;
+    startX: number;
+    startY: number;
+    initialX: number;
+    initialY: number;
+  }>({
+    dragging: false,
+    startX: 0,
+    startY: 0,
+    initialX: 0,
+    initialY: 0,
+  });
+
   const mime = detail?.mimetype || "";
   const filename = detail?.filename?.toLowerCase() || "";
 
@@ -182,7 +228,7 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
       const page = await pdfDocRef.current.getPage(pageIndex);
       const pageText = await page.getTextContent();
       const text = pageText.items
-        .map((item) => ("str" in item ? item.str : ""))
+        .map((item: { str?: string }) => ("str" in item ? item.str : ""))
         .join(" ")
         .toLowerCase();
       if (text.includes(normalizedQuery)) {
@@ -322,6 +368,7 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
     setTextContent("");
     setZoom(1);
     setPdfPages(0);
+    setPdfError(null);
     setPdfPage(1);
     setPdfSearch("");
     setPdfSearchStatus(null);
@@ -337,20 +384,70 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
     };
   }, [detail]);
 
+  // 加载 PDF.js - 完全从 CDN 加载，绕过 webpack
+  // 使用计数器强制触发重新渲染
+  const [pdfRenderKey, setPdfRenderKey] = useState(0);
+
   useEffect(() => {
-    const loadPdf = async () => {
+    let isActive = true;
+
+    const loadPdfJs = (): Promise<PdfJsLib> => {
+      return new Promise((resolve, reject) => {
+        if (window.pdfjsLib) {
+          resolve(window.pdfjsLib);
+          return;
+        }
+
+        const script = document.createElement("script");
+        script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js";
+        script.onload = () => {
+          if (window.pdfjsLib) {
+            resolve(window.pdfjsLib);
+          } else {
+            reject(new Error("PDF.js 未正确加载"));
+          }
+        };
+        script.onerror = () => reject(new Error("PDF.js 加载失败"));
+        document.head.appendChild(script);
+      });
+    };
+
+    const initPdf = async () => {
       if (!blobUrl || mime !== "application/pdf") return;
       setPdfLoading(true);
-      const pdfjs = await import("pdfjs-dist");
-      const workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
-      pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
-      const pdf = await pdfjs.getDocument(blobUrl).promise;
-      pdfDocRef.current = pdf;
-      setPdfPages(pdf.numPages);
-      setPdfPage(1);
-      setPdfLoading(false);
+      setPdfError(null);
+
+      try {
+        const pdfjs = await loadPdfJs();
+        if (!isActive || !pdfjs) return;
+
+        pdfjs.GlobalWorkerOptions.workerSrc =
+          "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js";
+
+        const loadingTask = pdfjs.getDocument(blobUrl);
+        const pdf = await loadingTask.promise;
+        if (!isActive) return;
+
+        pdfDocRef.current = pdf;
+        setPdfPages(pdf.numPages);
+        setPdfPage(1);
+        // 触发重新渲染
+        setPdfRenderKey((k) => k + 1);
+      } catch (err) {
+        console.error("PDF load error:", err);
+        setPdfError(err instanceof Error ? err.message : "PDF 加载失败");
+      } finally {
+        if (isActive) {
+          setPdfLoading(false);
+        }
+      }
     };
-    void loadPdf();
+
+    initPdf();
+
+    return () => {
+      isActive = false;
+    };
   }, [blobUrl, mime]);
 
   useEffect(() => {
@@ -372,7 +469,7 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
       pdfRenderingRef.current = false;
     };
     void renderPage();
-  }, [pdfPage, zoom, mime]);
+  }, [pdfPage, zoom, mime, pdfRenderKey]);
 
   useEffect(() => {
     if (mime !== "application/pdf" || keywords.length === 0 || !pdfDocRef.current) return;
@@ -454,6 +551,10 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
     // Markdown 工具栏初始位置
     if (isMarkdown) {
       setMarkdownToolbarPos({ x: 8, y: 8 });
+    }
+    // PDF 工具栏初始位置
+    if (mime === "application/pdf") {
+      setPdfToolbarPos({ x: 8, y: 8 });
     }
   }, []);
 
@@ -786,50 +887,146 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
 
   if (mime === "application/pdf") {
     return blobUrl ? (
-      <div>
-        {toolbar}
-        <div className="mb-sm flex items-center gap-sm">
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={pdfPage <= 1 || pdfLoading}
-            onClick={() => setPdfPage((prev) => Math.max(1, prev - 1))}
-          >
-            上一页
-          </Button>
-          <div className="text-xs text-text-tertiary">
-            {pdfPages ? `${pdfPage} / ${pdfPages}` : "加载中"}
-          </div>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={pdfPages === 0 || pdfPage >= pdfPages || pdfLoading}
-            onClick={() => setPdfPage((prev) => Math.min(pdfPages, prev + 1))}
-          >
-            下一页
-          </Button>
-          <div className="ml-auto flex items-center gap-xs">
-            <input
-              className="h-7 w-40 rounded border border-border-light bg-white px-xs text-xs"
-              placeholder="搜索 PDF 文本"
-              value={pdfSearch}
-              onChange={(event) => setPdfSearch(event.target.value)}
+      <div key={pdfRenderKey} className="relative h-full">
+        {/* PDF 画布区域 */}
+        <div className="h-full overflow-auto p-sm">
+          {pdfLoading ? (
+            <div className="flex h-full items-center justify-center text-sm text-text-tertiary">
+              加载 PDF 中...
+            </div>
+          ) : (
+            <canvas
+              key={pdfRenderKey}
+              ref={pdfCanvasRef}
+              className="mx-auto block max-w-full bg-white"
             />
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={!pdfSearch.trim() || pdfLoading}
-              onClick={() => void handlePdfSearch()}
-            >
-              搜索
-            </Button>
-          </div>
+          )}
         </div>
-        {pdfSearchStatus && (
-          <div className="mb-sm text-xs text-text-tertiary">{pdfSearchStatus}</div>
-        )}
-        <div className="overflow-auto rounded-lg border border-border-light bg-white p-sm">
-          <canvas ref={pdfCanvasRef} className="max-w-full" />
+
+        {/* PDF 悬浮工具栏 - 距底部30px居中 */}
+        <div className="absolute bottom-[30px] left-1/2 -translate-x-1/2 flex select-none items-center gap-1 rounded-md border border-primary/25 bg-background/95 p-1 text-text-primary shadow-sm backdrop-blur">
+          <TooltipProvider delayDuration={200}>
+            {/* 拖拽按钮 */}
+            <button
+              data-pdf-drag
+              type="button"
+              className="flex h-7 w-7 cursor-move items-center justify-center rounded-md bg-background/80 text-text-secondary transition-colors hover:bg-primary/15 hover:text-primary"
+            >
+              <GripHorizontal className="h-3.5 w-3.5" />
+            </button>
+          </TooltipProvider>
+        </div>
+        {/* PDF 底部工具栏 */}
+        <div className="absolute bottom-[30px] left-1/2 -translate-x-1/2 flex items-center gap-1 rounded-md border border-primary/25 bg-background/95 p-1 text-text-primary shadow-sm backdrop-blur">
+          <TooltipProvider delayDuration={200}>
+            {/* 缩小按钮 */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="flex h-7 w-7 items-center justify-center rounded text-text-secondary hover:bg-gray-100"
+                  onClick={() => setZoom((z) => Math.max(0.5, z - 0.25))}
+                >
+                  <svg
+                    className="h-4 w-4"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">缩小</TooltipContent>
+            </Tooltip>
+            {/* 放大按钮 */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="flex h-7 w-7 items-center justify-center rounded text-text-secondary hover:bg-gray-100"
+                  onClick={() => setZoom((z) => Math.min(3, z + 0.25))}
+                >
+                  <svg
+                    className="h-4 w-4"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">放大</TooltipContent>
+            </Tooltip>
+            {/* 分隔线 */}
+            <div className="mx-1 h-5 w-px bg-border-light" />
+            {/* 上一页 */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="flex items-center gap-1 rounded px-2 py-1 text-xs text-text-secondary hover:bg-gray-100 disabled:opacity-40"
+                  disabled={pdfPage <= 1 || pdfLoading}
+                  onClick={() => setPdfPage((prev) => Math.max(1, prev - 1))}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  上一页
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">上一页</TooltipContent>
+            </Tooltip>
+            {/* 页码显示 */}
+            <span className="min-w-[60px] text-center text-xs text-text-tertiary">
+              {pdfPages ? `${pdfPage} / ${pdfPages}` : "加载中"}
+            </span>
+            {/* 下一页 */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="flex items-center gap-1 rounded px-2 py-1 text-xs text-text-secondary hover:bg-gray-100 disabled:opacity-40"
+                  disabled={pdfPages === 0 || pdfPage >= pdfPages || pdfLoading}
+                  onClick={() => setPdfPage((prev) => Math.min(pdfPages, prev + 1))}
+                >
+                  下一页
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">下一页</TooltipContent>
+            </Tooltip>
+            {/* 分隔线 */}
+            <div className="mx-1 h-5 w-px bg-border-light" />
+            {/* 打开按钮 */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="flex h-7 w-7 items-center justify-center rounded text-text-secondary hover:bg-gray-100"
+                  onClick={() => window.open(blobUrl, "_blank", "noopener")}
+                >
+                  <ExternalLink className="h-4 w-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">打开</TooltipContent>
+            </Tooltip>
+            {/* 下载按钮 */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <a
+                  href={blobUrl}
+                  download={detail.filename}
+                  className="flex h-7 w-7 items-center justify-center rounded text-text-secondary hover:bg-gray-100"
+                >
+                  <Download className="h-4 w-4" />
+                </a>
+              </TooltipTrigger>
+              <TooltipContent side="top">下载</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         </div>
       </div>
     ) : (

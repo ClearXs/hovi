@@ -120,6 +120,9 @@ export type KnowledgeSettingsResponse = {
     triplesPerKTokens: number;
     maxDepth: number;
   };
+  search?: {
+    includeInMemorySearch: boolean;
+  };
   updatedAt: number;
 };
 
@@ -172,6 +175,9 @@ export type KnowledgeBaseRuntimeSettings = {
   };
   graph: {
     enabled: boolean;
+  };
+  search?: {
+    includeInMemorySearch: boolean;
   };
 };
 
@@ -687,6 +693,29 @@ export async function getKnowledgeGraphData(params: {
   limit?: number;
 }): Promise<KnowledgeGraphData> {
   return callKnowledgeWs("knowledge.graph.data", params);
+}
+
+/**
+ * Get entity details with related document chunks
+ */
+export type EntityDetails = {
+  id: string;
+  name: string;
+  type: string | null;
+  description: string | null;
+  chunks: Array<{
+    id: string;
+    text: string;
+    documentName: string;
+    score: number;
+  }>;
+};
+
+export async function getEntityDetails(params: {
+  kbId: string;
+  entityId: string;
+}): Promise<EntityDetails> {
+  return callKnowledgeWs("knowledge.graph.entityDetails", params);
 }
 
 /**

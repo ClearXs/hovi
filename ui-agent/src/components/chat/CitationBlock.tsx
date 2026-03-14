@@ -2,7 +2,7 @@
 
 import { FileText, Database, Network, BookOpen } from "lucide-react";
 
-interface Citation {
+export interface Citation {
   source: "pageindex" | "knowledge";
   documentId: string;
   filename: string;

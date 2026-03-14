@@ -3,6 +3,7 @@
 import { CheckCircle2, Loader2, RotateCcw, Trash2, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { UploadQueueItem } from "@/hooks/useUploadQueue";
+import { formatFileSize } from "@/lib/fileUtils";
 
 interface UploadQueueProps {
   items: UploadQueueItem[];
@@ -31,7 +32,7 @@ export function UploadQueue({ items, onRetry, onRemove, onClearFinished }: Uploa
                   {item.file.name}
                 </div>
                 <div className="mt-[2px] text-[11px] text-text-tertiary">
-                  {(item.file.size / 1024 / 1024).toFixed(2)} MB
+                  {formatFileSize(item.file.size)}
                 </div>
               </div>
               <div className="flex items-center gap-xs">

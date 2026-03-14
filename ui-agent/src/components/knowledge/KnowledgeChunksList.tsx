@@ -1,6 +1,15 @@
 "use client";
 
-import { Search, ChevronDown, ChevronRight, CheckSquare, Square, X } from "lucide-react";
+import {
+  Search,
+  ChevronDown,
+  ChevronRight,
+  CheckSquare,
+  Square,
+  X,
+  ChevronLeft,
+  ChevronRight as ChevronRightIcon,
+} from "lucide-react";
 import { useState, useMemo } from "react";
 import { cn } from "@/lib/utils";
 import type { KnowledgeChunk } from "@/services/knowledgeApi";
@@ -10,6 +19,11 @@ interface KnowledgeChunksListProps {
   activeChunkId: string | null;
   onSelectChunk: (chunkId: string) => void;
   isLoading?: boolean;
+  // 分页相关
+  total?: number;
+  offset?: number;
+  limit?: number;
+  onGoToPage?: (page: number) => void;
   // 用于批量操作
   selectedChunkIds?: Set<string>;
   onSelectionChange?: (selectedIds: Set<string>) => void;
@@ -22,6 +36,10 @@ export function KnowledgeChunksList({
   activeChunkId,
   onSelectChunk,
   isLoading,
+  total,
+  offset = 0,
+  limit = 50,
+  onGoToPage,
   selectedChunkIds,
   onSelectionChange,
 }: KnowledgeChunksListProps) {
@@ -182,7 +200,7 @@ export function KnowledgeChunksList({
       </div>
 
       {/* Chunk 列表 */}
-      <div className="flex-1 space-y-2 overflow-auto pr-xs">
+      <div className="flex-1 space-y-4 overflow-auto pr-xs scrollbar-narrow">
         {filteredChunks.map((chunk) => {
           const chunkText = getChunkText(chunk);
           const isExpanded = expandedChunks.has(chunk.id);
@@ -195,12 +213,12 @@ export function KnowledgeChunksList({
             <div
               key={chunk.id}
               className={cn(
-                "rounded-md border transition-all",
+                "rounded-md border border-border-light transition-all",
                 isActive
                   ? "border-primary/40 bg-primary/5"
                   : isSelected
                     ? "border-primary/30 bg-primary/5"
-                    : "border-border-light hover:border-border",
+                    : "hover:border-border hover:bg-gray-50",
                 selectMode && "cursor-pointer",
               )}
               onClick={() => {
@@ -280,6 +298,36 @@ export function KnowledgeChunksList({
       {/* 空搜索结果 */}
       {filteredChunks.length === 0 && searchQuery && (
         <div className="py-4 text-center text-xs text-text-tertiary">没有找到匹配的 chunk</div>
+      )}
+
+      {/* 分页控件 */}
+      {total !== undefined && total > limit && onGoToPage && (
+        <div className="mt-2 flex items-center justify-between border-t border-border-light pt-2">
+          <span className="text-xs text-text-tertiary">
+            {offset + 1}-{Math.min(offset + limit, total)} / {total}
+          </span>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={() => onGoToPage(Math.floor(offset / limit) + 1 - 1)}
+              disabled={offset < limit}
+              className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+              title="上一页"
+            >
+              <ChevronLeft className="h-3.5 w-3.5" />
+            </button>
+            <span className="text-xs text-text-tertiary px-2 min-w-[40px] text-center">
+              {Math.floor(offset / limit) + 1}
+            </span>
+            <button
+              onClick={() => onGoToPage(Math.floor(offset / limit) + 1 + 1)}
+              disabled={offset + limit >= total}
+              className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+              title="下一页"
+            >
+              <ChevronRightIcon className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -50,7 +50,7 @@ export type ResolvedKnowledgeConfig = {
 const DEFAULT_KNOWLEDGE_CONFIG: ResolvedKnowledgeConfig = {
   enabled: true,
   vectorization: {
-    enabled: false,
+    enabled: true,
   },
   graph: {
     enabled: false,
@@ -61,7 +61,7 @@ const DEFAULT_KNOWLEDGE_CONFIG: ResolvedKnowledgeConfig = {
     maxDepth: 2,
   },
   storage: {
-    maxFileSize: 10 * 1024 * 1024, // 10MB
+    maxFileSize: 500 * 1024 * 1024, // 500MB - practically unlimited for most use cases
     maxDocuments: 1000,
   },
   formats: {

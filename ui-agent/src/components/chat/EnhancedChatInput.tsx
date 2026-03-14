@@ -22,10 +22,11 @@ import {
   File,
   Image as ImagePreviewIcon,
 } from "lucide-react";
-import { useCallback, useMemo, useRef, useState, KeyboardEvent, DragEvent } from "react";
+import { useCallback, useMemo, useRef, useState, useEffect, KeyboardEvent, DragEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { formatFileSize } from "@/lib/fileUtils";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useToastStore } from "@/stores/toastStore";
@@ -97,6 +98,7 @@ interface EnhancedChatInputProps {
   }>;
   activeConnectorIds?: string[];
   onToggleConnector?: (id: string, enabled: boolean) => void;
+  resetKey?: number; // 用于重置输入框
 }
 
 interface SkillStatusEntry {
@@ -131,6 +133,7 @@ export function EnhancedChatInput({
   connectors = [],
   activeConnectorIds = [],
   onToggleConnector,
+  resetKey = 0,
 }: EnhancedChatInputProps) {
   const wsClient = useConnectionStore((s) => s.wsClient);
   const openSettings = useSettingsStore((s) => s.openSettings);
@@ -156,8 +159,60 @@ export function EnhancedChatInput({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
-  const inputValue = draftValue ?? input;
-  const attachmentValue = draftAttachments ?? attachments;
+  const prevDraftValueRef = useRef<string>(draftValue ?? "");
+  const isTypingRef = useRef(false);
+
+  // 当 draftValue 改变时（会话切换），同步到内部状态
+  useEffect(() => {
+    // 如果用户正在输入，不同步，避免干扰 IME
+    if (isTypingRef.current) {
+      return;
+    }
+
+    const newDraftValue = draftValue ?? "";
+
+    // 如果值没变，不处理
+    if (newDraftValue === prevDraftValueRef.current) {
+      return;
+    }
+
+    prevDraftValueRef.current = newDraftValue;
+
+    // 只有值真正改变时才更新内部状态
+    if (newDraftValue !== input) {
+      setInput(newDraftValue);
+    }
+  }, [draftValue]);
+
+  // 追踪 draftAttachments 的变化
+  const prevDraftAttachmentsRef = useRef<string>(JSON.stringify(draftAttachments ?? []));
+
+  useEffect(() => {
+    const newDraftAttachments = draftAttachments ?? [];
+    const newDraftAttachmentsKey = JSON.stringify(newDraftAttachments);
+    if (newDraftAttachmentsKey !== prevDraftAttachmentsRef.current) {
+      prevDraftAttachmentsRef.current = newDraftAttachmentsKey;
+      // 只有 draftAttachments 真正改变时才更新内部状态
+      setAttachments(newDraftAttachments);
+    }
+  }, [draftAttachments]);
+
+  // 监听 resetKey 变化来重置输入框
+  const prevResetKeyRef = useRef(resetKey);
+  useEffect(() => {
+    if (resetKey !== prevResetKeyRef.current) {
+      prevResetKeyRef.current = resetKey;
+      // 重置时清空输入框和附件
+      setInput("");
+      setAttachments([]);
+      // 如果有外部回调也调用一下
+      if (onDraftChange) onDraftChange("");
+      if (onDraftAttachmentsChange) onDraftAttachmentsChange([]);
+    }
+  }, [resetKey, onDraftChange, onDraftAttachmentsChange]);
+
+  const inputValue = input;
+  const attachmentValue = attachments;
   const skillKeySet = useMemo(() => new Set(skills.map((skill) => skill.skillKey)), [skills]);
   const availableConnectors = useMemo(() => {
     return [...connectors].sort((a, b) => {
@@ -210,11 +265,10 @@ export function EnhancedChatInput({
   }, [skills, skillsQuery]);
 
   const updateInputValue = (nextValue: string) => {
-    if (onDraftChange) {
-      onDraftChange(nextValue);
-    } else {
-      setInput(nextValue);
-    }
+    // Update internal state and track the value to avoid sync issues
+    setInput(nextValue);
+    // Also update ref to track the value for sync logic
+    prevDraftValueRef.current = nextValue;
   };
 
   const loadSkills = useCallback(async () => {
@@ -261,9 +315,15 @@ export function EnhancedChatInput({
 
   // 处理输入变化
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    isTypingRef.current = true;
     updateInputValue(e.target.value);
     if (sendError) setSendError(null);
     adjustTextareaHeight();
+  };
+
+  // 处理输入结束 - 当用户停止输入时重置标记
+  const handleBlur = () => {
+    isTypingRef.current = false;
   };
 
   const handleInsertSkill = (skillKey: string) => {
@@ -297,37 +357,52 @@ export function EnhancedChatInput({
     if (!inputValue.trim() && attachmentValue.length === 0) return;
     if (disabled || isSending) return;
 
+    // 先保存当前输入内容和附件
+    const messageToSend = inputValue;
+    const attachmentsToSend = attachmentValue.length > 0 ? [...attachmentValue] : undefined;
+
+    // 立即清空输入框
+    isTypingRef.current = false;
+    setInput("");
+    prevDraftValueRef.current = "";
+    setAttachments([]);
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto";
+    }
+
+    // 然后在后台发送消息
     setIsSending(true);
-    const result = await onSend(
-      inputValue,
-      attachmentValue.length > 0 ? attachmentValue : undefined,
-    );
+    const result = await onSend(messageToSend, attachmentsToSend);
     setIsSending(false);
-    if (result.ok) {
+
+    if (!result.ok) {
+      // 发送失败，恢复输入内容
+      setInput(messageToSend);
+      prevDraftValueRef.current = messageToSend;
+      setAttachments(attachmentsToSend ?? []);
+      if (onDraftChange) {
+        onDraftChange(messageToSend);
+      }
+      setSendError(result.error ?? "发送失败，请重试");
+    } else {
+      // 发送成功，通知父组件
       if (onDraftChange) {
         onDraftChange("");
-      } else {
-        setInput("");
       }
       if (onDraftAttachmentsChange) {
         onDraftAttachmentsChange([]);
-      } else {
-        setAttachments([]);
       }
       setSendError(null);
-
-      // 重置文本框高度
-      if (textareaRef.current) {
-        textareaRef.current.style.height = "auto";
-      }
-    } else {
-      setSendError(result.error ?? "发送失败，请重试");
     }
   };
 
-  // 处理键盘事件
+  // 处理键盘事件 - Shift + Command + Enter 发送
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    // 在 IME 组合期间不处理任何键盘事件，避免干扰输入法
+    if (e.nativeEvent?.isComposing) {
+      return;
+    }
+    if (e.key === "Enter" && e.shiftKey && e.metaKey) {
       e.preventDefault();
       handleSend();
     }
@@ -529,7 +604,7 @@ export function EnhancedChatInput({
               <FileText className="w-5 h-5 text-text-tertiary" />
               <span className="text-sm font-medium">{previewFile.name}</span>
               <span className="text-xs text-text-tertiary">
-                ({(previewFile.size / 1024).toFixed(1)} KB)
+                ({formatFileSize(previewFile.size)})
               </span>
             </div>
             {/* 内容 */}
@@ -663,6 +738,7 @@ export function EnhancedChatInput({
                 ref={textareaRef}
                 value={inputValue}
                 onChange={handleInputChange}
+                onBlur={handleBlur}
                 onKeyDown={handleKeyDown}
                 disabled={disabled}
                 placeholder={placeholder}
@@ -1021,7 +1097,7 @@ export function EnhancedChatInput({
                     disabled || isSending || (!inputValue.trim() && attachmentValue.length === 0)
                   }
                   className="p-sm rounded-lg bg-primary hover:bg-primary-hover text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="发送 (Enter)"
+                  title="发送 (Shift + Command + Enter)"
                 >
                   <Send className="w-4 h-4" />
                 </button>

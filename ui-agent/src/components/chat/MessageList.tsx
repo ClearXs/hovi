@@ -1,10 +1,11 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+import { memo, useRef, useEffect } from "react";
+import { Citation } from "@/components/chat/CitationBlock";
 import { FileItemProps } from "@/components/files/FileList";
 import { useStreamingReplay } from "@/contexts/StreamingReplayContext";
 import { AgentMessage, AgentMessageProps } from "../agent/AgentMessage";
-import { MessageBubble } from "./MessageBubble";
+import { MemoizedMessageBubble } from "./MessageBubble";
 
 export interface Message {
   id: string;
@@ -30,7 +31,8 @@ export interface Message {
     isError?: boolean;
     durationMs?: number;
   }>;
-  status?: "sending" | "failed" | "waiting";
+  citations?: Citation[];
+  status?: "sending" | "failed" | "waiting" | "cancelled";
   retryPayload?: {
     message: string;
     attachments?: File[];
@@ -53,6 +55,7 @@ interface MessageListProps {
   onEditMessage?: (message: Message) => void;
   onCopyMessage?: (message: Message) => void;
   onDeleteMessage?: (message: Message) => void;
+  onCancelMessage?: (message: Message) => void;
   onStartEdit?: (message: Message) => void;
   onConfirmEdit?: (message: Message, newContent: string) => void;
   onCancelEdit?: (message: Message) => void;
@@ -70,6 +73,7 @@ export function MessageList({
   onEditMessage,
   onCopyMessage,
   onDeleteMessage,
+  onCancelMessage,
   onStartEdit,
   onConfirmEdit,
   onCancelEdit,
@@ -82,20 +86,27 @@ export function MessageList({
   const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const { shouldShowMessage } = useStreamingReplay();
   const prevMessageCount = useRef(0);
+  const prevMessagesRef = useRef<Message[]>([]);
 
-  // 自动滚动到底部 - 只有启用且消息增加时才滚动
+  // 自动滚动到底部 - 只有启用且真正添加了新消息时才滚动
   useEffect(() => {
     if (!autoScrollToBottom) return;
-    // 只有当消息数量增加时才滚动（发送新消息时），不滚动的情况包括：
-    // - 初始加载（消息数量从0增加）
-    // - 加载历史（消息数量增加）
-    if (messages.length > prevMessageCount.current) {
+
+    // 检查是否有新消息添加（比较最后一条消息的id）
+    const prevLastMsg = prevMessagesRef.current[prevMessagesRef.current.length - 1];
+    const currentLastMsg = messages[messages.length - 1];
+    const hasNewMessage = currentLastMsg && (!prevLastMsg || currentLastMsg.id !== prevLastMsg.id);
+
+    if (hasNewMessage && messages.length > prevMessageCount.current) {
       // 使用 requestAnimationFrame 延迟滚动，确保 DOM 已经更新
+      // 使用 auto 行为替代 smooth，减少跳动感
       requestAnimationFrame(() => {
-        bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+        bottomRef.current?.scrollIntoView({ behavior: "auto" });
       });
     }
+
     prevMessageCount.current = messages.length;
+    prevMessagesRef.current = messages;
   }, [messages, autoScrollToBottom]);
 
   useEffect(() => {
@@ -145,7 +156,7 @@ export function MessageList({
                 messageRefs.current[message.id] = node;
               }}
             >
-              <MessageBubble
+              <MemoizedMessageBubble
                 role={message.role as "user" | "assistant"}
                 content={message.content}
                 timestamp={message.timestamp}
@@ -153,12 +164,14 @@ export function MessageList({
                 usage={message.usage}
                 toolCalls={message.toolCalls}
                 toolResults={message.toolResults}
+                citations={message.citations}
                 status={message.status}
                 isHighlighted={message.id === highlightMessageId}
                 onRetry={onRetryMessage ? () => onRetryMessage(message) : undefined}
                 onEditRetry={onEditMessage ? () => onEditMessage(message) : undefined}
                 onCopyRetry={onCopyMessage ? () => onCopyMessage(message) : undefined}
                 onDelete={onDeleteMessage ? () => onDeleteMessage(message) : undefined}
+                onCancel={onCancelMessage ? () => onCancelMessage(message) : undefined}
                 onEdit={onStartEdit ? () => onStartEdit(message) : undefined}
                 onEditConfirm={(newContent) => onConfirmEdit?.(message, newContent)}
                 onEditCancel={() => onCancelEdit?.(message)}
@@ -186,3 +199,6 @@ export function MessageList({
     </div>
   );
 }
+
+// 使用 memo 优化，避免不必要的重渲染
+export const MemoizedMessageList = memo(MessageList);

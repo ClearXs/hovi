@@ -98,6 +98,8 @@ function VRMModel({
         const THREEAny = THREE as any;
         mixerRef.current = new THREEAny.AnimationMixer(_vrm.scene);
         const action = mixerRef.current.clipAction(animationToPlay[0]);
+        // 设置为循环播放
+        action.setLoop(THREEAny.LoopRepeat, Infinity);
         action.play();
       }
     } catch (error) {
@@ -240,6 +242,8 @@ export interface VrmViewerProps {
   onVrmLoad?: (vrm: VRM, controller: AvatarController) => void;
   /** Loading progress callback */
   onProgress?: (loaded: number, total: number) => void;
+  /** Enable orbit controls (zoom, rotate, pan) */
+  enableControls?: boolean;
 }
 
 export interface VrmViewerRef {
@@ -256,6 +260,7 @@ export const VrmViewer = forwardRef<VrmViewerRef, VrmViewerProps>(
       avatarState,
       onVrmLoad,
       onProgress,
+      enableControls = true,
     },
     ref,
   ) => {
@@ -359,18 +364,31 @@ export const VrmViewer = forwardRef<VrmViewerRef, VrmViewerProps>(
         <Canvas
           shadows
           camera={{ fov: 45, near: 0.1, far: 1000 }}
-          gl={{ antialias: true, alpha: true }}
+          gl={{
+            antialias: true,
+            alpha: true,
+            preserveDrawingBuffer: true,
+            powerPreference: "high-performance",
+          }}
+          onCreated={({ gl }) => {
+            // WebGL 上下文丢失处理
+            gl.domElement.addEventListener("webglcontextlost", (event: Event) => {
+              event.preventDefault();
+            });
+          }}
         >
           <CameraController />
           <Lights />
-          <OrbitControls
-            enablePan={true}
-            enableZoom={true}
-            enableRotate={true}
-            minDistance={0.5}
-            maxDistance={10}
-            target={[0, 1, 0]}
-          />
+          {enableControls && (
+            <OrbitControls
+              enablePan={true}
+              enableZoom={true}
+              enableRotate={true}
+              minDistance={0.5}
+              maxDistance={10}
+              target={[0, 1, 0]}
+            />
+          )}
           <VRMModel
             url={modelUrl}
             motionUrl={motionUrl}

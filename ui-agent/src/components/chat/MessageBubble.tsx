@@ -1,8 +1,9 @@
 "use client";
 
 import { User, ChevronDown, ChevronUp, Copy, Pencil, Check, X } from "lucide-react";
-import { useMemo, useState, useRef, useEffect } from "react";
+import { memo, useMemo, useState, useRef, useEffect } from "react";
 import { FormattedContent } from "@/components/agent/FormattedContent";
+import { CitationBlock, Citation } from "@/components/chat/CitationBlock";
 import type { Message } from "@/components/chat/MessageList";
 import { FileList, FileItemProps } from "@/components/files/FileList";
 import { useStreamingReplay } from "@/contexts/StreamingReplayContext";
@@ -31,12 +32,14 @@ interface MessageBubbleProps {
     isError?: boolean;
     durationMs?: number;
   }>;
-  status?: "sending" | "failed" | "waiting";
+  citations?: Citation[];
+  status?: "sending" | "failed" | "waiting" | "cancelled";
   isHighlighted?: boolean;
   onRetry?: () => void;
   onEditRetry?: () => void;
   onCopyRetry?: () => void;
   onDelete?: () => void;
+  onCancel?: () => void;
   onEdit?: () => void;
   onEditConfirm?: (newContent: string) => void;
   onEditCancel?: () => void;
@@ -53,12 +56,14 @@ export function MessageBubble({
   usage,
   toolCalls = [],
   toolResults = [],
+  citations,
   status,
   isHighlighted = false,
   onRetry,
   onEditRetry,
   onCopyRetry,
   onDelete,
+  onCancel,
   onEdit,
   onEditConfirm,
   onEditCancel,
@@ -68,6 +73,7 @@ export function MessageBubble({
 }: MessageBubbleProps) {
   const isUser = role === "user";
   const isWaiting = status === "waiting";
+  const isCancelled = status === "cancelled";
   const { isStreaming, getDisplayedText, currentMessageIndex } = useStreamingReplay();
   const [toolsOpen, setToolsOpen] = useState(false);
   const [editContent, setEditContent] = useState("");
@@ -147,8 +153,28 @@ export function MessageBubble({
             }`}
           >
             {isWaiting ? (
-              <div className="flex items-center gap-sm text-sm text-text-tertiary">
-                <span className="animate-pulse">...</span>
+              <div className="flex items-center justify-between gap-sm text-sm text-text-tertiary">
+                <span className="animate-pulse">正在输入...</span>
+                {onCancel && (
+                  <button
+                    type="button"
+                    onClick={onCancel}
+                    className="px-2 py-1 text-xs rounded border border-border-light text-text-secondary hover:bg-background-secondary transition-colors"
+                  >
+                    停止生成
+                  </button>
+                )}
+              </div>
+            ) : isCancelled ? (
+              <div className="flex flex-col gap-xs">
+                <div className="text-xs text-text-tertiary">已取消</div>
+                {content && (
+                  <FormattedContent
+                    content={content}
+                    className="text-sm max-w-full opacity-70"
+                    enableMarkdown={true}
+                  />
+                )}
               </div>
             ) : isEditing && isUser ? (
               <textarea
@@ -175,6 +201,17 @@ export function MessageBubble({
           {/* 文件列表 - 只在内容完全显示后才显示 */}
           {files && files.length > 0 && shouldShowFiles && (
             <FileList files={files} title="生成的文档" />
+          )}
+
+          {/* 知识库引用来源 - 只在助手消息中显示 */}
+          {!isUser && citations && citations.length > 0 && (
+            <CitationBlock
+              citations={citations}
+              onCitationClick={(citation) => {
+                // TODO: 实现点击跳转到文档详情
+                console.log("Citation clicked:", citation);
+              }}
+            />
           )}
 
           {shouldShowMeta && !isUser && hasToolInfo && (
@@ -314,11 +351,9 @@ export function MessageBubble({
               })}
             </span>
           )}
-          {isUser && status && (
+          {isUser && status === "failed" && (
             <div className="flex items-center gap-sm text-xs text-text-tertiary">
-              <span className={status === "failed" ? "text-error" : ""}>
-                {status === "sending" ? "发送中..." : "发送失败"}
-              </span>
+              <span className="text-error">发送失败</span>
               {status === "failed" && onRetry && (
                 <button
                   type="button"
@@ -384,3 +419,6 @@ function ToolResultContent({ content }: { content: string }) {
     </div>
   );
 }
+
+// 使用 memo 优化，避免不必要的重渲染
+export const MemoizedMessageBubble = memo(MessageBubble);

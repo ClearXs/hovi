@@ -2,7 +2,7 @@
 
 import { getLogger } from "../logging.js";
 
-const logger = getLogger("asr:elevenlabs");
+const logger = getLogger();
 
 export interface VoiceCloneResult {
   voiceId: string;
@@ -33,7 +33,7 @@ export async function createVoiceClone(
   if (description) {
     formData.append("description", description);
   }
-  formData.append("files", new Blob([audioBuffer]), "audio.wav");
+  formData.append("files", new Blob([new Uint8Array(audioBuffer)]), "audio.wav");
 
   const response = await fetch("https://api.elevenlabs.io/v1/voices/add", {
     method: "POST",

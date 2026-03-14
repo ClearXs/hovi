@@ -1,4 +1,4 @@
-export type MemorySource = "memory" | "sessions";
+export type MemorySource = "memory" | "sessions" | "knowledge";
 
 export type MemorySearchResult = {
   path: string;

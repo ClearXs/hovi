@@ -21,6 +21,9 @@ export function KnowledgeDocDetail({ documentId }: KnowledgeDocDetailProps) {
     loadChunks,
     chunkIds,
     chunksById,
+    chunkTotal,
+    chunkOffset,
+    chunkLimit,
     activeChunkId,
     selectChunk,
     isLoadingChunks,
@@ -38,6 +41,14 @@ export function KnowledgeDocDetail({ documentId }: KnowledgeDocDetailProps) {
   const chunks = useMemo(() => {
     return chunkIds.map((id) => chunksById[id]).filter(Boolean);
   }, [chunkIds, chunksById]);
+
+  // 分页处理
+  const handleGoToPage = (page: number) => {
+    if (documentId) {
+      const newOffset = (page - 1) * chunkLimit;
+      void loadChunks(documentId, { offset: newOffset });
+    }
+  };
 
   useEffect(() => {
     if (documentId) {
@@ -111,7 +122,7 @@ export function KnowledgeDocDetail({ documentId }: KnowledgeDocDetailProps) {
         <div ref={containerRef} className="flex h-full min-h-0">
           {/* Chunk 列表面板 */}
           <div
-            className="flex h-full min-h-0 flex-col rounded-l-lg border border-r-0 border-border-light overflow-hidden flex-shrink-0"
+            className="flex h-full min-h-0 flex-col overflow-hidden flex-shrink-0"
             style={{ width: chunkPanelWidth }}
           >
             <KnowledgeChunksList
@@ -119,6 +130,10 @@ export function KnowledgeDocDetail({ documentId }: KnowledgeDocDetailProps) {
               activeChunkId={activeChunkId}
               onSelectChunk={selectChunk}
               isLoading={isLoadingChunks}
+              total={chunkTotal}
+              offset={chunkOffset}
+              limit={chunkLimit}
+              onGoToPage={handleGoToPage}
             />
           </div>
 

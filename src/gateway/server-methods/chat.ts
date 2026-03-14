@@ -546,7 +546,10 @@ function nextChatSeq(context: { agentRunSeq: Map<string, number> }, runId: strin
 }
 
 function broadcastChatFinal(params: {
-  context: Pick<GatewayRequestContext, "broadcast" | "nodeSendToSession" | "agentRunSeq">;
+  context: Pick<
+    GatewayRequestContext,
+    "broadcast" | "nodeSendToSession" | "agentRunSeq" | "logGateway"
+  >;
   runId: string;
   turnId?: string;
   sessionKey: string;
@@ -564,13 +567,19 @@ function broadcastChatFinal(params: {
     state: "final" as const,
     message: stripInlineDirectiveTagsFromMessageForDisplay(strippedEnvelopeMessage),
   };
+  params.context.logGateway.info(
+    `broadcastChatFinal: sending chat event for runId=${params.runId} sessionKey=${params.sessionKey}`,
+  );
   params.context.broadcast("chat", payload);
   params.context.nodeSendToSession(params.sessionKey, "chat", payload);
   params.context.agentRunSeq.delete(params.runId);
 }
 
 function broadcastChatError(params: {
-  context: Pick<GatewayRequestContext, "broadcast" | "nodeSendToSession" | "agentRunSeq">;
+  context: Pick<
+    GatewayRequestContext,
+    "broadcast" | "nodeSendToSession" | "agentRunSeq" | "logGateway"
+  >;
   runId: string;
   turnId?: string;
   sessionKey: string;
@@ -585,6 +594,9 @@ function broadcastChatError(params: {
     state: "error" as const,
     errorMessage: params.errorMessage,
   };
+  params.context.logGateway.info(
+    `broadcastChatError: sending chat error for runId=${params.runId} sessionKey=${params.sessionKey} error=${params.errorMessage}`,
+  );
   params.context.broadcast("chat", payload);
   params.context.nodeSendToSession(params.sessionKey, "chat", payload);
   params.context.agentRunSeq.delete(params.runId);
@@ -987,6 +999,9 @@ export const chatHandlers: GatewayRequestHandlers = {
       });
 
       let agentRunStarted = false;
+      context.logGateway.info(
+        `chat.send: starting dispatch for sessionKey=${sessionKey} clientRunId=${clientRunId}`,
+      );
       void dispatchInboundMessage({
         ctx,
         cfg,
@@ -998,6 +1013,7 @@ export const chatHandlers: GatewayRequestHandlers = {
           images: parsedImages.length > 0 ? parsedImages : undefined,
           onAgentRunStart: (runId) => {
             agentRunStarted = true;
+            context.logGateway.info(`chat.send: agent run started runId=${runId}`);
             const connId = typeof client?.connId === "string" ? client.connId : undefined;
             const wantsToolEvents = hasGatewayClientCap(
               client?.connect?.caps,
@@ -1019,6 +1035,9 @@ export const chatHandlers: GatewayRequestHandlers = {
         },
       })
         .then(() => {
+          context.logGateway.info(
+            `chat.send: dispatchInboundMessage resolved for clientRunId=${clientRunId}`,
+          );
           if (!agentRunStarted) {
             const combinedReply = finalReplyParts
               .map((part) => part.trim())
@@ -1074,6 +1093,9 @@ export const chatHandlers: GatewayRequestHandlers = {
           });
         })
         .catch((err) => {
+          context.logGateway.error(
+            `chat.send: dispatchInboundMessage rejected for clientRunId=${clientRunId} error=${String(err)}`,
+          );
           const error = errorShape(ErrorCodes.UNAVAILABLE, String(err));
           setGatewayDedupeEntry({
             dedupe: context.dedupe,

@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { ReactNode, useState } from "react";
+import { ReactNode, useState, memo } from "react";
 import type { GatewaySessionRow } from "@/types/clawdbot";
 import Sidebar from "../sidebar/Sidebar";
 import { ToastStack } from "../ui/toast-stack";
@@ -10,7 +10,7 @@ import { TopBar } from "./TopBar";
 
 // Dynamic import for VirtualAssistant (SSR disabled)
 const VirtualAssistant = dynamic(
-  () => import("@/components/desk-pet/VirtualAssistant").then((mod) => mod.VirtualAssistant),
+  () => import("@/components/desk-pet/VirtualAssistant").then((mod) => mod.default),
   { ssr: false },
 );
 
@@ -56,6 +56,9 @@ interface MainLayoutProps {
   assistantVisible?: boolean;
   onToggleAssistantVisible?: () => void;
   activeView?: "chat" | "knowledge" | "persona";
+  onOpenChat?: () => void;
+  onStartVoiceChat?: () => void;
+  onOpenTasks?: () => void;
 }
 
 const MainLayout = ({
@@ -100,6 +103,9 @@ const MainLayout = ({
   assistantVisible = true,
   onToggleAssistantVisible = () => {},
   activeView = "chat",
+  onOpenChat = () => {},
+  onStartVoiceChat = () => {},
+  onOpenTasks = () => {},
 }: MainLayoutProps) => {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
 
@@ -149,7 +155,14 @@ const MainLayout = ({
       )}
 
       {/* 虚拟助手 - 全局显示 */}
-      {assistantVisible && <VirtualAssistant onOpenSettings={onOpenPersonaSettings} />}
+      {assistantVisible && (
+        <VirtualAssistant
+          onOpenSettings={onOpenPersonaSettings}
+          onOpenChat={onOpenChat}
+          onStartVoiceChat={onStartVoiceChat}
+          onOpenTasks={onOpenTasks}
+        />
+      )}
 
       {/* Main content - full height */}
       <main className="flex-1 flex flex-col overflow-hidden bg-background-tertiary">
@@ -173,4 +186,4 @@ const MainLayout = ({
   );
 };
 
-export default MainLayout;
+export default memo(MainLayout);

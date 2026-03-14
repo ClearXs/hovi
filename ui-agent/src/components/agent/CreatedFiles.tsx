@@ -1,6 +1,7 @@
 "use client";
 
 import { Database, FileText, Image, PieChart } from "lucide-react";
+import { formatFileSize } from "@/lib/fileUtils";
 import { useAgentStore } from "@/stores/agentStore";
 import { FileItem } from "@/types";
 
@@ -20,7 +21,7 @@ const CreatedFiles = () => {
     ? agent.createdFiles.map((file) => ({
         id: file.id,
         name: file.name,
-        size: file.size ? `${(file.size / 1024 / 1024).toFixed(1)} MB` : "Unknown",
+        size: file.size ? formatFileSize(file.size) : "Unknown",
         type: file.name.endsWith(".pdf")
           ? "pdf"
           : file.name.endsWith(".png")

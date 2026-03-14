@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { useUploadQueue } from "@/hooks/useUploadQueue";
+import { formatFileSize } from "@/lib/fileUtils";
 import { uploadKnowledgeWithProgress } from "@/services/knowledgeApi";
 import { useKnowledgeBaseStore } from "@/stores/knowledgeBaseStore";
 
@@ -449,7 +450,7 @@ export function KnowledgeDocumentsTab({
                   </div>
                   <div className="truncate text-[11px] text-text-tertiary">
                     {documentsById[id]?.indexed ? "已索引" : "索引中"} ·{" "}
-                    {documentsById[id]?.size ? (documentsById[id].size / 1024).toFixed(1) : "0"} KB
+                    {formatFileSize(documentsById[id]?.size)}
                   </div>
                   {/* 重建进度显示 */}
                   {rebuildingId === id && isRebuilding && rebuildProgress && (

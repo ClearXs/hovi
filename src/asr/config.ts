@@ -48,7 +48,7 @@ export function validateAsrConfig(config: unknown): config is AsrConfig {
     return false;
   }
 
-  const validProviders = ["local", "deepgram", "openai", "groq"];
+  const validProviders = ["sherpa-onnx", "deepgram", "openai", "groq"];
   const validSizes = ["tiny", "base", "small", "medium", "large"];
 
   const cfg = config as Record<string, unknown>;

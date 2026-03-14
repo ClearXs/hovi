@@ -21,6 +21,12 @@ function loadManagerRuntime() {
   return managerRuntimePromise;
 }
 
+// 检查是否需要使用 fallback（当知识库集成启用时）
+function shouldUseFallbackForKnowledge(cfg: OpenClawConfig, agentId: string): boolean {
+  const knowledgeConfig = resolveKnowledgeConfig(cfg, agentId);
+  return knowledgeConfig?.search.includeInMemorySearch ?? false;
+}
+
 export type MemorySearchManagerResult = {
   manager: MemorySearchManager | null;
   error?: string;
@@ -32,7 +38,9 @@ export async function getMemorySearchManager(params: {
   purpose?: "default" | "status";
 }): Promise<MemorySearchManagerResult> {
   const resolved = resolveMemoryBackendConfig(params);
-  if (resolved.backend === "qmd" && resolved.qmd) {
+  // 当知识库集成启用时，跳过 QMD 直接使用 fallback，以确保知识库能被搜索
+  const useKnowledgeFallback = shouldUseFallbackForKnowledge(params.cfg, params.agentId);
+  if (resolved.backend === "qmd" && resolved.qmd && !useKnowledgeFallback) {
     const statusOnly = params.purpose === "status";
     let cacheKey: string | undefined;
     if (!statusOnly) {
@@ -260,6 +268,7 @@ function loadKnowledgeVectorOverrides(
   agentId: string,
 ): MemorySearchOverrides | undefined {
   const knowledgeConfig = resolveKnowledgeConfig(cfg, agentId);
+  // 首先检查全局配置是否启用了 includeInMemorySearch
   if (!knowledgeConfig?.search.includeInMemorySearch) {
     return undefined;
   }
@@ -268,8 +277,17 @@ function loadKnowledgeVectorOverrides(
   const db = new DatabaseSync(`${agentDir}/memory.db`);
   try {
     const row = db
-      .prepare(`SELECT vector_config FROM kb_settings WHERE owner_agent_id = ?`)
-      .get(agentId) as { vector_config?: string | null } | undefined;
+      .prepare(`SELECT vector_config, search_config FROM kb_settings WHERE owner_agent_id = ?`)
+      .get(agentId) as { vector_config?: string | null; search_config?: string | null } | undefined;
+
+    // 检查用户是否在知识库设置中明确禁用了 includeInMemorySearch
+    if (row?.search_config) {
+      const searchParsed = JSON.parse(row.search_config) as { includeInMemorySearch?: boolean };
+      if (searchParsed.includeInMemorySearch === false) {
+        return undefined;
+      }
+    }
+
     if (!row?.vector_config) {
       return undefined;
     }

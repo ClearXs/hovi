@@ -2314,6 +2314,88 @@ export class KnowledgeManager {
   }
 
   /**
+   * Get entity details with related document chunks
+   */
+  getEntityDetails(params: { agentId: string; kbId: string; entityId: string }): {
+    id: string;
+    name: string;
+    type: string | null;
+    description: string | null;
+    chunks: Array<{ id: string; text: string; documentName: string; score: number }>;
+  } {
+    const config = this.getConfig(params.agentId);
+    if (!config) {
+      throw new Error(`Knowledge base is disabled for agent ${params.agentId}`);
+    }
+
+    // Get entity info
+    const entity = this.db
+      .prepare(
+        `SELECT e.id, e.name, e.type, d.description
+         FROM kg_entities e
+         LEFT JOIN kg_entity_descriptions d ON e.id = d.entity_id
+         WHERE e.id = ? AND e.kb_id = ?`,
+      )
+      .get(params.entityId, params.kbId) as
+      | {
+          id: string;
+          name: string;
+          type: string | null;
+          description: string | null;
+        }
+      | undefined;
+
+    if (!entity) {
+      throw new Error(`Entity not found: ${params.entityId}`);
+    }
+
+    // Get related chunks (from the same document that contains this entity)
+    const chunks = this.db
+      .prepare(
+        `SELECT c.id, c.text, c.path, c.start_line,
+           (CASE WHEN c.text LIKE ? THEN 1.5 ELSE 1.0 END) as score
+         FROM chunks c
+         WHERE c.path LIKE ? AND c.source = 'knowledge'
+         ORDER BY score DESC
+         LIMIT 10`,
+      )
+      .all(`%${entity.name}%`, `%${params.kbId}%`) as Array<{
+      id: string;
+      text: string;
+      path: string;
+      start_line: number;
+      score: number;
+    }>;
+
+    // Extract document names from path
+    // path format: knowledge/{documentId}.txt
+    const docMap = new Map<string, string>();
+    for (const c of chunks) {
+      const docId = c.path.split("/").pop()?.replace(".txt", "") || "";
+      if (!docMap.has(docId)) {
+        // Use document ID as name (or extract from path)
+        docMap.set(docId, docId.slice(0, 8) + "...");
+      }
+    }
+
+    return {
+      id: entity.id,
+      name: entity.name,
+      type: entity.type,
+      description: entity.description,
+      chunks: chunks.map((c) => {
+        const docId = c.path.split("/").pop()?.replace(".txt", "") || "";
+        return {
+          id: c.id,
+          text: c.text.slice(0, 300) + (c.text.length > 300 ? "..." : ""),
+          documentName: docMap.get(docId) || "未知文档",
+          score: c.score,
+        };
+      }),
+    };
+  }
+
+  /**
    * Rebuild document: re-vectorize and re-build graph based on current settings
    */
   async rebuildDocument(params: {

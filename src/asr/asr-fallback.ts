@@ -4,7 +4,7 @@ import { getLogger } from "../logging.js";
 import { AsrProcessor } from "./processor.js";
 import type { TranscriptionResult, AsrConfig, AsrProvider } from "./types.js";
 
-const logger = getLogger("asr:fallback");
+const logger = getLogger();
 
 export interface FallbackConfig {
   primaryProvider: "sherpa-onnx" | "deepgram" | "openai" | "groq";

@@ -1325,6 +1325,39 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
   },
 
   /**
+   * Get entity details with related document chunks
+   */
+  "knowledge.graph.entityDetails": async ({ params, respond }) => {
+    try {
+      const agentId = resolveAgentId(params, {});
+      const kbId = readStringParam(params, "kbId", { required: true });
+      const entityId = readStringParam(params, "entityId", { required: true });
+
+      const manager = getKnowledgeManager(agentId);
+
+      if (!manager.isEnabled(agentId)) {
+        respond(false, undefined, errorShape(ErrorCodes.KB_NOT_ENABLED, "知识库未启用"));
+        return;
+      }
+
+      const details = manager.getEntityDetails({
+        agentId,
+        kbId,
+        entityId,
+      });
+
+      respond(true, details);
+    } catch (err) {
+      log.error(`knowledge.graph.entityDetails failed: ${String(err)}`);
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INTERNAL_ERROR, `获取实体详情失败: ${String(err)}`),
+      );
+    }
+  },
+
+  /**
    * Rebuild document: re-vectorize and re-build graph
    */
   "knowledge.rebuild": async ({ params, respond }) => {

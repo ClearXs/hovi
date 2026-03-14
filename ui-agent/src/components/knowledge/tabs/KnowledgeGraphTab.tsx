@@ -1,6 +1,6 @@
 "use client";
 
-import { Graph, Minimap } from "@antv/g6";
+import { Graph } from "@antv/g6";
 import {
   RefreshCw,
   Download,
@@ -25,9 +25,11 @@ import {
   getKnowledgeGraphStatus,
   clearKnowledgeGraph,
   getKnowledgeGraphData,
+  getEntityDetails,
   type KnowledgeGraphStats,
   type KnowledgeGraphBuildTask,
   type KnowledgeGraphData,
+  type EntityDetails,
 } from "@/services/knowledgeApi";
 import { useKnowledgeBaseStore } from "@/stores/knowledgeBaseStore";
 
@@ -100,7 +102,7 @@ interface NodeData {
   id: string;
   label: string;
   type: string;
-  description?: string;
+  description?: string | null;
   degree?: number;
 }
 
@@ -137,6 +139,8 @@ export function KnowledgeGraphTab() {
   // 详情面板状态
   const [selectedNode, setSelectedNode] = useState<NodeData | null>(null);
   const [detailPanelOpen, setDetailPanelOpen] = useState(false);
+  const [entityChunks, setEntityChunks] = useState<EntityDetails["chunks"]>([]);
+  const [loadingChunks, setLoadingChunks] = useState(false);
 
   // 图例折叠状态
   const [legendCollapsed, setLegendCollapsed] = useState(false);
@@ -192,32 +196,23 @@ export function KnowledgeGraphTab() {
         height,
         autoFit: "view",
         padding: 40,
-        // 交互行为
-        behaviors: [
-          "drag-canvas",
-          "zoom-canvas",
-          {
-            type: "drag-node",
-            enableDelegate: true,
-            onlyChangeNodeSize: false,
-          },
-          "click-select",
-          "hover-element",
-        ],
-        // 布局 - 使用 d3-force
+        // 交互行为 - G6 5.x 内置 behaviors
+        behaviors: ["drag-canvas", "zoom-canvas", "click-select"],
+        // 布局 - 使用 d3-force，增加间距
         layout: {
           type: "d3-force",
           preventOverlap: true,
+          nodeSpacing: 60,
           alphaDecay: 0.1,
           alphaMin: 0.01,
           velocityDecay: 0.6,
-          iterations: 150,
+          iterations: 200,
           force: {
-            center: { x: 0.5, y: 0.5, strength: 0.1 },
-            charge: { strength: -400, distanceMax: 600 },
-            link: { distance: 100, strength: 0.8 },
+            center: { x: 0.5, y: 0.5, strength: 0.05 },
+            charge: { strength: -600, distanceMax: 800 },
+            link: { distance: 150, strength: 0.6 },
           },
-          collide: { radius: 40, strength: 0.8, iterations: 3 },
+          collide: { radius: 50, strength: 0.8, iterations: 3 },
         },
         // 默认节点配置
         node: {
@@ -239,18 +234,119 @@ export function KnowledgeGraphTab() {
       return;
     }
 
-    // 事件处理
-    graph.on("node:click", (evt: any) => {
-      const { item } = evt;
-      const model = item.getModel();
-      setSelectedNode({
-        id: model.id,
-        label: model.label,
-        type: model.type,
-        description: model.description,
-        degree: nodeDegrees.get(model.id) || 0,
-      });
-      setDetailPanelOpen(true);
+    // 事件处理 - G6 5.x
+    graph.on("node:click", async (evt: any) => {
+      try {
+        // G6 5.x: 使用 evt.item, evt.target 或 evt.originalTarget
+        const item = evt.item || evt.target || evt.originalTarget;
+        if (!item) {
+          console.warn("No item in click event");
+          return;
+        }
+        // 使用 getModel() 获取数据
+        const model = typeof item.getModel === "function" ? item.getModel() : item;
+        if (!model) {
+          console.warn("No model in click event");
+          return;
+        }
+
+        // G6 5.x: 数据在 model 中，可能是 data 属性或直接在 model 上
+        const data = model.data || {};
+        const fullLabel =
+          data.fullLabel || model.label || model.id?.split(":").slice(2).join(":") || "未知";
+        const nodeType = data.type || model.type || "其他";
+
+        setSelectedNode({
+          id: model.id,
+          label: fullLabel,
+          type: nodeType,
+          description: data.description || model.description || null,
+          degree: nodeDegrees.get(model.id) || 0,
+        });
+        setDetailPanelOpen(true);
+
+        // 加载关联文档
+        if (activeKbId && model.id) {
+          setLoadingChunks(true);
+          setEntityChunks([]);
+          try {
+            const details = await getEntityDetails({
+              kbId: activeKbId,
+              entityId: model.id,
+            });
+            setEntityChunks(details.chunks || []);
+          } catch (err) {
+            console.error("Failed to load entity details:", err);
+          } finally {
+            setLoadingChunks(false);
+          }
+        }
+      } catch (err) {
+        console.error("Error handling node click:", err);
+      }
+    });
+
+    // 点击边显示详情 - G6 5.x 使用 "click" 事件
+    graph.on("click", (evt: any) => {
+      try {
+        const targetType = evt.targetType;
+        // G6 5.x: 使用 evt.item 或 evt.originalTarget
+        const item = evt.item || evt.originalTarget;
+        console.log("Click targetType:", targetType, "item:", item);
+
+        if (!item) {
+          // 点击空白处
+          return;
+        }
+
+        if (targetType === "edge") {
+          // 尝试从 item 获取边的数据
+          console.log("Edge item entity:", item.entity);
+          console.log("Edge item name:", item.name);
+
+          // item.entity 可能包含边数据
+          let model = item.entity || {};
+          if (!model.id && item.name) {
+            // 尝试通过 name 查找
+            const graphData = graphRef.current?.getData();
+            const edges = (graphData?.edges || []) as any[];
+            model = edges.find((e) => e.id === item.name) || {};
+          }
+
+          console.log("Edge model:", model);
+
+          // 获取边数据
+          const data = model?.data || {};
+          const label = model?.label || data?.label || model?.id?.split(":").pop() || "未知关系";
+          const source = model?.source || data?.source || "未知";
+          const target = model?.target || data?.target || "未知";
+          const edgeId = model?.id || "";
+
+          // 提取实体名称
+          const sourceName =
+            String(source).split(":").slice(2).join(":") ||
+            String(source).split(":").pop() ||
+            source;
+          const targetName =
+            String(target).split(":").slice(2).join(":") ||
+            String(target).split(":").pop() ||
+            target;
+
+          console.log("Edge data:", { label, sourceName, targetName, edgeId });
+
+          setSelectedNode({
+            id: edgeId,
+            label: `${sourceName} → ${targetName}`,
+            type: "关系",
+            description: label,
+            degree: 0,
+          });
+          setDetailPanelOpen(true);
+          setEntityChunks([]);
+        }
+      } catch (err) {
+        console.error("Error handling click:", err);
+      }
     });
 
     graph.on("canvas:click", () => {
@@ -258,20 +354,31 @@ export function KnowledgeGraphTab() {
       setSelectedNode(null);
     });
 
-    // 邻居高亮功能 - G6 5.x API 变化较大，暂时简化
+    // 邻居高亮功能 - G6 5.x 简化版
     graph.on("node:mouseenter", (evt: any) => {
-      const { item } = evt;
-      // 简化版：只高亮当前节点
-      graph.setElementState(item, "hover", true);
+      try {
+        const { item } = evt;
+        if (item) {
+          graph.setElementState(item, "hover", true);
+        }
+      } catch (e) {
+        // 忽略 G6 5.x API 错误
+      }
     });
 
     graph.on("node:mouseleave", (evt: any) => {
-      const { item } = evt;
-      graph.setElementState(item, "hover", false);
+      try {
+        const { item } = evt;
+        if (item) {
+          graph.setElementState(item, "hover", false);
+        }
+      } catch (e) {
+        // 忽略 G6 5.x API 错误
+      }
     });
 
     graphRef.current = graph;
-  }, [nodeDegrees]);
+  }, []);
 
   // 加载图谱数据并渲染
   const loadGraphData = useCallback(async () => {
@@ -288,52 +395,65 @@ export function KnowledgeGraphTab() {
       const degrees = calculateDegrees(graphData.edges);
       setNodeDegrees(degrees);
 
-      // 处理节点数据
+      // 处理节点数据 - G6 5.x 格式
       const nodes = graphData.nodes.map((n) => {
         const degree = degrees.get(n.id) || 0;
         const color = getOrCreateTypeColor(n.type || "其他");
-        // 根据度数计算节点大小（最小24，最大60）
-        const baseSize = 24;
-        const sizeIncrement = Math.min(degree * 3, 36);
+        // 根据度数计算节点大小（最小20，最大50）
+        const baseSize = 20;
+        const sizeIncrement = Math.min(degree * 2, 30);
         const size = baseSize + sizeIncrement;
+        // 缩短标签显示
+        const labelText = n.name.length > 8 ? n.name.substring(0, 8) + ".." : n.name;
 
         return {
           id: n.id,
-          label: n.name.length > 8 ? n.name.substring(0, 8) + "..." : n.name,
-          fullLabel: n.name, // 完整名称用于显示
-          type: n.type || "其他",
-          description: n.description,
-          size,
-          style: {
-            fill: color + "20", // 20% 透明度
-            stroke: color,
-            lineWidth: degree > 5 ? 3 : 2,
+          data: {
+            label: labelText,
+            fullLabel: n.name,
+            type: n.type || "其他",
+            description: n.description,
           },
-          labelCfg: {
-            style: {
-              fill: "#1F2937",
-              fontSize: Math.max(9, Math.min(12, size / 4)),
-              fontWeight: degree > 3 ? 600 : 400,
-            },
+          style: {
+            size: size,
+            fill: color + "50",
+            stroke: color,
+            lineWidth: 2,
+            labelText: labelText,
+            labelFill: "#1F2937",
+            labelFontSize: 11,
+            labelFontWeight: 500,
           },
         };
       });
 
-      // 处理边数据
+      // 建立节点 ID 集合 (用于边连接)
+      const nodeIds = new Set(graphData.nodes.map((n) => n.id));
+
+      // 处理边数据 - G6 5.x 格式
       const edges = graphData.edges.map((e, idx) => {
         const keywords = e.keywords || [];
-        const label = keywords[0] || "";
+        const labelText = keywords[0] || "";
+
+        // 直接使用 source/target，如果不存在则保留原值
+        const sourceId = nodeIds.has(e.source) ? e.source : e.source;
+        const targetId = nodeIds.has(e.target) ? e.target : e.target;
+
         return {
           id: e.id,
-          source: e.source,
-          target: e.target,
-          label: label.length > 10 ? label.substring(0, 10) + "..." : label,
-          fullLabel: label,
-          keywords,
+          source: sourceId,
+          target: targetId,
+          data: {
+            label: labelText,
+            keywords,
+          },
           style: {
-            stroke: "#9CA3AF",
-            lineWidth: 1,
-            lineDash: keywords.length === 0 ? [0] : undefined, // 无关系词时实线
+            stroke: "#94A3B8",
+            lineWidth: 1.5,
+            endArrow: true,
+            labelText: labelText,
+            labelFill: "#475569",
+            labelFontSize: 10,
           },
         };
       });
@@ -355,6 +475,19 @@ export function KnowledgeGraphTab() {
         edgeNeighbors.get(edge.target)!.add(edge.id);
       }
       neighborCacheRef.current = { nodeNeighbors, edgeNeighbors };
+
+      // 调试日志
+      console.log("Loading graph data:", { nodesCount: nodes.length, edgesCount: edges.length });
+      console.log("Sample nodes:", nodes.slice(0, 3));
+      console.log("Sample edges:", edges.slice(0, 3));
+      console.log(
+        "Node IDs sample:",
+        nodes.slice(0, 5).map((n) => n.id),
+      );
+      console.log(
+        "Edge source/target sample:",
+        edges.slice(0, 5).map((e) => ({ source: e.source, target: e.target })),
+      );
 
       graphRef.current.setData({ nodes, edges });
       graphRef.current.render();
@@ -778,38 +911,79 @@ export function KnowledgeGraphTab() {
 
           {/* 详情面板 */}
           {detailPanelOpen && selectedNode && (
-            <div className="absolute top-3 right-3 w-64 bg-white rounded-lg shadow-lg border border-border-light overflow-hidden z-20">
-              <div className="flex items-center justify-between p-3 border-b border-border-light bg-gray-50">
+            <div className="absolute top-3 right-3 w-80 max-h-[80vh] bg-white rounded-lg shadow-lg border border-border-light overflow-hidden z-20 flex flex-col">
+              <div className="flex items-center justify-between p-3 border-b border-border-light bg-gray-50 shrink-0">
                 <span className="text-sm font-medium">实体详情</span>
                 <button
-                  onClick={() => setDetailPanelOpen(false)}
+                  onClick={() => {
+                    setDetailPanelOpen(false);
+                    setEntityChunks([]);
+                  }}
                   className="p-1 hover:bg-gray-200 rounded"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
-              <div className="p-3 space-y-2">
+              <div className="p-3 space-y-2 overflow-y-auto">
                 <div className="flex items-center gap-2">
                   <div
                     className="w-3 h-3 rounded-full"
                     style={{ backgroundColor: getOrCreateTypeColor(selectedNode.type) }}
                   />
-                  <span className="font-medium text-sm">{selectedNode.label}</span>
+                  <span className="font-medium text-sm break-all">{selectedNode.label}</span>
                 </div>
                 <div className="text-xs text-text-secondary">
                   <span className="font-medium">类型：</span>
                   {selectedNode.type}
                 </div>
-                <div className="text-xs text-text-secondary">
-                  <span className="font-medium">度数：</span>
-                  {selectedNode.degree} 个连接
-                </div>
-                {selectedNode.description && (
+                {/* 关系类型 - 只有边才显示 */}
+                {selectedNode.type === "关系" && selectedNode.description && (
+                  <div className="text-xs text-text-secondary">
+                    <span className="font-medium">关系：</span>
+                    <span className="text-primary font-medium">{selectedNode.description}</span>
+                  </div>
+                )}
+                {selectedNode.type !== "关系" && (
+                  <div className="text-xs text-text-secondary">
+                    <span className="font-medium">度数：</span>
+                    {selectedNode.degree} 个连接
+                  </div>
+                )}
+                {selectedNode.description && selectedNode.type !== "关系" && (
                   <div className="text-xs text-text-secondary mt-2 pt-2 border-t border-border-light">
                     <span className="font-medium">描述：</span>
                     {selectedNode.description}
                   </div>
                 )}
+
+                {/* 关联文档 */}
+                <div className="mt-3 pt-2 border-t border-border-light">
+                  <div className="flex items-center gap-1 mb-2">
+                    <BookOpen className="w-3.5 h-3.5" />
+                    <span className="text-xs font-medium">关联文档</span>
+                  </div>
+                  {loadingChunks ? (
+                    <div className="flex items-center justify-center py-2">
+                      <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
+                    </div>
+                  ) : entityChunks.length > 0 ? (
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {entityChunks.map((chunk, idx) => (
+                        <div
+                          key={chunk.id || idx}
+                          className="text-xs p-2 bg-gray-50 rounded border border-border-light"
+                        >
+                          <div className="font-medium text-text-secondary mb-1 truncate">
+                            {chunk.documentName}
+                          </div>
+                          <p className="text-text-tertiary line-clamp-3">{chunk.text}</p>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-xs text-text-tertiary">暂无关联文档</div>
+                  )}
+                </div>
               </div>
             </div>
           )}

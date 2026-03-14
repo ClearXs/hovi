@@ -4,7 +4,7 @@ import { getLogger } from "../logging.js";
 import { resolveAsrConfig } from "./config.js";
 import type { AsrConfig, TranscriptionResult, VadResult } from "./types.js";
 
-const logger = getLogger("asr:processor");
+const logger = getLogger();
 
 export class AsrProcessor {
   private config: AsrConfig;

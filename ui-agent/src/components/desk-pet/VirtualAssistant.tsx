@@ -1,274 +1,379 @@
 "use client";
 
-import {
-  Eye,
-  EyeOff,
-  Minimize2,
-  Maximize2,
-  Subtitles,
-  Settings,
-  Mic,
-  MicOff,
-  GripVertical,
-  User,
-  Volume2,
-} from "lucide-react";
 import dynamic from "next/dynamic";
-import React, { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import Draggable from "react-draggable";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuTrigger,
-  ContextMenuSeparator,
-} from "@/components/ui/context-menu";
-import { useVoiceInput } from "@/features/avatar/hooks/useVoiceInput";
 import { getAgentFile } from "@/features/persona/services/personaApi";
+import { fetchScenes } from "@/features/scene/api/sceneApi";
 import { useConnectionStore } from "@/stores/connectionStore";
 
-// 检查是否是 React 19 (存在兼容性问题)
-const isReact19 = parseInt(React?.version?.split(".")[0] || "0", 10) >= 19;
+// Dynamic import for VrmViewer
+const VrmViewer = dynamic(
+  () => import("@/components/avatar/VrmViewer").then((mod) => mod.VrmViewer || mod.default),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="w-full h-full flex items-center justify-center text-gray-400">加载中...</div>
+    ),
+  },
+);
 
-// Dynamic import for VrmViewer - only load on client and not React 19
-const VrmViewer = !isReact19
-  ? dynamic(() => import("@/components/avatar/VrmViewer").then((mod) => mod.VrmViewer), {
-      ssr: false,
-      loading: () => (
-        <div className="w-full h-full flex items-center justify-center text-gray-400">
-          加载中...
-        </div>
-      ),
-    })
-  : null;
+interface MotionEmote {
+  id: string;
+  file: string;
+  keywords?: string[];
+  description?: string;
+}
+
+interface MotionConfig {
+  idle: { file: string } | null;
+  emotes: MotionEmote[];
+}
+
+interface Scene {
+  id: string;
+  name: string;
+  description?: string;
+  r_path?: string;
+  main_file?: string;
+  thumb?: string;
+}
 
 interface VirtualAssistantProps {
   onOpenSettings?: () => void;
+  onOpenChat?: () => void;
+  onStartVoiceChat?: () => void;
+  onOpenTasks?: () => void;
 }
 
-export function VirtualAssistant({ onOpenSettings }: VirtualAssistantProps) {
+function VirtualAssistant({
+  onOpenSettings,
+  onOpenChat,
+  onStartVoiceChat,
+  onOpenTasks,
+}: VirtualAssistantProps) {
   const wsClient = useConnectionStore((s) => s.wsClient);
   const status = useConnectionStore((s) => s.status);
 
-  // 状态
-  const [visible, setVisible] = useState(true);
-  const [minimized, setMinimized] = useState(false);
-  const [showSubtitles, setShowSubtitles] = useState(true);
   const [vrmUrl, setVrmUrl] = useState<string | null>(null);
+  const [sceneUrl, setSceneUrl] = useState<string | null>(null);
+  const [motionUrl, setMotionUrl] = useState<string | null>(null);
   const [vrmError, setVrmError] = useState(false);
-  const nodeRef = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState(256);
+  const [contextMenuOpen, setContextMenuOpen] = useState(false);
+  const [contextMenuPosition, setContextMenuPosition] = useState({ x: 0, y: 0 });
+  const [scenes, setScenes] = useState<Scene[]>([]);
+  const [currentScene, setCurrentScene] = useState<Scene | null>(null);
+  const [motions, setMotions] = useState<MotionConfig | null>(null);
+  const [currentMotion, setCurrentMotion] = useState<string>("idle");
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  // 语音输入
-  const {
-    status: voiceStatus,
-    transcript,
-    responseText,
-    error: voiceError,
-    toggle: handleToggleVoice,
-  } = useVoiceInput({
-    onStatusChange: (s) => console.log("[useVoiceInput] Status changed to:", s),
-  });
-
-  // 调试：确认组件渲染
-  console.log("[VirtualAssistant] Render, voiceStatus:", voiceStatus);
-
-  // 检查连接是否准备好
   const isConnected = status === "connected";
 
-  // 加载 VRM 配置
+  // 加载 VRM、场景和动作配置
   const loadConfig = useCallback(async () => {
     if (!wsClient || !isConnected || vrmError) return;
     try {
       const fileResult = await getAgentFile(wsClient, "main", "persona.json");
-      if (fileResult?.ok && fileResult.content) {
+      if (fileResult?.content) {
         const config = JSON.parse(fileResult.content);
+
+        // VRM 模型
         if (config.vrm) {
           setVrmUrl(`/files/main/${config.vrm}`);
         }
+
+        // 动作配置
+        if (config.motions) {
+          setMotions(config.motions);
+          // 加载 idle 动作
+          if (config.motions.idle?.file) {
+            setMotionUrl(`/files/main/${config.motions.idle.file}`);
+          }
+        }
+
+        // 场景列表
+        const scenesData = await fetchScenes(wsClient, "main");
+        setScenes(scenesData || []);
+
+        // 当前激活的场景
+        const activeScene = scenesData?.find((s: Scene) => s.id === config.currentScene);
+        if (activeScene && activeScene.main_file) {
+          setSceneUrl(`/files/main/${activeScene.main_file}`);
+          setCurrentScene(activeScene);
+        }
       }
-    } catch (error) {
+    } catch {
       setVrmError(true);
     }
   }, [wsClient, isConnected, vrmError]);
 
-  // 初始化时加载配置
   useEffect(() => {
     if (isConnected && !vrmError) {
       loadConfig();
     }
   }, [isConnected, vrmError, loadConfig]);
 
-  // 右键菜单操作
-  const handleToggleVisible = useCallback(() => {
-    setVisible((v) => !v);
+  const handleClick = useCallback(() => {
+    onOpenChat?.();
+  }, [onOpenChat]);
+
+  const handleDoubleClick = useCallback(() => {
+    window.dispatchEvent(new CustomEvent("virtual-assistant:dblclick"));
+  }, [handleClick, onOpenChat]);
+
+  const handleContextMenu = useCallback((e: MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenuPosition({ x: e.clientX, y: e.clientY });
+    setContextMenuOpen(true);
   }, []);
 
-  const handleToggleMinimize = useCallback(() => {
-    setMinimized((m) => !m);
+  const closeContextMenu = useCallback(() => {
+    setContextMenuOpen(false);
   }, []);
 
-  const handleToggleSubtitles = useCallback(() => {
-    setShowSubtitles((s) => !s);
-  }, []);
-
-  const handleOpenSettings = useCallback(() => {
-    onOpenSettings?.();
-  }, [onOpenSettings]);
-
-  if (!visible) return null;
-
-  // 测试按钮 - 用于验证点击事件
-  const testButtonClick = () => {
-    console.log("[TEST] Test button clicked!");
+  const handleResize = (newSize: number) => {
+    setSize(newSize);
+    closeContextMenu();
   };
 
-  // 最小化状态的圆形按钮
-  const renderMinimizedButton = () => (
-    <div
-      className="w-14 h-14 bg-gray-800 rounded-full flex items-center justify-center shadow-lg cursor-pointer hover:bg-gray-700 transition-colors"
-      onClick={(e) => {
-        e.stopPropagation();
-        console.log("[Voice] Minimized clicked, status:", voiceStatus);
-        handleToggleVoice();
-      }}
-    >
-      {voiceStatus === "speaking" ? (
-        <Volume2 className="w-5 h-5 text-white" />
-      ) : voiceStatus === "listening" ? (
-        <Mic className="w-5 h-5 text-red-500 animate-pulse" />
-      ) : (
-        <MicOff className="w-5 h-5 text-white opacity-60" />
-      )}
-    </div>
-  );
+  // 切换场景
+  const handleSceneSelect = (scene: Scene) => {
+    setCurrentScene(scene);
+    if (scene.main_file) {
+      setSceneUrl(`/files/main/${scene.main_file}`);
+    } else {
+      setSceneUrl(null);
+    }
+    closeContextMenu();
+  };
 
-  // 正常状态的内容
-  const renderExpandedContent = () => (
-    <div className="w-80 flex flex-col">
-      {/* 虚拟助手头部 - 单独处理，不被 ContextMenuTrigger 包裹 */}
-      <div className="bg-gray-800 text-white px-3 py-2 rounded-t-lg flex items-center justify-between select-none">
-        {/* 拖动区域 */}
-        <span className="text-sm font-medium flex items-center gap-2 cursor-move va-handle">
-          <GripVertical className="w-4 h-4 opacity-60" />
-          虚拟角色
-        </span>
-        {/* 语音按钮 - 独立处理点击 */}
-        <div className="flex items-center gap-1">
+  // 切换动作
+  const handleMotionSelect = (motion: { file?: string; id?: string }) => {
+    if (motion.file) {
+      setMotionUrl(`/files/main/${motion.file}`);
+      setCurrentMotion(motion.id || motion.file);
+    } else if (motion.id === "idle") {
+      // 切换回 idle
+      if (motions?.idle?.file) {
+        setMotionUrl(`/files/main/${motions.idle.file}`);
+      } else {
+        setMotionUrl(null);
+      }
+      setCurrentMotion("idle");
+    }
+    closeContextMenu();
+  };
+
+  // 附着上下文单监听
+  useEffect(() => {
+    const container = containerRef.current;
+    if (container) {
+      container.addEventListener("contextmenu", handleContextMenu);
+      return () => container.removeEventListener("contextmenu", handleContextMenu);
+    }
+  }, [handleContextMenu]);
+
+  // 点击其他地方关闭菜单
+  useEffect(() => {
+    if (!contextMenuOpen) return;
+    const handleClickOutside = () => closeContextMenu();
+    document.addEventListener("click", handleClickOutside);
+    return () => document.removeEventListener("click", handleClickOutside);
+  }, [contextMenuOpen, closeContextMenu]);
+
+  const renderContent = () => {
+    if (!isConnected) {
+      return (
+        <div className="w-full h-full flex items-center justify-center text-gray-400">
+          等待连接...
+        </div>
+      );
+    }
+    if (vrmError) {
+      return (
+        <div className="w-full h-full flex items-center justify-center text-gray-400">加载失败</div>
+      );
+    }
+    if (!vrmUrl) {
+      return (
+        <div className="w-full h-full flex items-center justify-center text-gray-400">
+          等待配置...
+        </div>
+      );
+    }
+    return (
+      <VrmViewer
+        modelUrl={vrmUrl}
+        sceneUrl={sceneUrl}
+        motionUrl={motionUrl}
+        enableControls={false}
+      />
+    );
+  };
+
+  return (
+    <>
+      <Draggable nodeRef={containerRef}>
+        <div
+          ref={containerRef}
+          className="fixed"
+          style={{
+            zIndex: 99999,
+            width: size,
+            height: size,
+            cursor: "pointer",
+          }}
+          onClick={handleClick}
+          onDoubleClick={handleDoubleClick}
+        >
+          {renderContent()}
+        </div>
+      </Draggable>
+
+      {/* Custom Context Menu */}
+      {contextMenuOpen && (
+        <div
+          className="fixed bg-gray-800 rounded-lg shadow-lg py-1 z-[100000]"
+          style={{
+            left: contextMenuPosition.x,
+            top: contextMenuPosition.y,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
           <button
-            type="button"
-            onMouseDown={(e) => {
-              e.stopPropagation();
-              console.log("[Voice] onMouseDown, status:", voiceStatus);
+            className="block w-full px-3 py-2 text-left text-white hover:bg-gray-700 text-sm whitespace-nowrap"
+            onClick={() => {
+              onOpenChat?.();
+              closeContextMenu();
             }}
-            onClick={(e) => {
-              e.stopPropagation();
-              e.preventDefault();
-              console.log("[Voice] Button clicked, status:", voiceStatus);
-              handleToggleVoice();
-            }}
-            className={`p-1 rounded hover:bg-gray-700 transition-colors ${
-              voiceStatus === "listening" ? "bg-red-500 animate-pulse" : ""
-            } ${voiceStatus === "speaking" ? "bg-blue-500" : ""}`}
-            title={
-              voiceStatus === "idle"
-                ? "开始语音 (Ctrl+X)"
-                : voiceStatus === "listening"
-                  ? "停止语音"
-                  : voiceStatus === "processing"
-                    ? "处理中..."
-                    : "播放中..."
-            }
-            disabled={voiceStatus === "processing"}
           >
-            {voiceStatus === "speaking" ? (
-              <Volume2 className="w-4 h-4" />
-            ) : voiceStatus === "listening" ? (
-              <Mic className="w-4 h-4" />
-            ) : (
-              <MicOff className="w-4 h-4 opacity-60" />
-            )}
+            打开对话
+          </button>
+          <button
+            className="block w-full px-3 py-2 text-left text-white hover:bg-gray-700 text-sm whitespace-nowrap"
+            onClick={() => {
+              onStartVoiceChat?.();
+              closeContextMenu();
+            }}
+          >
+            语音对话
+          </button>
+
+          {/* 动作选择子菜单 */}
+          {motions && motions.emotes.length > 0 && (
+            <div className="relative group">
+              <button className="block w-full px-3 py-2 text-left text-white hover:bg-gray-700 text-sm flex justify-between items-center whitespace-nowrap">
+                切换动作 ▸
+              </button>
+              <div
+                className="absolute left-full top-0 bg-gray-800 rounded-lg shadow-lg py-1 -ml-px min-w-max hidden group-hover:block"
+                style={{ zIndex: 100001 }}
+              >
+                <button
+                  className={`block w-full px-3 py-2 text-left text-white hover:bg-gray-700 text-sm whitespace-nowrap ${currentMotion === "idle" ? "bg-gray-700" : ""}`}
+                  onClick={() => handleMotionSelect({ id: "idle" })}
+                >
+                  待机动作
+                </button>
+                {motions.emotes.map((emote) => (
+                  <button
+                    key={emote.id}
+                    className={`block w-full px-3 py-2 text-left text-white hover:bg-gray-700 text-sm whitespace-nowrap ${currentMotion === emote.id ? "bg-gray-700" : ""}`}
+                    onClick={() => handleMotionSelect(emote)}
+                  >
+                    {emote.description || emote.id}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 场景选择子菜单 */}
+          {scenes.length > 0 && (
+            <div className="relative group">
+              <button className="block w-full px-3 py-2 text-left text-white hover:bg-gray-700 text-sm flex justify-between items-center whitespace-nowrap">
+                切换场景 ▸
+              </button>
+              <div
+                className="absolute left-full top-0 bg-gray-800 rounded-lg shadow-lg py-1 -ml-px min-w-max hidden group-hover:block"
+                style={{ zIndex: 100001 }}
+              >
+                <button
+                  className={`block w-full px-3 py-2 text-left text-white hover:bg-gray-700 text-sm whitespace-nowrap ${!currentScene ? "bg-gray-700" : ""}`}
+                  onClick={() => handleSceneSelect({ id: "", name: "无场景" } as Scene)}
+                >
+                  无场景
+                </button>
+                {scenes.map((scene) => (
+                  <button
+                    key={scene.id}
+                    className={`block w-full px-3 py-2 text-left text-white hover:bg-gray-700 text-sm whitespace-nowrap ${currentScene?.id === scene.id ? "bg-gray-700" : ""}`}
+                    onClick={() => handleSceneSelect(scene)}
+                  >
+                    {scene.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="border-t border-gray-600 my-1" />
+          <button
+            className="block w-full px-3 py-2 text-left text-white hover:bg-gray-700 text-sm whitespace-nowrap"
+            onClick={() => handleResize(192)}
+          >
+            小尺寸 (192px)
+          </button>
+          <button
+            className="block w-full px-3 py-2 text-left text-white hover:bg-gray-700 text-sm whitespace-nowrap"
+            onClick={() => handleResize(256)}
+          >
+            中尺寸 (256px)
+          </button>
+          <button
+            className="block w-full px-3 py-2 text-left text-white hover:bg-gray-700 text-sm whitespace-nowrap"
+            onClick={() => handleResize(320)}
+          >
+            大尺寸 (320px)
+          </button>
+          <button
+            className="block w-full px-3 py-2 text-left text-white hover:bg-gray-700 text-sm whitespace-nowrap"
+            onClick={() => handleResize(384)}
+          >
+            超大尺寸 (384px)
+          </button>
+          <div className="border-t border-gray-600 my-1" />
+          <button
+            className="block w-full px-3 py-2 text-left text-white hover:bg-gray-700 text-sm whitespace-nowrap"
+            onClick={() => {
+              onOpenTasks?.();
+              closeContextMenu();
+            }}
+          >
+            任务管理
+          </button>
+          <div className="border-t border-gray-600 my-1" />
+          <button
+            className="block w-full px-3 py-2 text-left text-white hover:bg-gray-700 text-sm whitespace-nowrap"
+            onClick={() => {
+              onOpenSettings?.();
+              closeContextMenu();
+            }}
+          >
+            设置
+          </button>
+          <div className="border-t border-gray-600 my-1" />
+          <button
+            className="block w-full px-3 py-2 text-left text-red-500 hover:bg-gray-700 text-sm whitespace-nowrap"
+            onClick={() => closeContextMenu()}
+          >
+            退出
           </button>
         </div>
-      </div>
-      {/* VRM 区域 - 右键菜单区域 */}
-      <ContextMenu>
-        <ContextMenuTrigger>
-          {/* VRM 显示区域 */}
-          <div className="w-80 h-80 bg-gray-900 rounded-b-lg overflow-hidden relative">
-            {isReact19 ? (
-              <div className="w-full h-full flex flex-col items-center justify-center text-gray-400">
-                <User className="w-12 h-12 mb-2 opacity-50" />
-                <span className="text-sm">暂不支持 React 19</span>
-              </div>
-            ) : isConnected && !vrmError && VrmViewer ? (
-              <VrmViewer modelUrl={vrmUrl} />
-            ) : (
-              <div className="w-full h-full flex flex-col items-center justify-center text-gray-400">
-                <User className="w-12 h-12 mb-2 opacity-50" />
-                <span className="text-sm">{vrmError ? "加载失败" : "等待连接..."}</span>
-              </div>
-            )}
-            {/* 字幕覆盖层 */}
-            {showSubtitles && isConnected && !vrmError && (
-              <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/70 to-transparent">
-                <p className="text-white text-sm text-center">
-                  {voiceStatus === "listening"
-                    ? transcript || "正在聆听..."
-                    : voiceStatus === "processing"
-                      ? "Hovi 思考中..."
-                      : voiceStatus === "speaking"
-                        ? responseText
-                        : "点击麦克风或按 Ctrl+X 开始对话"}
-                </p>
-                {voiceError && (
-                  <p className="text-red-400 text-xs text-center mt-1">{voiceError}</p>
-                )}
-              </div>
-            )}
-          </div>
-        </ContextMenuTrigger>
-        <ContextMenuContent>
-          <ContextMenuItem onClick={handleToggleVisible}>
-            <Eye className="w-4 h-4 mr-2" />
-            隐藏
-          </ContextMenuItem>
-          <ContextMenuItem onClick={handleToggleMinimize}>
-            <Minimize2 className="w-4 h-4 mr-2" />
-            最小化
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem onClick={handleToggleSubtitles}>
-            <Subtitles className="w-4 h-4 mr-2" />
-            {showSubtitles ? "隐藏字幕" : "显示字幕"}
-          </ContextMenuItem>
-          <ContextMenuItem onClick={handleToggleVoice} disabled={voiceStatus === "processing"}>
-            <Mic className="w-4 h-4 mr-2" />
-            {voiceStatus === "listening" ? "停止语音" : "开始语音"}
-            <span className="ml-auto text-xs text-gray-400">⌃X</span>
-          </ContextMenuItem>
-          <ContextMenuSeparator />
-          <ContextMenuItem onClick={handleOpenSettings}>
-            <Settings className="w-4 h-4 mr-2" />
-            设置
-          </ContextMenuItem>
-        </ContextMenuContent>
-      </ContextMenu>
-    </div>
-  );
-
-  // 全局点击测试
-  return (
-    <Draggable
-      nodeRef={nodeRef}
-      handle=".va-handle"
-      cancel="button"
-      bounds="parent"
-      defaultPosition={{ x: -320, y: -420 }}
-    >
-      <div ref={nodeRef} className="fixed z-50">
-        {minimized ? renderMinimizedButton() : renderExpandedContent()}
-      </div>
-    </Draggable>
+      )}
+    </>
   );
 }
 

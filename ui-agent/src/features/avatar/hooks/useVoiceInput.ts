@@ -93,9 +93,10 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
     [wsClient, activeSessionKey, createSession, selectSession, onStatusChange],
   );
 
-  // 初始化 ASR
+  // 初始化 ASR - 默认使用 Gateway 模式以支持云端 ASR
   const asr = useAsr({
     language: "zh-CN",
+    useGateway: true, // 启用 Gateway ASR 模式
     onResult: handleAsrResult,
     onEnd: () => {
       if (status === "listening") {
@@ -150,6 +151,10 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
   // 快捷键处理 - 使用 Ctrl+X (和 Violet 一样)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Don't trigger shortcuts during IME composition
+      if (e.isComposing) {
+        return;
+      }
       // 使用 Ctrl+X 快捷键，与 Violet 一致
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "x") {
         e.preventDefault();

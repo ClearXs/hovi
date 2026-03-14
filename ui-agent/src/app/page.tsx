@@ -123,6 +123,9 @@ function HomeContent() {
   const [sessionConnectorIds, setSessionConnectorIds] = useState<Record<string, string[]>>({});
   const [draftConnectorIds, setDraftConnectorIds] = useState<string[]>([]);
 
+  // 当前正在进行的 runId（用于取消）
+  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+
   // Dialog states
   type DialogType = "rename" | "delete" | "batchDelete" | null;
   const [activeDialog, setActiveDialog] = useState<DialogType>(null);
@@ -777,8 +780,51 @@ function HomeContent() {
           result?: unknown;
           meta?: string;
           isError?: boolean;
+          text?: string;
+          delta?: string;
         };
       };
+
+      // 处理 assistant 流事件
+      if (data.stream === "assistant") {
+        const sessionKey = typeof data.sessionKey === "string" ? data.sessionKey : undefined;
+        const runId = typeof data.runId === "string" ? data.runId : undefined;
+        if (!sessionKey || !runId) return;
+
+        const text = typeof data.data?.text === "string" ? data.data.text : "";
+        const delta = typeof data.data?.delta === "string" ? data.data.delta : "";
+
+        if (!text && !delta) return;
+
+        // 使用类似 handleChatEvent 的逻辑来处理 assistant 消息
+        const groupKey = resolveGroupKey(sessionKey, runId);
+        const messageId = `assistant-${groupKey}`;
+
+        setConversationMessages((prev) => {
+          const messages = prev[sessionKey] ? [...prev[sessionKey]!] : [];
+          const index = messages.findIndex((msg) => msg.id === messageId);
+
+          const nextMessage: Message = {
+            id: messageId,
+            role: "assistant",
+            content: text || delta,
+            timestamp: new Date(),
+            status: undefined,
+          };
+
+          if (index >= 0) {
+            messages[index] = {
+              ...messages[index],
+              ...nextMessage,
+            };
+          } else {
+            messages.push(nextMessage);
+          }
+          return { ...prev, [sessionKey]: messages };
+        });
+        return;
+      }
+
       if (data.stream !== "tool") return;
       const sessionKey = typeof data.sessionKey === "string" ? data.sessionKey : undefined;
       const runId = typeof data.runId === "string" ? data.runId : undefined;
@@ -1182,6 +1228,8 @@ function HomeContent() {
         ...prev,
         [sessionKey!]: [...(prev[sessionKey!] || []), assistantMessage],
       }));
+      // 设置 activeRunId 用于取消
+      setActiveRunId(actualRunId);
       updateMessageById(sessionKey, messageId, (msg) => ({
         ...msg,
         status: undefined,
@@ -1313,6 +1361,32 @@ function HomeContent() {
     if (typeof session.totalTokens === "number") return session.totalTokens;
     const total = (session.inputTokens ?? 0) + (session.outputTokens ?? 0);
     return total > 0 ? total : "—";
+  };
+
+  // 取消正在进行的生成
+  const handleCancelMessage = async (message: Message) => {
+    if (!currentConversationId || !activeRunId || !wsClient) return;
+
+    try {
+      await wsClient.sendRequest("chat.abort", {
+        sessionKey: currentConversationId,
+        runId: activeRunId,
+      });
+      // 更新消息状态为已取消
+      updateMessageById(currentConversationId, message.id, (msg) => ({
+        ...msg,
+        status: "cancelled",
+      }));
+      // 清除 activeRunId
+      setActiveRunId(null);
+    } catch (error) {
+      console.error("取消生成失败:", error);
+      addToast({
+        title: "取消失败",
+        description: error instanceof Error ? error.message : "未知错误",
+        variant: "error",
+      });
+    }
   };
 
   const handleRetryMessage = async (message: Message) => {
@@ -1552,6 +1626,7 @@ function HomeContent() {
                     onEditMessage={handleEditMessage}
                     onCopyMessage={handleCopyToDraft}
                     onDeleteMessage={handleDeleteFailedMessage}
+                    onCancelMessage={handleCancelMessage}
                     onStartEdit={handleStartEdit}
                     onConfirmEdit={handleConfirmEdit}
                     onCancelEdit={handleCancelEdit}
