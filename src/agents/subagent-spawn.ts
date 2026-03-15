@@ -20,6 +20,7 @@ import { resolveSandboxRuntimeStatus } from "./sandbox/runtime-status.js";
 import { buildSubagentSystemPrompt } from "./subagent-announce.js";
 import { getSubagentDepthFromSessionStore } from "./subagent-depth.js";
 import { countActiveRunsForSession, registerSubagentRun } from "./subagent-registry.js";
+import type { SubagentType } from "./subagent-registry.types.js";
 import { readStringParam } from "./tools/common.js";
 import {
   resolveDisplaySessionKey,
@@ -786,6 +787,27 @@ export async function spawnSubagentDirect(
     };
   }
 
+  // Infer subagent type from task description
+  const inferSubagentType = (taskStr: string): SubagentType | undefined => {
+    const lowerTask = taskStr.toLowerCase();
+    if (lowerTask.includes("搜索") || lowerTask.includes("查找") || lowerTask.includes("crawl")) {
+      return "search";
+    }
+    if (lowerTask.includes("代码") || lowerTask.includes("开发") || lowerTask.includes("code")) {
+      return "code";
+    }
+    if (lowerTask.includes("写") || lowerTask.includes("生成") || lowerTask.includes("create")) {
+      return "write";
+    }
+    if (lowerTask.includes("分析") || lowerTask.includes("研究")) {
+      return "analysis";
+    }
+    if (lowerTask.includes("读取") || lowerTask.includes("阅读")) {
+      return "read";
+    }
+    return undefined;
+  };
+
   try {
     registerSubagentRun({
       runId: childRunId,
@@ -803,6 +825,7 @@ export async function spawnSubagentDirect(
       attachmentsDir: attachmentAbsDir,
       attachmentsRootDir: attachmentRootDir,
       retainAttachmentsOnKeep: retainOnSessionKeep,
+      type: inferSubagentType(task),
     });
   } catch (err) {
     if (attachmentAbsDir) {

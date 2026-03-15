@@ -80,3 +80,23 @@ export interface UIState {
   activeTab: string;
   theme: "light" | "dark";
 }
+
+export type SubagentStatus = "running" | "completed" | "failed" | "timeout";
+
+export type SubagentType = "search" | "write" | "code" | "analysis" | "read" | "agent";
+
+export interface SubagentMessageProps {
+  id: string;
+  label?: string;
+  task: string;
+  type?: SubagentType;
+  status: SubagentStatus;
+  runtime?: "subagent" | "acp";
+  createdAt: Date;
+  startedAt?: Date;
+  endedAt?: Date;
+  output?: string;
+  progress?: number;
+  error?: string;
+  duration?: number;
+}

@@ -275,12 +275,13 @@ export function capArrayByJsonBytes<T>(
   }
   const parts = items.map((item) => jsonUtf8Bytes(item));
   let bytes = 2 + parts.reduce((a, b) => a + b, 0) + (items.length - 1);
-  let start = 0;
-  while (bytes > maxBytes && start < items.length - 1) {
-    bytes -= parts[start] + 1;
-    start += 1;
+  // Truncate from the END instead of beginning to preserve oldest messages
+  let end = items.length;
+  while (bytes > maxBytes && end > 1) {
+    end -= 1;
+    bytes -= parts[end] + 1;
   }
-  const next = start > 0 ? items.slice(start) : items;
+  const next = items.slice(0, end);
   return { items: next, bytes };
 }
 

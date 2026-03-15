@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { ReactNode, useState, memo } from "react";
+import { Button } from "@/components/ui/button";
 import type { GatewaySessionRow } from "@/types/clawdbot";
 import Sidebar from "../sidebar/Sidebar";
 import { ToastStack } from "../ui/toast-stack";
@@ -161,7 +162,20 @@ const MainLayout = ({
           onOpenChat={onOpenChat}
           onStartVoiceChat={onStartVoiceChat}
           onOpenTasks={onOpenTasks}
+          onClose={onToggleAssistantVisible}
         />
+      )}
+
+      {/* 虚拟助手隐藏时显示按钮（仅在非 persona 页面显示） */}
+      {!assistantVisible && activeView !== "persona" && (
+        <Button
+          variant="outline"
+          size="icon"
+          className="fixed bottom-6 right-6 z-[99998] rounded-full w-12 h-12 bg-background/80 backdrop-blur shadow-lg hover:bg-background p-1 cursor-pointer"
+          onClick={onToggleAssistantVisible}
+        >
+          <img src="/img/logo.png" alt="OpenClaw" className="w-full h-full object-contain" />
+        </Button>
       )}
 
       {/* Main content - full height */}

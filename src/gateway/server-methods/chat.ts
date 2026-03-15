@@ -314,13 +314,13 @@ function enforceChatHistoryFinalBudget(params: { messages: unknown[]; maxBytes: 
   if (jsonUtf8Bytes(messages) <= maxBytes) {
     return { messages, placeholderCount: 0 };
   }
-  const last = messages.at(-1);
-  if (last && jsonUtf8Bytes([last]) <= maxBytes) {
-    return { messages: [last], placeholderCount: 0 };
+  // Keep from the BEGINNING instead of end to preserve oldest messages
+  let end = messages.length;
+  while (end > 1 && jsonUtf8Bytes(messages.slice(0, end)) > maxBytes) {
+    end -= 1;
   }
-  const placeholder = buildOversizedHistoryPlaceholder(last);
-  if (jsonUtf8Bytes([placeholder]) <= maxBytes) {
-    return { messages: [placeholder], placeholderCount: 1 };
+  if (end > 0) {
+    return { messages: messages.slice(0, end), placeholderCount: 0 };
   }
   return { messages: [], placeholderCount: 0 };
 }
@@ -627,7 +627,7 @@ export const chatHandlers: GatewayRequestHandlers = {
     const defaultLimit = 200;
     const requested = typeof limit === "number" ? limit : defaultLimit;
     const max = Math.min(hardMax, requested);
-    const sliced = rawMessages.length > max ? rawMessages.slice(-max) : rawMessages;
+    const sliced = rawMessages.length > max ? rawMessages.slice(0, max) : rawMessages;
     const sanitized = stripEnvelopeFromMessages(sliced);
     const normalized = sanitizeChatHistoryMessages(sanitized);
     const maxHistoryBytes = getMaxChatHistoryMessagesBytes();

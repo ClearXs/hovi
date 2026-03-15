@@ -11,6 +11,18 @@ description: "智能分析招标文件并生成投标文件。使用场景：(1)
 > - 步骤4.5：**用户确认"开始生成"后**，自动完成所有后续步骤
 > - 步骤6.5：自动执行，不需要用户确认
 
+## 预设配置
+
+当用户未明确指定时，使用以下默认值：
+
+- **目标页数**：150页
+- **代码原型**：是（生成HTML原型）
+- **图表**：系统架构图、网络拓扑图、功能模块图、甘特图
+- **自动扩充**：是（字数不足自动添加内容）
+- **多Agent并行**：是（自动使用多Agent加速生成）
+
+---
+
 智能分析招标文件，从知识库获取历史投标参考，自动生成结构化的投标文件（技术标+商务标）和可运行的代码原型，并输出Word文档格式。
 
 ## 何时使用
@@ -470,6 +482,49 @@ description: "智能分析招标文件并生成投标文件。使用场景：(1)
 
 **一次性生成完成后，直接进入步骤6**，不要生成任何额外的"补充内容"。
 
+#### 5.1 多Agent并行生成（可选）
+
+为了加快生成速度，可以使用多Agent并行生成章节：
+
+**动态分组**：根据章节数量决定分组数量
+```
+章节数 ≤ 6 → 分2组（每组3章）
+章节数 7-12 → 分3组（每组3-4章）
+章节数 > 12 → 分4组（每组3-4章）
+```
+
+**使用 sessions_spawn 启动写手Agent**：
+
+```typescript
+// 同时启动多个写手Agent
+{
+  tool: "sessions_spawn",
+  params: {
+    task: "生成投标文件章节：{章节列表}\n招标文件：{招标文件路径}\n参考资料：{参考资料路径}\n输出目录：{输出目录}",
+    label: "写手A",
+    agentId: "main",
+    runTimeoutSeconds: 600,
+    cleanup: "delete"
+  }
+}
+```
+
+**实时汇报**：每个写手Agent完成后，自动推送消息给用户：
+```
+📝 第X-Y章已完成
+
+【内容概要】
+本章主要包含：
+1. XXX（功能/模块描述）
+
+【字数】约 XXXX 字
+【状态】✅ 已完成
+```
+
+**等待所有Agent完成**：主编Agent等待所有写手Agent完成后，继续下一步。
+
+> **【关键】如果使用多Agent并行生成，仍然必须一次性生成所有章节的完整内容，不能分批生成**
+
 > **【关键】字数验证和扩充流程**：
 >
 > **第一步：生成内容后立即验证字数（确定值，不是估算）**
@@ -814,14 +869,15 @@ python scripts/capture_screenshot.py "file:///path/to/index.html" -o local.png
 **【合并所有章节到Word】**：
 步骤5已经一次性生成了所有章节的Markdown文件，现在需要合并到一个Word文档中。
 
-**【重要】使用 md2docx.py 脚本转换**：
+**【重要】使用 md2docx.py 脚本转换（不使用模板）**：
 
 ```bash
-# 使用脚本将Markdown目录转换为Word（保留格式，自动生成目录）
-python scripts/md2docx.py 章节内容/ -o 投标文件.docx -t assets/bid-template.docx
+# 直接从Markdown生成Word，不要使用模板！
+# 模板中的占位符不会被替换，会导致内容丢失
+python scripts/md2docx.py 章节内容/ -o 投标文件.docx
 ```
 
-脚本功能：
+**脚本功能**：
 
 - **自动生成目录（大纲）** - 根据所有标题自动生成可更新的目录
 - 自动转换Markdown标题到Word标题样式
@@ -831,6 +887,8 @@ python scripts/md2docx.py 章节内容/ -o 投标文件.docx -t assets/bid-templ
 - 自动转换列表为Word列表
 - 段落设置：首行缩进2字符、1.5倍行距
 - 保持原有格式和层级
+
+> ⚠️ **【关键】不要使用 -t 参数指定模板！模板中的占位符不会被替换，会导致章节内容显示为"详细内容见章节内容文件夹"**
 
 **手动转换方法**（如果脚本有问题）：
 
@@ -876,11 +934,10 @@ python scripts/md2docx.py 章节内容/ -o 投标文件.docx -t assets/bid-templ
 
 生成Word文档步骤：
 
-1. **必须严格参考** `assets/bid-template.docx` 模板
-   - 模板包含15个主要章节结构
-   - 模板包含章节编号和格式规范
-   - 模板包含占位符格式（如"[项目名称]"）
-   - 生成时用实际内容替换占位符
+1. **使用 md2docx.py 直接从Markdown生成**（不要使用模板！）
+   - 脚本会自动从Markdown文件生成Word文档
+   - 会自动生成目录
+   - 会保留所有格式
 
 2. **内容必须达到用户确认的总页数**（100-400页）
    - **生成后必须验证实际页数**
@@ -1051,10 +1108,10 @@ last_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
 ## 参考资源
 
-- [references/tender-template.md](references/tender-template.md) - 投标文件结构模板
+- [references/tender-template.md](references/tender-template.md) - 投标文件结构模板（参考）
 - [references/scoring-guide.md](references/scoring-guide.md) - 评分标准应对指南
 - [references/checklist.md](references/checklist.md) - 投标完整性检查清单
-- [assets/bid-template.docx](assets/bid-template.docx) - Word投标模板（15章结构：投标函→法定代表人证明→授权委托书→保证金→资质证明→项目概述→需求分析→系统总体设计→功能模块设计→技术方案→实施方案→质量保证→售后服务→团队介绍→商务标）
+- [assets/bid-template.docx](assets/bid-template.docx) - （已废弃，请使用 md2docx.py 直接生成）
 
 ## 注意事项
 

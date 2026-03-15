@@ -8,7 +8,7 @@ import {
   type SessionEntry,
 } from "../config/sessions.js";
 import { callGateway } from "../gateway/call.js";
-import { onAgentEvent } from "../infra/agent-events.js";
+import { emitAgentEvent, onAgentEvent } from "../infra/agent-events.js";
 import { defaultRuntime } from "../runtime.js";
 import { type DeliveryContext, normalizeDeliveryContext } from "../utils/delivery-context.js";
 import { resetAnnounceQueuesForTests } from "./subagent-announce-queue.js";
@@ -44,7 +44,7 @@ import {
   persistSubagentRunsToDisk,
   restoreSubagentRunsFromDisk,
 } from "./subagent-registry-state.js";
-import type { SubagentRunRecord } from "./subagent-registry.types.js";
+import type { SubagentRunRecord, SubagentType } from "./subagent-registry.types.js";
 import { resolveAgentTimeoutMs } from "./timeout.js";
 
 export type { SubagentRunRecord } from "./subagent-registry.types.js";
@@ -374,6 +374,29 @@ async function completeSubagentRun(params: {
       reason: params.reason,
       sendFarewell: params.sendFarewell,
       accountId: params.accountId,
+    });
+  }
+
+  // Emit lifecycle event for subagent end (only if type exists)
+  if (entry.type) {
+    const phase = params.reason === SUBAGENT_ENDED_REASON_ERROR ? "error" : "end";
+    emitAgentEvent({
+      runId: params.runId,
+      stream: "lifecycle",
+      data: {
+        phase,
+        subagent: {
+          runId: entry.runId,
+          label: entry.label,
+          task: entry.task,
+          type: entry.type,
+          status: params.outcome?.status === "ok" ? "completed" : "failed",
+        },
+        startedAt: entry.startedAt,
+        endedAt: entry.endedAt,
+        error: params.outcome?.error,
+      },
+      sessionKey: entry.requesterSessionKey,
     });
   }
 
@@ -978,6 +1001,7 @@ export function registerSubagentRun(params: {
   attachmentsDir?: string;
   attachmentsRootDir?: string;
   retainAttachmentsOnKeep?: boolean;
+  type?: SubagentType;
 }) {
   const now = Date.now();
   const cfg = loadConfig();
@@ -1009,9 +1033,31 @@ export function registerSubagentRun(params: {
     attachmentsDir: params.attachmentsDir,
     attachmentsRootDir: params.attachmentsRootDir,
     retainAttachmentsOnKeep: params.retainAttachmentsOnKeep,
+    type: params.type,
   });
   ensureListener();
   persistSubagentRuns();
+
+  // Emit lifecycle event for subagent start (only if type is provided)
+  if (params.type) {
+    emitAgentEvent({
+      runId: params.runId,
+      stream: "lifecycle",
+      data: {
+        phase: "start",
+        subagent: {
+          runId: params.runId,
+          label: params.label,
+          task: params.task,
+          type: params.type,
+          status: "running",
+        },
+        startedAt: now,
+      },
+      sessionKey: params.requesterSessionKey,
+    });
+  }
+
   if (archiveAtMs) {
     startSweeper();
   }

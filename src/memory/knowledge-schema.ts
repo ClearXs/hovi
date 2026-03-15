@@ -272,6 +272,7 @@ export function ensureKnowledgeSchema(db: DatabaseSync): void {
     "vectorization_config",
     `TEXT NOT NULL DEFAULT '{"enabled":true}'`,
   );
+  ensureColumn(db, "kb_settings", "search_config", "TEXT");
 }
 
 /**

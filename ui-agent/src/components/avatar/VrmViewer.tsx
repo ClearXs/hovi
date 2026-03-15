@@ -20,15 +20,22 @@ function VRMModel({
   avatarControllerRef,
   onVrmLoad,
   onProgress,
+  verticalOffset = 0,
+  explicitWidth,
+  explicitHeight,
 }: {
   url: string | null;
   motionUrl: string | null;
   avatarControllerRef: React.MutableRefObject<AvatarController | null>;
   onVrmLoad?: (vrm: VRM, controller: AvatarController) => void;
   onProgress?: (loaded: number, total: number) => void;
+  verticalOffset?: number;
+  explicitWidth?: number;
+  explicitHeight?: number;
 }) {
+  const groupRef = useRef<THREE.Group>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { scene, camera } = useThree() as any;
+  const { scene, camera, gl } = useThree() as any;
   const vrmRef = useRef<VRM | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mixerRef = useRef<any>(null);
@@ -137,7 +144,34 @@ function VRMModel({
           obj.frustumCulled = false;
         });
 
+        // Apply vertical offset BEFORE adding to scene
+        vrm.scene.position.y = verticalOffset;
         scene.add(vrm.scene);
+
+        // Use explicit width/height if provided, otherwise fallback to canvas size
+        // This allows VirtualAssistant to correctly detect floating mode
+        const width = explicitWidth || gl.domElement?.clientWidth || 0;
+        const height = explicitHeight || gl.domElement?.clientHeight || 0;
+        const isFloating =
+          (explicitWidth !== undefined && explicitWidth < 300) ||
+          (explicitHeight !== undefined && explicitHeight < 300) ||
+          (!explicitWidth && !explicitHeight && width < 300 && height < 300);
+        console.log(
+          "[VrmViewer] Size:",
+          width,
+          "x",
+          height,
+          "isFloating:",
+          isFloating,
+          "explicit:",
+          explicitWidth,
+          explicitHeight,
+        );
+
+        // For floating mode, move VRM up so feet are visible
+        const offset = isFloating ? 0.4 : verticalOffset;
+        vrm.scene.position.y = offset;
+        vrm.scene.position.z = 0;
         vrmRef.current = vrm;
 
         // Set up look-at target
@@ -208,6 +242,55 @@ function VRMModel({
     }
   });
 
+  // 监听 canvas 尺寸变化，动态调整 VRM 位置
+  useEffect(() => {
+    const canvas = gl.domElement;
+    if (!canvas) return;
+
+    const updatePosition = () => {
+      // Use explicit dimensions if provided, otherwise fallback to canvas size
+      const width = explicitWidth || canvas.clientWidth || 0;
+      const height = explicitHeight || canvas.clientHeight || 0;
+
+      // Determine floating mode based on explicit dimensions or canvas size
+      const isFloating =
+        (explicitWidth !== undefined && explicitWidth < 300) ||
+        (explicitHeight !== undefined && explicitHeight < 300) ||
+        (!explicitWidth && !explicitHeight && width < 300 && height < 300);
+
+      if (vrmRef.current) {
+        const offset = isFloating ? 0.4 : verticalOffset;
+        vrmRef.current.scene.position.y = offset;
+        console.log(
+          "[VrmViewer] Resize update - Size:",
+          width,
+          "x",
+          height,
+          "isFloating:",
+          isFloating,
+          "offset:",
+          offset,
+          "explicit:",
+          explicitWidth,
+          explicitHeight,
+        );
+      }
+    };
+
+    // 使用 ResizeObserver 监听 canvas 尺寸变化
+    const resizeObserver = new ResizeObserver(() => {
+      updatePosition();
+    });
+    resizeObserver.observe(canvas);
+
+    // 初始调用
+    updatePosition();
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [gl, verticalOffset, explicitWidth, explicitHeight]);
+
   return null;
 }
 
@@ -220,14 +303,59 @@ function Lights() {
   );
 }
 
-function CameraController() {
+function CameraController({
+  explicitWidth,
+  explicitHeight,
+}: {
+  explicitWidth?: number;
+  explicitHeight?: number;
+}) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { camera } = useThree() as any;
+  const { camera, gl } = useThree() as any;
 
   useEffect(() => {
-    camera.position.set(0, 1.2, 2);
-    camera.lookAt(0, 1, 0);
-  }, [camera]);
+    const canvas = gl.domElement;
+    if (!canvas) return;
+
+    const updateCamera = () => {
+      // Use explicit dimensions if provided, otherwise fallback to canvas size
+      const width = explicitWidth || canvas?.clientWidth || 0;
+      const height = explicitHeight || canvas?.clientHeight || 0;
+
+      // Determine floating mode based on explicit dimensions or canvas size
+      const isFloating =
+        (explicitWidth !== undefined && explicitWidth < 300) ||
+        (explicitHeight !== undefined && explicitHeight < 300) ||
+        (!explicitWidth && !explicitHeight && width < 300 && height < 300);
+
+      console.log("[CameraController] Size:", width, "x", height, "isFloating:", isFloating);
+
+      if (isFloating) {
+        // Floating pet mode - higher camera to see feet, look at higher point
+        camera.position.set(0, 1.6, 3);
+        camera.lookAt(0, 1.5, 0);
+        console.log("[CameraController] Using floating mode camera");
+      } else {
+        // Fullscreen mode - standard view
+        camera.position.set(0, 1.2, 2);
+        camera.lookAt(0, 1, 0);
+        console.log("[CameraController] Using fullscreen mode camera");
+      }
+    };
+
+    // 使用 ResizeObserver 监听 canvas 尺寸变化
+    const resizeObserver = new ResizeObserver(() => {
+      updateCamera();
+    });
+    resizeObserver.observe(canvas);
+
+    // 初始调用
+    updateCamera();
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [camera, gl, explicitWidth, explicitHeight]);
 
   return null;
 }
@@ -244,6 +372,12 @@ export interface VrmViewerProps {
   onProgress?: (loaded: number, total: number) => void;
   /** Enable orbit controls (zoom, rotate, pan) */
   enableControls?: boolean;
+  /** Vertical offset to center the model (positive = move up) */
+  verticalOffset?: number;
+  /** Explicit width for the canvas (useful for floating mode) */
+  width?: number;
+  /** Explicit height for the canvas (useful for floating mode) */
+  height?: number;
 }
 
 export interface VrmViewerRef {
@@ -261,6 +395,9 @@ export const VrmViewer = forwardRef<VrmViewerRef, VrmViewerProps>(
       onVrmLoad,
       onProgress,
       enableControls = true,
+      verticalOffset = 0,
+      width,
+      height,
     },
     ref,
   ) => {
@@ -269,6 +406,9 @@ export const VrmViewer = forwardRef<VrmViewerRef, VrmViewerProps>(
     const isMountedRef = useRef(true);
     const sceneRef = useRef<any>(null);
     const sceneGltfRef = useRef<any>(null);
+
+    // 调试日志 - 显示接收到的参数
+    console.log("[VrmViewer] Received props - width:", width, "height:", height);
 
     // 加载场景 GLTF
     useEffect(() => {
@@ -360,7 +500,14 @@ export const VrmViewer = forwardRef<VrmViewerRef, VrmViewerProps>(
     }, [avatarState]);
 
     return (
-      <div className="w-full h-full">
+      <div
+        className="w-full h-full"
+        style={{
+          overflow: "visible",
+          ...(width ? { width: `${width}px` } : {}),
+          ...(height ? { height: `${height}px` } : {}),
+        }}
+      >
         <Canvas
           shadows
           camera={{ fov: 45, near: 0.1, far: 1000 }}
@@ -370,6 +517,7 @@ export const VrmViewer = forwardRef<VrmViewerRef, VrmViewerProps>(
             preserveDrawingBuffer: true,
             powerPreference: "high-performance",
           }}
+          style={width && height ? { width, height } : {}}
           onCreated={({ gl }) => {
             // WebGL 上下文丢失处理
             gl.domElement.addEventListener("webglcontextlost", (event: Event) => {
@@ -377,7 +525,7 @@ export const VrmViewer = forwardRef<VrmViewerRef, VrmViewerProps>(
             });
           }}
         >
-          <CameraController />
+          <CameraController explicitWidth={width} explicitHeight={height} />
           <Lights />
           {enableControls && (
             <OrbitControls
@@ -395,6 +543,9 @@ export const VrmViewer = forwardRef<VrmViewerRef, VrmViewerProps>(
             avatarControllerRef={avatarControllerRef}
             onVrmLoad={onVrmLoad}
             onProgress={onProgress}
+            verticalOffset={verticalOffset}
+            explicitWidth={width}
+            explicitHeight={height}
           />
           {/* 场景引用组件 */}
           <SceneRef ref={sceneRef} />

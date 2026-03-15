@@ -2,7 +2,9 @@
 
 import { Bot, RotateCw } from "lucide-react";
 import { useStreamingReplay } from "@/contexts/StreamingReplayContext";
+import type { SubagentMessageProps } from "@/types";
 import { StepItem, StepItemProps } from "./StepItem";
+import { SubagentList } from "./SubagentList";
 
 export type AgentStatus = "thinking" | "executing" | "completed" | "failed";
 
@@ -11,6 +13,7 @@ export interface AgentMessageProps {
   status: AgentStatus;
   summary?: string;
   steps: StepItemProps[];
+  subagents?: SubagentMessageProps[];
   timestamp?: Date;
   messageIndex?: number; // Index of this agent message in the list
 }
@@ -20,6 +23,7 @@ export function AgentMessage({
   status,
   summary,
   steps,
+  subagents,
   timestamp,
   messageIndex = 0,
 }: AgentMessageProps) {
@@ -93,6 +97,9 @@ export function AgentMessage({
               ))}
             </div>
           )}
+
+          {/* 子 Agent 列表 */}
+          <SubagentList subagents={subagents || []} />
         </div>
       </div>
     </div>

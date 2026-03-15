@@ -3,10 +3,13 @@ import type { SubagentRunOutcome } from "./subagent-announce.js";
 import type { SubagentLifecycleEndedReason } from "./subagent-lifecycle-events.js";
 import type { SpawnSubagentMode } from "./subagent-spawn.js";
 
+export type SubagentType = "search" | "write" | "code" | "analysis" | "read" | "agent";
+
 export type SubagentRunRecord = {
   runId: string;
   childSessionKey: string;
   requesterSessionKey: string;
+  turnId?: string;
   requesterOrigin?: DeliveryContext;
   requesterDisplayKey: string;
   task: string;
@@ -35,4 +38,6 @@ export type SubagentRunRecord = {
   attachmentsDir?: string;
   attachmentsRootDir?: string;
   retainAttachmentsOnKeep?: boolean;
+  /** Task type for UI display (e.g., search, write, code, analysis, read, agent). */
+  type?: SubagentType;
 };

@@ -1,8 +1,19 @@
 import { create } from "zustand";
 import { generateId } from "@/lib/utils";
-import { AgentState, Agent, TodoItem, LogEntry, ToolUsage, FileItem } from "@/types";
+import {
+  AgentState,
+  Agent,
+  TodoItem,
+  LogEntry,
+  ToolUsage,
+  FileItem,
+  SubagentMessageProps,
+} from "@/types";
 
 interface AgentStore extends AgentState {
+  // Subagent state
+  subagents: Map<string, SubagentMessageProps>;
+
   // Actions
   setAgent: (agent: Agent) => void;
   updateAgentStatus: (status: Agent["status"], progress?: number) => void;
@@ -15,12 +26,19 @@ interface AgentStore extends AgentState {
   addCreatedFile: (file: Omit<FileItem, "id" | "createdAt" | "modifiedAt">) => void;
   clearAgent: () => void;
   setError: (error: string | null) => void;
+
+  // Subagent actions
+  addSubagent: (subagent: SubagentMessageProps) => void;
+  updateSubagent: (runId: string, updates: Partial<SubagentMessageProps>) => void;
+  removeSubagent: (runId: string) => void;
+  clearSubagents: () => void;
 }
 
 export const useAgentStore = create<AgentStore>((set, get) => ({
   agent: null,
   isRunning: false,
   error: null,
+  subagents: new Map(),
 
   setAgent: (agent) => {
     set({ agent, error: null });
@@ -167,10 +185,42 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       agent: null,
       isRunning: false,
       error: null,
+      subagents: new Map(),
     });
   },
 
   setError: (error) => {
     set({ error });
+  },
+
+  // Subagent actions
+  addSubagent: (subagent) => {
+    set((state) => {
+      const newMap = new Map(state.subagents);
+      newMap.set(subagent.id, subagent);
+      return { subagents: newMap };
+    });
+  },
+
+  updateSubagent: (runId, updates) => {
+    set((state) => {
+      const existing = state.subagents.get(runId);
+      if (!existing) return state;
+      const newMap = new Map(state.subagents);
+      newMap.set(runId, { ...existing, ...updates });
+      return { subagents: newMap };
+    });
+  },
+
+  removeSubagent: (runId) => {
+    set((state) => {
+      const newMap = new Map(state.subagents);
+      newMap.delete(runId);
+      return { subagents: newMap };
+    });
+  },
+
+  clearSubagents: () => {
+    set({ subagents: new Map() });
   },
 }));

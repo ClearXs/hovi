@@ -30,6 +30,7 @@ import { fetchAgents } from "@/features/persona/services/personaApi";
 import type { AgentInfo } from "@/features/persona/types/persona";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { isPageIndexSupported } from "@/services/pageindexApi";
+import { useAgentStore } from "@/stores/agentStore";
 import { useAvatarStateStore } from "@/stores/avatarStateStore";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSessionDocumentStore } from "@/stores/sessionDocumentStore";
@@ -37,6 +38,7 @@ import { useSessionStore } from "@/stores/sessionStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useShortcutStore } from "@/stores/shortcutStore";
 import { useToastStore } from "@/stores/toastStore";
+import type { SubagentMessageProps } from "@/types";
 
 type ConnectorItem = {
   id: string;
@@ -76,6 +78,7 @@ function HomeContent() {
   const { status, wsClient } = useConnectionStore();
   const { addToast } = useToastStore();
   const shortcutStore = useShortcutStore();
+  const agentStore = useAgentStore();
   const { openSettings } = useSettingsStore();
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [activeMainView, setActiveMainView] = useState<"chat" | "knowledge" | "persona">("chat");
@@ -89,7 +92,7 @@ function HomeContent() {
   const [historyLoadingKey, setHistoryLoadingKey] = useState<string | null>(null);
   const [historyErrors, setHistoryErrors] = useState<Record<string, string>>({});
   const [historyLimits, setHistoryLimits] = useState<Record<string, number>>({});
-  const historyDefaultLimit = 200;
+  const historyDefaultLimit = 1000;
   const [toolEventsByRun, setToolEventsByRun] = useState<
     Record<
       string,
@@ -593,11 +596,8 @@ function HomeContent() {
   const fetchHistory = useCallback(
     async (sessionKey: string, force = false, limitOverride?: number) => {
       if (!wsClient) return;
-      if (!force && conversationMessages[sessionKey]) return;
-      const limit =
-        typeof limitOverride === "number"
-          ? limitOverride
-          : (historyLimits[sessionKey] ?? historyDefaultLimit);
+      // 总是强制重新获取完整历史，忽略缓存
+      const limit = typeof limitOverride === "number" ? limitOverride : historyDefaultLimit;
       setHistoryLoadingKey(sessionKey);
       try {
         // First, get the total count to determine how many messages to load
@@ -607,7 +607,10 @@ function HomeContent() {
           sessionKey,
           limit: 1,
         });
-        const totalToLoad = countResult?.totalMessages ? countResult.totalMessages + 100 : limit;
+        // 如果后端没有返回 totalMessages，直接使用默认的最大限制
+        const totalToLoad = countResult?.totalMessages
+          ? countResult.totalMessages + 100
+          : historyDefaultLimit;
 
         const result = await wsClient.sendRequest<{
           messages?: unknown[];
@@ -627,10 +630,6 @@ function HomeContent() {
             [sessionKey]: history,
           };
         });
-        setHistoryLimits((prev) => ({
-          ...prev,
-          [sessionKey]: result?.totalMessages ? result.totalMessages + 100 : limit,
-        }));
         setHistoryErrors((prev) => {
           if (!prev[sessionKey]) return prev;
           const next = { ...prev };
@@ -649,14 +648,7 @@ function HomeContent() {
         setHistoryLoadingKey((current) => (current === sessionKey ? null : current));
       }
     },
-    [
-      addToast,
-      conversationMessages,
-      historyLimits,
-      historyDefaultLimit,
-      normalizeHistoryMessages,
-      wsClient,
-    ],
+    [addToast, conversationMessages, historyDefaultLimit, normalizeHistoryMessages, wsClient],
   );
 
   useEffect(() => {
@@ -822,6 +814,28 @@ function HomeContent() {
           }
           return { ...prev, [sessionKey]: messages };
         });
+        return;
+      }
+
+      // 处理 subagent lifecycle 事件
+      if (data.stream === "lifecycle" && data.data?.subagent) {
+        const subagentData = data.data.subagent as SubagentMessageProps;
+        const phase = data.data.phase;
+
+        if (phase === "start") {
+          agentStore.addSubagent({
+            ...subagentData,
+            createdAt: new Date(data.data.startedAt || Date.now()),
+            startedAt: data.data.startedAt ? new Date(data.data.startedAt) : undefined,
+          });
+        } else if (phase === "end" || phase === "error") {
+          agentStore.updateSubagent(subagentData.id, {
+            status: phase === "error" ? "failed" : "completed",
+            output: data.data.output as string | undefined,
+            error: data.data.error as string | undefined,
+            endedAt: data.data.endedAt ? new Date(data.data.endedAt) : new Date(),
+          });
+        }
         return;
       }
 

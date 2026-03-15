@@ -98,6 +98,41 @@ function getOrCreateTypeColor(type: string): string {
   return color;
 }
 
+// 计算点 P 到线段 AB 的最短距离
+function pointToSegmentDistance(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  // 向量 AB
+  const abx = bx - ax;
+  const aby = by - ay;
+  // 向量 AP
+  const apx = px - ax;
+  const apy = py - ay;
+
+  // 线段长度的平方
+  const ab2 = abx * abx + aby * aby;
+
+  // 如果 A 和 B 重合，直接计算到 A 的距离
+  if (ab2 === 0) {
+    return Math.sqrt((px - ax) ** 2 + (py - ay) ** 2);
+  }
+
+  // 计算投影点 t
+  const t = Math.max(0, Math.min(1, (apx * abx + apy * aby) / ab2));
+
+  // 投影点坐标
+  const projX = ax + t * abx;
+  const projY = ay + t * aby;
+
+  // 计算点到投影点的距离
+  return Math.sqrt((px - projX) ** 2 + (py - projY) ** 2);
+}
+
 interface NodeData {
   id: string;
   label: string;
@@ -286,66 +321,140 @@ export function KnowledgeGraphTab() {
       }
     });
 
-    // 点击边显示详情 - G6 5.x 使用 "click" 事件
-    graph.on("click", (evt: any) => {
+    // 使用 G6 5.x 专用 edge:click 事件
+    graph.on("edge:click", async (evt: any) => {
       try {
-        const targetType = evt.targetType;
-        // G6 5.x: 使用 evt.item 或 evt.originalTarget
-        const item = evt.item || evt.originalTarget;
-        console.log("Click targetType:", targetType, "item:", item);
+        let model: any = null;
 
-        if (!item) {
-          // 点击空白处
-          return;
+        // 直接从 evt.target.entity 获取边数据（G6 5.x 内部数组索引）
+        const shape = evt.target;
+        const entityId = shape?.entity;
+
+        if (entityId !== undefined) {
+          const graphData = graph.getData();
+          const edges = (graphData?.edges || []) as any[];
+
+          if (edges.length > 0) {
+            // 尝试通过数组索引获取
+            if (typeof entityId === "number" && edges[entityId]) {
+              model = edges[entityId];
+            }
+
+            // 尝试通过 ID 匹配
+            if (!model) {
+              for (const edge of edges) {
+                const edgeIdStr = String(edge.id || "");
+                const entityIdStr = String(entityId);
+                if (edgeIdStr.includes(entityIdStr) || entityIdStr.includes(edgeIdStr)) {
+                  model = edge;
+                  break;
+                }
+              }
+            }
+
+            // 尝试通过 source/target 匹配
+            if (!model && shape.source && shape.target) {
+              model = edges.find(
+                (e: any) =>
+                  (e.source === shape.source && e.target === shape.target) ||
+                  (e.id &&
+                    String(e.id).includes(String(shape.source)) &&
+                    String(e.id).includes(String(shape.target))),
+              );
+            }
+          }
         }
 
-        if (targetType === "edge") {
-          // 尝试从 item 获取边的数据
-          console.log("Edge item entity:", item.entity);
-          console.log("Edge item name:", item.name);
+        // 备选方案：通过 shape.id 匹配
+        if (!model && shape?.id) {
+          const graphData = graph.getData();
+          const edges = (graphData?.edges || []) as any[];
+          model = edges.find((e: any) => String(e.id) === String(shape.id));
+        }
 
-          // item.entity 可能包含边数据
-          let model = item.entity || {};
-          if (!model.id && item.name) {
-            // 尝试通过 name 查找
-            const graphData = graphRef.current?.getData();
-            const edges = (graphData?.edges || []) as any[];
-            model = edges.find((e) => e.id === item.name) || {};
+        // 备选方案：使用 shape.cfg
+        if (!model && shape?.cfg) {
+          model = shape.cfg;
+        }
+
+        // 获取边数据
+        const data = model?.data || {};
+        const label = model?.label || data?.label || model?.id?.split(":").pop() || "未知关系";
+        const source = model?.source || data?.source || "未知";
+        const target = model?.target || data?.target || "未知";
+        const edgeId = model?.id || "";
+
+        // 提取实体名称
+        const sourceName =
+          String(source).split(":").slice(2).join(":") || String(source).split(":").pop() || source;
+        const targetName =
+          String(target).split(":").slice(2).join(":") || String(target).split(":").pop() || target;
+
+        setSelectedNode({
+          id: edgeId,
+          label: `${sourceName} → ${targetName}`,
+          type: "关系",
+          description: label,
+          degree: 0,
+        });
+        setDetailPanelOpen(true);
+
+        // 加载关联文档 - 边的关联文档来自 source 和 target 实体
+        if (activeKbId && edgeId && model) {
+          setLoadingChunks(true);
+          setEntityChunks([]);
+          try {
+            // 提取实体 ID（格式: entity:xxx:Name -> entity:xxx）
+            const extractEntityId = (s: string) => {
+              const parts = s.split(":");
+              if (parts.length >= 2) {
+                return parts.slice(0, 2).join(":");
+              }
+              return s;
+            };
+
+            const sourceEntityId = extractEntityId(source);
+            const targetEntityId = extractEntityId(target);
+
+            // 尝试加载 source 实体的关联文档
+            if (sourceEntityId && sourceEntityId !== "未知") {
+              try {
+                const sourceDetails = await getEntityDetails({
+                  kbId: activeKbId,
+                  entityId: sourceEntityId,
+                });
+                if (sourceDetails?.chunks?.length > 0) {
+                  setEntityChunks((prev) => [...prev, ...sourceDetails.chunks]);
+                }
+              } catch (e) {
+                // 忽略单个实体的加载错误
+              }
+            }
+
+            // 尝试加载 target 实体的关联文档
+            if (targetEntityId && targetEntityId !== "未知" && targetEntityId !== sourceEntityId) {
+              try {
+                const targetDetails = await getEntityDetails({
+                  kbId: activeKbId,
+                  entityId: targetEntityId,
+                });
+                if (targetDetails?.chunks?.length > 0) {
+                  setEntityChunks((prev) => [...prev, ...targetDetails.chunks]);
+                }
+              } catch (e) {
+                // 忽略单个实体的加载错误
+              }
+            }
+          } catch (err) {
+            console.error("Failed to load edge related chunks:", err);
+          } finally {
+            setLoadingChunks(false);
           }
-
-          console.log("Edge model:", model);
-
-          // 获取边数据
-          const data = model?.data || {};
-          const label = model?.label || data?.label || model?.id?.split(":").pop() || "未知关系";
-          const source = model?.source || data?.source || "未知";
-          const target = model?.target || data?.target || "未知";
-          const edgeId = model?.id || "";
-
-          // 提取实体名称
-          const sourceName =
-            String(source).split(":").slice(2).join(":") ||
-            String(source).split(":").pop() ||
-            source;
-          const targetName =
-            String(target).split(":").slice(2).join(":") ||
-            String(target).split(":").pop() ||
-            target;
-
-          console.log("Edge data:", { label, sourceName, targetName, edgeId });
-
-          setSelectedNode({
-            id: edgeId,
-            label: `${sourceName} → ${targetName}`,
-            type: "关系",
-            description: label,
-            degree: 0,
-          });
-          setDetailPanelOpen(true);
+        } else {
           setEntityChunks([]);
         }
       } catch (err) {
-        console.error("Error handling click:", err);
+        console.error("Error handling edge click:", err);
       }
     });
 
@@ -476,19 +585,6 @@ export function KnowledgeGraphTab() {
       }
       neighborCacheRef.current = { nodeNeighbors, edgeNeighbors };
 
-      // 调试日志
-      console.log("Loading graph data:", { nodesCount: nodes.length, edgesCount: edges.length });
-      console.log("Sample nodes:", nodes.slice(0, 3));
-      console.log("Sample edges:", edges.slice(0, 3));
-      console.log(
-        "Node IDs sample:",
-        nodes.slice(0, 5).map((n) => n.id),
-      );
-      console.log(
-        "Edge source/target sample:",
-        edges.slice(0, 5).map((e) => ({ source: e.source, target: e.target })),
-      );
-
       graphRef.current.setData({ nodes, edges });
       graphRef.current.render();
       graphRef.current.fitView();
@@ -538,15 +634,9 @@ export function KnowledgeGraphTab() {
     }
   }, [searchKeyword, nodeDegrees]);
 
-  // 缩放控制 - G6 5.x 简化版
-  const handleZoomIn = () => {
-    // 暂不支持
-    console.log("Zoom in not supported in G6 5.x");
-  };
-  const handleZoomOut = () => {
-    // 暂不支持
-    console.log("Zoom out not supported in G6 5.x");
-  };
+  // 缩放控制 - G6 5.x 简化版（暂不支持）
+  const handleZoomIn = () => {};
+  const handleZoomOut = () => {};
   const handleFitView = () => graphRef.current?.fitView();
 
   // 初始加载
