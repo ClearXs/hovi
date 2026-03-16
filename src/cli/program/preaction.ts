@@ -33,8 +33,10 @@ const PLUGIN_REQUIRED_COMMANDS = new Set([
   "agents",
   "configure",
   "onboard",
+  "status",
+  "health",
 ]);
-const CONFIG_GUARD_BYPASS_COMMANDS = new Set(["doctor", "completion", "secrets"]);
+const CONFIG_GUARD_BYPASS_COMMANDS = new Set(["backup", "doctor", "completion", "secrets"]);
 const JSON_PARSE_ONLY_COMMANDS = new Set(["config set"]);
 let configGuardModulePromise: Promise<typeof import("./config-guard.js")> | undefined;
 let pluginRegistryModulePromise: Promise<typeof import("../plugin-registry.js")> | undefined;
@@ -63,6 +65,10 @@ function loadConfigGuardModule() {
 function loadPluginRegistryModule() {
   pluginRegistryModulePromise ??= import("../plugin-registry.js");
   return pluginRegistryModulePromise;
+}
+
+function resolvePluginRegistryScope(commandPath: string[]): "channels" | "all" {
+  return commandPath[0] === "status" || commandPath[0] === "health" ? "channels" : "all";
 }
 
 function getRootCommand(command: Command): Command {
@@ -134,7 +140,7 @@ export function registerPreActionHooks(program: Command, programVersion: string)
     // Load plugins for commands that need channel access
     if (PLUGIN_REQUIRED_COMMANDS.has(commandPath[0])) {
       const { ensurePluginRegistryLoaded } = await loadPluginRegistryModule();
-      ensurePluginRegistryLoaded();
+      ensurePluginRegistryLoaded({ scope: resolvePluginRegistryScope(commandPath) });
     }
   });
 }

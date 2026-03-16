@@ -31,6 +31,9 @@ export type AnnounceQueueItem = {
   turnId?: string;
   origin?: DeliveryContext;
   originKey?: string;
+  sourceSessionKey?: string;
+  sourceChannel?: string;
+  sourceTool?: string;
 };
 
 export type AnnounceQueueSettings = {
