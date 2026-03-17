@@ -108,7 +108,8 @@ skills-lock.json
 apps/ios/LocalSigning.xcconfig
 
 
-dev-docs/
+dev-docs/*
+!dev-docs/(D) - UI Agent Desktop Packaging - Tauri Gateway Desktop Design.md
 
 # Xcode build directories (xcodebuild output)
 apps/ios/build/
