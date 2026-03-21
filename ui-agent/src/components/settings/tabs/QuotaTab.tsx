@@ -74,7 +74,7 @@ export function QuotaTab({ onClose }: { onClose?: () => void }) {
           });
         }
       } catch (e) {
-        console.error("Failed to fetch usage:", e);
+        // Ignore error
       } finally {
         setLoadingUsage(false);
       }

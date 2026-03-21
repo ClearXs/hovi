@@ -108,7 +108,6 @@ export async function fetchAgentIdentity(
     );
     return identity;
   } catch (error) {
-    console.error("Failed to fetch agent identity:", error);
     return null;
   }
 }
@@ -223,5 +222,5 @@ export async function patchConfig(
  * File URL builder
  */
 export function buildFileUrl(agentId: string, relativePath: string): string {
-  return `/files/${agentId}/${relativePath}`;
+  return `/files/${agentId}/${relativePath.replace(/^\/+/, "")}`;
 }

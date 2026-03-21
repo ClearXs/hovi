@@ -3,7 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { runEmbeddedPiAgent } from "../agents/pi-embedded.js";
 import type { OpenClawConfig } from "../config/config.js";
+import { createSubsystemLogger } from "../logging/subsystem.js";
 import { hashText } from "./internal.js";
+
+const log = createSubsystemLogger("knowledge-graph");
 
 // LightRAG 常量（参考 https://github.com/HKUDS/LightRAG）
 export const TUPLE_DELIMITER = "<|#|>";
@@ -91,8 +94,14 @@ export async function extractTriplesViaLlm(params: {
       disableTools: true,
     });
     const rawText = extractResponseText(result.payloads ?? []);
+    log.info(
+      `knowledge-graph: LLM raw response (${rawText.length} chars): ${rawText.slice(0, 500)}`,
+    );
     // 解析 LightRAG 格式输出
     const parsed = parseTriplesOutput(rawText);
+    log.info(
+      `knowledge-graph: parsed ${parsed.entities.length} entities, ${parsed.relations.length} relations`,
+    );
     // 转换为旧格式以保持兼容性
     const triples = parsed.entities.map((e) => ({
       h: { name: e.name },
@@ -162,37 +171,45 @@ function normalizeRelation(
 }
 
 function buildTripleExtractionPrompt(text: string, language: string = "zh"): string {
-  const entityTypes =
+  const _entityTypes =
     language === "zh"
       ? "人物、生物、组织、地点、事件、概念、方法、内容、数据、产物、自然物体"
       : "Person, Creature, Organization, Location, Event, Concept, Method, Content, Data, Artifact, NaturalObject";
 
+  // 分隔符 - 必须严格使用
+  const D = "<|#|>";
+
   const systemPrompt = `---Role---
 You are a Knowledge Graph Specialist responsible for extracting entities and relationships from the input text.
 
+---CRITICAL: Use "${D}" as delimiter---
+Between each field, you MUST use the exact string: ${D}
+DO NOT use spaces, commas, pipes, or tabs as delimiters. Only use "${D}".
+
+---Output Format---
+Entity line (use ${D} between each field):
+entity${D}entity_name${D}entity_type${D}entity_description
+
+Relation line (use ${D} between each field):
+relation${D}source_entity${D}target_entity${D}relationship_keywords${D}relationship_description
+
 ---Instructions---
-1. **Entity Extraction:**
-   - Identify meaningful entities
-   - Extract: entity_name, entity_type, entity_description
-   - Format: entity${TUPLE_DELIMITER}entity_name${TUPLE_DELIMITER}entity_type${TUPLE_DELIMITER}entity_description
+1. Extract entities from the text. Each entity on its own line.
+2. Extract relationships between entities. Each relation on its own line.
+3. Output ONLY the extraction lines - no introductions or explanations.
+4. Use "${D}" as the delimiter between EVERY field.
+5. End your output with: ${COMPLETION_DELIMITER}
+6. Output in ${language} language.
 
-2. **Relationship Extraction:**
-   - Identify direct relationships between entities
-   - Decompose N-ary relationships into binary pairs
-   - Extract: source_entity, target_entity, relationship_keywords, relationship_description
-   - Format: relation${TUPLE_DELIMITER}source${TUPLE_DELIMITER}target${TUPLE_DELIMITER}keywords${TUPLE_DELIMITER}description
-
-3. Use ${TUPLE_DELIMITER} as delimiter
-
-4. Entity types: ${entityTypes}
-
-5. Output in ${language}
-
-6. Output ${COMPLETION_DELIMITER} when complete
+---Example Output---
+entity${D}OpenAI${D}Organization${D}人工智能研究公司
+entity${D}Sam Altman${D}Person${D}OpenAI CEO
+relation${D}Sam Altman${D}OpenAI${D}担任CEO,领导${D}Sam Altman是OpenAI的CEO
+${COMPLETION_DELIMITER}
 `;
 
   const userPrompt = `---Task---
-Extract entities and relationships from the text below.
+Extract entities and relationships from the text below. Use "${D}" as the delimiter between every field.
 
 ---Data---
 ${text.slice(0, 16000)}
@@ -217,8 +234,10 @@ export function hashTripleKey(triple: KnowledgeGraphTripleInput): string {
 
 /**
  * 解析 LightRAG 格式的输出
- * 格式: entity<|#|>name<|#|>type<|#|>description
- *       relation<|#|>source<|#|>target<|#|>keywords<|#|>description
+ * 支持两种格式:
+ *   1. 标准格式: entity<|#|>name<|#|>type<|#|>description
+ *   2. 空格分隔: entity name type description (LLM 常用此格式)
+ *       relation source target keywords description
  */
 export function parseTriplesOutput(output: string): {
   entities: Array<{ name: string; type: string; description: string }>;
@@ -239,19 +258,30 @@ export function parseTriplesOutput(output: string): {
   }> = [];
 
   for (const line of lines) {
-    const parts = line.split(TUPLE_DELIMITER);
+    // 首先尝试用 TUPLE_DELIMITER (<|#|>) 分隔
+    let parts = line.split(TUPLE_DELIMITER);
+    // 如果用分隔符拆分后 parts 只有 1 个（说明 LLM 没按格式来，用的是空格分隔）
+    if (parts.length === 1) {
+      // 用空格分隔: entity NAME TYPE DESCRIPTION
+      parts = line.split(/\s+/);
+    }
+
     if (parts[0] === "entity" && parts.length >= 4) {
+      // entity NAME TYPE DESCRIPTION
+      // parts[1] = name, parts[2] = type, parts[3+] = description
       entities.push({
         name: parts[1]?.trim() || "",
         type: parts[2]?.trim() || "NaturalObject",
-        description: parts[3]?.trim() || "",
+        description: parts.slice(3).join(" ").trim() || "",
       });
     } else if (parts[0] === "relation" && parts.length >= 5) {
+      // relation SOURCE TARGET KEYWORDS DESCRIPTION
+      // parts[1] = source, parts[2] = target, parts[3] = keywords, parts[4+] = description
       relations.push({
         source: parts[1]?.trim() || "",
         target: parts[2]?.trim() || "",
         keywords: parts[3]?.trim() || "",
-        description: parts[4]?.trim() || "",
+        description: parts.slice(4).join(" ").trim() || "",
       });
     }
   }

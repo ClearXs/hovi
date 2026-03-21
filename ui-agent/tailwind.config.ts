@@ -103,7 +103,7 @@ const config: Config = {
       },
       // 字体家族
       fontFamily: {
-        sans: ["var(--font-inter)", "var(--font-noto-sans-sc)", "var(--font-sans)"],
+        sans: ["var(--font-sans)"],
         mono: "var(--font-mono)",
       },
       // 字号

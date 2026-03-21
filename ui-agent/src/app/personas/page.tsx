@@ -1,8 +1,9 @@
 "use client";
 
 import { Plus, User, MoreVertical, Trash2, Loader2 } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { PersonaDetailView } from "@/components/persona/PersonaDetailView";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -24,9 +25,11 @@ import { fetchAgents, createAgent, deleteAgent } from "@/features/persona/servic
 import type { AgentInfo } from "@/features/persona/types/persona";
 import { useConnectionStore } from "@/stores/connectionStore";
 
-export default function PersonasPage() {
+function PersonasPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const wsClient = useConnectionStore((s) => s.wsClient);
+  const activeAgentId = searchParams.get("id")?.trim() || "";
   const [personas, setPersonas] = useState<AgentInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -56,7 +59,7 @@ export default function PersonasPage() {
       const agents = await fetchAgents(wsClient);
       setPersonas(agents || []);
     } catch (error) {
-      console.error("Failed to load agents:", error);
+      // Ignore error
     } finally {
       setLoading(false);
     }
@@ -71,7 +74,7 @@ export default function PersonasPage() {
 
   // Handle card click - navigate to persona detail
   const handleCardClick = (agentId: string) => {
-    router.push(`/personas/${agentId}`);
+    router.push(`/personas?id=${encodeURIComponent(agentId)}`);
   };
 
   // Handle form field change
@@ -112,7 +115,6 @@ export default function PersonasPage() {
       await loadAgents();
       setDialogOpen(false);
     } catch (error) {
-      console.error("Failed to create agent:", error);
       alert("创建失败");
     } finally {
       setCreating(false);
@@ -128,10 +130,13 @@ export default function PersonasPage() {
       await deleteAgent(wsClient, agentId);
       await loadAgents();
     } catch (error) {
-      console.error("Failed to delete agent:", error);
       alert("删除失败");
     }
   };
+
+  if (activeAgentId) {
+    return <PersonaDetailView agentId={activeAgentId} onBack={() => router.push("/personas")} />;
+  }
 
   return (
     <>
@@ -267,5 +272,19 @@ export default function PersonasPage() {
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+export default function PersonasPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-full items-center justify-center p-2xl">
+          <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+        </div>
+      }
+    >
+      <PersonasPageContent />
+    </Suspense>
   );
 }

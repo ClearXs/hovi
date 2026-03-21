@@ -193,7 +193,6 @@ export function KnowledgeGraphTab() {
       const data = await getKnowledgeGraphStats({ kbId: activeKbId });
       setStats(data);
     } catch (err) {
-      console.error("Failed to load graph stats:", err);
       setError(err instanceof Error ? err.message : "加载失败");
     } finally {
       setLoading(false);
@@ -259,13 +258,11 @@ export function KnowledgeGraphTab() {
         },
       });
     } catch (error) {
-      console.error("Failed to create graph:", error);
       return;
     }
 
     // 确保 graph 成功创建
     if (!graph) {
-      console.error("Failed to create graph");
       return;
     }
 
@@ -275,13 +272,11 @@ export function KnowledgeGraphTab() {
         // G6 5.x: 使用 evt.item, evt.target 或 evt.originalTarget
         const item = evt.item || evt.target || evt.originalTarget;
         if (!item) {
-          console.warn("No item in click event");
           return;
         }
         // 使用 getModel() 获取数据
         const model = typeof item.getModel === "function" ? item.getModel() : item;
         if (!model) {
-          console.warn("No model in click event");
           return;
         }
 
@@ -311,13 +306,13 @@ export function KnowledgeGraphTab() {
             });
             setEntityChunks(details.chunks || []);
           } catch (err) {
-            console.error("Failed to load entity details:", err);
+            // Ignore error
           } finally {
             setLoadingChunks(false);
           }
         }
       } catch (err) {
-        console.error("Error handling node click:", err);
+        // Ignore error
       }
     });
 
@@ -446,7 +441,7 @@ export function KnowledgeGraphTab() {
               }
             }
           } catch (err) {
-            console.error("Failed to load edge related chunks:", err);
+            // Ignore error
           } finally {
             setLoadingChunks(false);
           }
@@ -454,7 +449,7 @@ export function KnowledgeGraphTab() {
           setEntityChunks([]);
         }
       } catch (err) {
-        console.error("Error handling edge click:", err);
+        // Ignore error
       }
     });
 
@@ -589,7 +584,7 @@ export function KnowledgeGraphTab() {
       graphRef.current.render();
       graphRef.current.fitView();
     } catch (err) {
-      console.error("Failed to load graph data:", err);
+      // Ignore error
     } finally {
       setLoading(false);
     }
@@ -708,7 +703,7 @@ export function KnowledgeGraphTab() {
               loadGraphData();
             }
           } catch (err) {
-            console.error("Failed to poll task status:", err);
+            // Ignore error
           }
         }, 2000);
       } else {
@@ -741,7 +736,6 @@ export function KnowledgeGraphTab() {
       URL.revokeObjectURL(url);
     } else if (type === "png") {
       // PNG export not supported in G6 5.x
-      console.warn("PNG export not supported");
     }
   };
 

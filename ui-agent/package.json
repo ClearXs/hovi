@@ -4,11 +4,17 @@
   "private": true,
   "scripts": {
     "build": "next build",
+    "build:desktop": "pnpm clean:tauri-runtime-staging && pnpm -C .. build && pnpm build:web-static && pnpm prepare:gateway-sidecar && tauri build --bundles app",
     "build:tauri": "tauri build",
+    "build:web-static": "OPENCLAW_UI_AGENT_STATIC_EXPORT=1 next build",
+    "clean:tauri-runtime-staging": "bun scripts/clean-tauri-runtime-staging.ts",
     "dev": "next dev --webpack -H 0.0.0.0 --port 3002",
+    "dev:desktop": "pnpm clean:tauri-runtime-staging && pnpm -C .. build && pnpm prepare:gateway-sidecar && tauri dev",
     "dev:tauri": "tauri dev",
     "dev:turbo": "next dev -H 0.0.0.0 --port 3002",
     "lint": "eslint .",
+    "prepare:gateway-sidecar": "bun scripts/prepare-gateway-sidecar.ts",
+    "prepare:nsis-tooling": "bun scripts/prepare-nsis-tooling.ts",
     "start": "next start",
     "tauri": "tauri",
     "type-check": "tsc --noEmit"
@@ -69,6 +75,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.2.0",
     "@tailwindcss/typography": "^0.5.19",
+    "@tauri-apps/cli": "2.7.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",

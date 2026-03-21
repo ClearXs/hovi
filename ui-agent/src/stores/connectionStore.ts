@@ -4,6 +4,8 @@
  */
 
 import { create } from "zustand";
+import { normalizeGatewayClientId } from "../lib/gateway/client-info";
+import { getGatewayWsBaseUrl } from "../lib/runtime/desktop-env";
 import { ClawdbotWebSocketClient } from "../services/clawdbot-websocket";
 import type { ConnectionStatus, DevicePairRequestedPayload } from "../types/clawdbot";
 
@@ -14,6 +16,7 @@ interface ConnectionStore {
   lastError: string | null;
   reconnectAttempts: number;
   lastConnectedAt: number | null;
+  gatewayUrl: string;
   gatewayToken: string;
   pairingRequestId: string | null;
   pairingDeviceId: string | null;
@@ -26,14 +29,30 @@ interface ConnectionStore {
   setError: (error: string | null) => void;
   incrementReconnectAttempts: () => void;
   resetReconnectAttempts: () => void;
+  setGatewayUrl: (url: string) => void;
   setGatewayToken: (token: string) => void;
   clearPairingRequest: () => void;
 }
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:18789";
-const CLIENT_ID = process.env.NEXT_PUBLIC_CLIENT_ID || "webchat-ui";
+const CLIENT_ID = normalizeGatewayClientId(process.env.NEXT_PUBLIC_CLIENT_ID);
 const CLIENT_VERSION = process.env.NEXT_PUBLIC_CLIENT_VERSION || "1.0.0";
+const URL_STORAGE_KEY = "clawdbot.gateway.url";
 const TOKEN_STORAGE_KEY = "clawdbot.gateway.token";
+
+function normalizeGatewayUrl(value: string | null | undefined): string {
+  const trimmed = value?.trim();
+  return trimmed || getGatewayWsBaseUrl();
+}
+
+const getInitialGatewayUrl = (): string => {
+  if (typeof window === "undefined") {
+    return getGatewayWsBaseUrl();
+  }
+
+  return normalizeGatewayUrl(
+    localStorage.getItem(URL_STORAGE_KEY) || process.env.NEXT_PUBLIC_WS_URL,
+  );
+};
 
 const getInitialToken = (): string => {
   if (typeof window === "undefined") {
@@ -49,13 +68,14 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
   lastError: null,
   reconnectAttempts: 0,
   lastConnectedAt: null,
+  gatewayUrl: getInitialGatewayUrl(),
   gatewayToken: getInitialToken(),
   pairingRequestId: null,
   pairingDeviceId: null,
 
   // Connect to WebSocket
   connect: async () => {
-    const { wsClient, status, gatewayToken } = get();
+    const { wsClient, status, gatewayToken, gatewayUrl } = get();
 
     // Already connected
     if (status === "connected" && wsClient?.isConnected()) {
@@ -74,7 +94,7 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       let client = wsClient;
       if (!client) {
         client = new ClawdbotWebSocketClient({
-          url: WS_URL,
+          url: gatewayUrl,
           token: gatewayToken,
           clientId: CLIENT_ID,
           clientVersion: CLIENT_VERSION,
@@ -103,7 +123,6 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           },
 
           onError: (error) => {
-            console.error("[ConnectionStore] Error:", error);
             set({
               status: "error",
               lastError: error.message,
@@ -128,7 +147,6 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       // Connect
       await client.connect();
     } catch (error) {
-      console.error("[ConnectionStore] Failed to connect:", error);
       set({
         status: "error",
         lastError: error instanceof Error ? error.message : "Connection failed",
@@ -186,6 +204,24 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
   // Reset reconnect attempts
   resetReconnectAttempts: () => {
     set({ reconnectAttempts: 0 });
+  },
+
+  setGatewayUrl: (url) => {
+    const normalized = normalizeGatewayUrl(url);
+    if (typeof window !== "undefined") {
+      localStorage.setItem(URL_STORAGE_KEY, normalized);
+    }
+    const { wsClient } = get();
+    if (wsClient) {
+      wsClient.disconnect();
+    }
+    set({
+      gatewayUrl: normalized,
+      wsClient: null,
+      status: "disconnected",
+      lastError: null,
+      reconnectAttempts: 0,
+    });
   },
 
   setGatewayToken: (token) => {

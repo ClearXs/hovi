@@ -1,11 +1,13 @@
 "use client";
 
-import { Settings, Zap, Bot, Palette, Cog, Plug, DollarSign, Keyboard } from "lucide-react";
+import { Settings, Zap, Bot, Palette, Cog, Plug, DollarSign, Keyboard, User } from "lucide-react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { useResponsive } from "@/hooks/useResponsive";
 import { useSettingsStore, type SettingsTab } from "@/stores/settingsStore";
 import { AdvancedTab } from "./tabs/AdvancedTab";
 import { AppearanceTab } from "./tabs/AppearanceTab";
+import { AvatarTab } from "./tabs/AvatarTab";
 import { ConnectorsTab } from "./tabs/ConnectorsTab";
 import { GeneralSettingsTab } from "./tabs/GeneralSettingsTab";
 import { ModelsTab } from "./tabs/ModelsTab";
@@ -22,14 +24,19 @@ const tabs: { value: SettingsTab; label: string; icon: React.ReactNode }[] = [
   { value: "appearance", label: "外观", icon: <Palette className="w-4 h-4" /> },
   { value: "advanced", label: "高级", icon: <Cog className="w-4 h-4" /> },
   { value: "quota", label: "配额", icon: <DollarSign className="w-4 h-4" /> },
+  { value: "avatar", label: "虚拟角色", icon: <User className="w-4 h-4" /> },
 ];
 
 export function SettingsDialog() {
   const { isOpen, activeTab, closeSettings, setActiveTab } = useSettingsStore();
+  const { isMobile } = useResponsive();
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && closeSettings()}>
-      <DialogContent className="max-w-[48rem] h-[80vh] flex flex-col p-0 gap-0">
+      <DialogContent
+        mobileFullScreen={isMobile}
+        className="max-w-[48rem] h-[80vh] flex flex-col p-0 gap-0"
+      >
         <DialogHeader className="px-6 pt-6 pb-0 flex-shrink-0">
           <DialogTitle className="text-lg font-semibold">设置</DialogTitle>
         </DialogHeader>
@@ -39,7 +46,7 @@ export function SettingsDialog() {
           onValueChange={(v) => setActiveTab(v as SettingsTab)}
           className="flex-1 flex flex-col overflow-hidden"
         >
-          <TabsList className="mx-6 mt-4 mb-0 justify-start bg-transparent border-b border-border-light rounded-none p-0 h-auto gap-0">
+          <TabsList className="mx-6 mt-4 mb-0 justify-start bg-transparent border-b border-border-light rounded-none p-0 h-auto gap-0 overflow-x-auto scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent">
             {tabs.map((tab) => (
               <TabsTrigger
                 key={tab.value}
@@ -76,6 +83,9 @@ export function SettingsDialog() {
             </TabsContent>
             <TabsContent value="quota" className="mt-0 h-full">
               <QuotaTab onClose={closeSettings} />
+            </TabsContent>
+            <TabsContent value="avatar" className="mt-0 h-full">
+              <AvatarTab onClose={closeSettings} />
             </TabsContent>
           </div>
         </Tabs>

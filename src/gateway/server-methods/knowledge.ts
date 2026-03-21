@@ -789,6 +789,9 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
 
       const maxResults = Math.max(1, Math.min(limit, baseSettings.retrieval.topK));
 
+      // Debug: log agentId and settings
+      console.log(`[knowledge.search] agentId=${agentId}, kbId=${kbId}`);
+
       // Use MemoryIndexManager for search
       const { MemoryIndexManager } = await import("../../memory/manager.js");
       const memoryManager = await MemoryIndexManager.get({
@@ -800,6 +803,10 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
         respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, "内存索引未配置"));
         return;
       }
+
+      // Debug: log memory sources
+      const memStatus = memoryManager.status();
+      console.log(`[knowledge.search] memory sources=${JSON.stringify(memStatus.sources)}`);
 
       const rawResults = await memoryManager.search(query, {
         maxResults: Math.max(maxResults, baseSettings.retrieval.topK),
@@ -1387,6 +1394,79 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
         undefined,
         errorShape(ErrorCodes.INTERNAL_ERROR, `重建文档失败: ${String(err)}`),
       );
+    }
+  },
+
+  /**
+   * 获取知识库文件内容（返回 base64）
+   */
+  "knowledge.file.get": async ({ params, respond }) => {
+    try {
+      const agentId = resolveAgentId(params, {});
+      const documentId = readStringParam(params, "documentId", { required: true });
+      const kbId = readStringParam(params, "kbId", { required: false });
+
+      const manager = getKnowledgeManager(agentId);
+      const resolved = manager.resolveDocumentPath({ agentId, documentId, kbId });
+
+      const { promises: fsPromises } = await import("node:fs");
+      const buffer = await fsPromises.readFile(resolved.absPath);
+      const content = buffer.toString("base64");
+
+      respond(true, {
+        content,
+        mimetype: resolved.mimetype,
+        filename: resolved.filename,
+      });
+    } catch (err) {
+      log.error(`knowledge.file.get failed: ${String(err)}`);
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INTERNAL_ERROR, `获取文件失败: ${String(err)}`),
+      );
+    }
+  },
+
+  /**
+   * 转换为 Univer 格式
+   */
+  "knowledge.convert.toUniver": async ({ params, respond }) => {
+    try {
+      const agentId = resolveAgentId(params, {});
+      const documentId = readStringParam(params, "documentId", { required: true });
+      const type = readStringParam(params, "type", { required: true });
+      const kbId = readStringParam(params, "kbId", { required: false });
+
+      if (!["docx", "xlsx", "csv"].includes(type)) {
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.INVALID_REQUEST, "type 必须是 'docx', 'xlsx' 或 'csv'"),
+        );
+        return;
+      }
+
+      const manager = getKnowledgeManager(agentId);
+      const resolved = manager.resolveDocumentPath({ agentId, documentId, kbId });
+
+      // Import converter functions
+      const { xlsxToUniver, csvToUniver, docxToUniver } =
+        await import("../knowledge-converters.js");
+
+      let univerData: unknown;
+      if (type === "xlsx") {
+        univerData = await xlsxToUniver(resolved.absPath);
+      } else if (type === "csv") {
+        univerData = await csvToUniver(resolved.absPath);
+      } else {
+        univerData = await docxToUniver(resolved.absPath);
+      }
+
+      respond(true, { data: univerData, documentId });
+    } catch (err) {
+      log.error(`knowledge.convert.toUniver failed: ${String(err)}`);
+      respond(false, undefined, errorShape(ErrorCodes.INTERNAL_ERROR, `转换失败: ${String(err)}`));
     }
   },
 };

@@ -147,7 +147,6 @@ export class AvatarController {
    */
   public async preloadAllMotions(): Promise<void> {
     if (!this.vrm) {
-      console.warn("[AvatarController] Cannot preload motions: VRM not loaded");
       return;
     }
 
@@ -159,7 +158,7 @@ export class AvatarController {
           this.loadedMotions.set("idle", motion);
         }
       } catch (error) {
-        console.warn(`[AvatarController] Failed to preload idle motion:`, error);
+        // Ignore preload error
       }
     }
 
@@ -172,7 +171,7 @@ export class AvatarController {
             this.loadedMotions.set(emoteId, motion);
           }
         } catch (error) {
-          console.warn(`[AvatarController] Failed to preload emote ${emoteId}:`, error);
+          // Ignore preload error
         }
       }
     }
@@ -317,7 +316,6 @@ export class AvatarController {
    */
   public getAvailableExpressions(): AvailableExpression[] {
     if (!this.vrm?.expressionManager) {
-      console.warn("[AvatarController] No expression manager found");
       return [];
     }
 
@@ -351,13 +349,11 @@ export class AvatarController {
    */
   public async playIdleMotion(): Promise<void> {
     if (!this.vrm) {
-      console.warn("[AvatarController] Cannot play idle: no vrm");
       return;
     }
 
-    // 如果没有设置 idle 动作，记录警告但继续播放当前动画
+    // 如果没有设置 idle 动作，继续播放当前动画
     if (!this.idleMotion) {
-      console.warn("[AvatarController] No idle motion configured, will loop current animation");
       // 让当前动画继续循环播放
       if (this.currentAction) {
         this.currentAction.reset();
@@ -377,7 +373,6 @@ export class AvatarController {
   public async playEmote(emoteId: string): Promise<void> {
     const motionFile = this.emoteMotions.get(emoteId);
     if (!motionFile || !this.vrm) {
-      console.warn(`[AvatarController] Emote not found: ${emoteId}`);
       return;
     }
 
@@ -391,7 +386,6 @@ export class AvatarController {
    */
   public async playMotionByFile(motionFile: string, loop: boolean = false): Promise<void> {
     if (!this.vrm || !this.mixer) {
-      console.warn("[AvatarController] Cannot play motion: VRM or mixer not ready");
       return;
     }
 
@@ -412,7 +406,6 @@ export class AvatarController {
     loop: boolean,
   ): Promise<void> {
     if (!this.vrm || !this.mixer) {
-      console.warn("[AvatarController] Cannot play: no vrm or mixer");
       return;
     }
 
@@ -449,7 +442,6 @@ export class AvatarController {
       }
 
       if (!motion) {
-        console.warn("[AvatarController] No motion data loaded");
         return;
       }
 
@@ -505,7 +497,7 @@ export class AvatarController {
             this.currentAction = tempAction;
             return;
           } catch (e) {
-            console.warn("[AvatarController] Humanoid retargeting failed, using fallback:", e);
+            // Ignore retargeting error
           }
         }
 
@@ -544,7 +536,7 @@ export class AvatarController {
         this.currentAction = newAction;
       }
     } catch (error) {
-      console.error("[AvatarController] Failed to load motion:", error);
+      // Ignore load error
     }
   }
 

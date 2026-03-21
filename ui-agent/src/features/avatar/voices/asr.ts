@@ -28,7 +28,6 @@ export class WebSpeechRecognizer {
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
     if (!SpeechRecognitionAPI) {
-      console.warn("Web Speech API not supported");
       return;
     }
 
@@ -60,7 +59,6 @@ export class WebSpeechRecognizer {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.recognition.onerror = (event: any) => {
-      console.error("Speech recognition error:", event.error);
       this.onError?.(event.error);
       this.isListening = false;
     };
@@ -94,7 +92,6 @@ export class WebSpeechRecognizer {
       this.recognition.start();
       this.isListening = true;
     } catch (error) {
-      console.error("Failed to start speech recognition:", error);
       this.isListening = false;
     }
   }

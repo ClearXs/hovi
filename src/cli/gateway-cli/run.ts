@@ -35,7 +35,7 @@ import {
   toOptionString,
 } from "./shared.js";
 
-type GatewayRunOpts = {
+export type GatewayRunOpts = {
   port?: unknown;
   bind?: unknown;
   token?: unknown;
@@ -157,7 +157,7 @@ function resolveGatewayRunOptions(opts: GatewayRunOpts, command?: Command): Gate
   return resolved;
 }
 
-async function runGatewayCommand(opts: GatewayRunOpts) {
+export async function runGatewayCommandForSidecar(opts: GatewayRunOpts) {
   const isDevProfile = process.env.OPENCLAW_PROFILE?.trim().toLowerCase() === "dev";
   const devMode = Boolean(opts.dev) || isDevProfile;
   if (opts.reset && !devMode) {
@@ -503,6 +503,6 @@ export function addGatewayRunCommand(cmd: Command): Command {
     .option("--raw-stream", "Log raw model stream events to jsonl", false)
     .option("--raw-stream-path <path>", "Raw stream jsonl path")
     .action(async (opts, command) => {
-      await runGatewayCommand(resolveGatewayRunOptions(opts, command));
+      await runGatewayCommandForSidecar(resolveGatewayRunOptions(opts, command));
     });
 }

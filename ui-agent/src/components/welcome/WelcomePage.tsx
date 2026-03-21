@@ -162,6 +162,12 @@ const RECOMMENDED_TEMPLATES: TemplateItem[] = [
 
   // 文档
   {
+    title: "投标文件生成器",
+    category: "文档",
+    description: "智能分析招标文件并生成投标文件",
+    detail: "/投标文件生成器\n我需要制作投标文件，请帮我分析招标文件并生成完整的技术标和商务标",
+  },
+  {
     title: "生成投标文档",
     category: "文档",
     description: "创建投标书",

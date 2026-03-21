@@ -478,7 +478,7 @@ export function SettingsPanel({
               setTtsConfig((prev) => ({ ...prev, ...config.tts }));
             }
           } catch (e) {
-            console.error("Failed to parse persona.json as JSON:", e);
+            // Ignore parse error
           }
         }
       }
@@ -495,7 +495,7 @@ export function SettingsPanel({
       }));
       setScenes(mappedScenes);
     } catch (error) {
-      console.error("Failed to load data:", error);
+      // Ignore error
     } finally {
       setLoading(false);
     }
@@ -533,7 +533,7 @@ export function SettingsPanel({
       onSave?.();
       onClose?.();
     } catch (error) {
-      console.error("Failed to save config:", error);
+      // Ignore error
     } finally {
       setSaving(false);
     }
@@ -541,7 +541,6 @@ export function SettingsPanel({
 
   const handleVrmUpload = async (file: File) => {
     if (!wsClient) {
-      console.error("Missing wsClient");
       return;
     }
     setUploadingVrm(true);
@@ -594,7 +593,7 @@ export function SettingsPanel({
       // 触发刷新回调，让页面重新加载 VRM
       onSave?.();
     } catch (error) {
-      console.error("Failed to upload VRM:", error);
+      // Ignore error
     } finally {
       setUploadingVrm(false);
     }
@@ -642,7 +641,7 @@ export function SettingsPanel({
             : prev.currentMotion,
       }));
     } catch (error) {
-      console.error("Failed to upload motion:", error);
+      // Ignore error
     }
   };
 
@@ -764,7 +763,6 @@ export function SettingsPanel({
   const handleSceneDialogConfirm = async () => {
     if (!wsClient) return;
     if (!sceneForm.name.trim()) {
-      console.error("Scene name is required");
       return;
     }
 
@@ -835,13 +833,13 @@ export function SettingsPanel({
           // 重新加载场景列表以确保显示最新数据
           await loadData();
         } else {
-          console.error("Failed to create scene:", result);
+          // Handle creation failure
         }
       }
 
       setIsSceneDialogOpen(false);
     } catch (error) {
-      console.error("Failed to save scene:", error);
+      // Ignore error
     }
   };
 
@@ -851,7 +849,7 @@ export function SettingsPanel({
       await deleteScene(wsClient, agentId, sceneId);
       setScenes(scenes.filter((s) => s.id !== sceneId));
     } catch (error) {
-      console.error("Failed to delete scene:", error);
+      // Ignore error
     }
   };
 
@@ -882,7 +880,7 @@ export function SettingsPanel({
         sceneId,
       });
     } catch (error) {
-      console.error("Failed to activate scene:", error);
+      // Ignore error
     }
   };
 
@@ -941,7 +939,7 @@ export function SettingsPanel({
   return (
     <div className="w-full bg-background rounded-lg shadow-lg overflow-hidden flex flex-col h-full">
       {/* Content - 使用原生滚动 */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 pointer-events-auto">
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 pointer-events-auto scrollbar-thin">
         {loading ? (
           <div className="flex items-center justify-center py-8">
             <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900" />
@@ -1039,9 +1037,10 @@ export function SettingsPanel({
                     return (
                       <div
                         key={motion.file}
-                        className={`flex items-center justify-between p-1.5 border border-dashed rounded-md text-xs cursor-pointer ${
-                          isActive ? "border-primary bg-primary/10" : "hover:bg-muted/50"
-                        }`}
+                        className={cn(
+                          "flex items-center justify-between p-1.5 border border-dashed rounded-md text-xs cursor-pointer transition-all duration-200",
+                          isActive ? "border-primary bg-primary/10" : "hover:bg-muted/50",
+                        )}
                         onClick={() => {
                           // 设置当前激活的 motion（用于高亮）
                           setActiveMotionFile(motion.file);
@@ -1177,7 +1176,7 @@ export function SettingsPanel({
                     <div
                       key={scene.id}
                       className={cn(
-                        "flex items-center justify-between p-2 border border-dashed rounded-md cursor-pointer text-sm",
+                        "flex items-center justify-between p-2 border border-dashed rounded-md cursor-pointer text-sm transition-all duration-200",
                         scene.id === currentSceneId
                           ? "border-primary bg-primary/5"
                           : "hover:bg-muted/50",

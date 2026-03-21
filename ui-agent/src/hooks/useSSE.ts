@@ -30,13 +30,11 @@ export const useSSE = (
           onMessage(data);
           reconnectAttemptsRef.current = 0; // Reset on successful message
         } catch (error) {
-          console.error("Failed to parse SSE message:", error);
+          // Ignore parse errors
         }
       };
 
       eventSourceRef.current.onerror = (error) => {
-        console.error("SSE error:", error);
-
         if (onError) {
           onError(error);
         }
@@ -47,8 +45,6 @@ export const useSSE = (
           reconnectTimeoutRef.current = setTimeout(() => {
             connect();
           }, reconnectDelay * reconnectAttemptsRef.current);
-        } else {
-          console.error("Max reconnection attempts reached");
         }
       };
 

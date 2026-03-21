@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useMemo } from "react";
+import {
+  getConnectorOAuthCallbackUrlFromLocation,
+  getConnectorOAuthOpenerOriginFromLocation,
+} from "@/lib/runtime/desktop-env";
 
 const MESSAGE_TYPE = "openclaw.connector.oauth";
 
@@ -14,17 +18,32 @@ export default function ConnectorOAuthCallbackPage() {
     const code = (url.searchParams.get("code") ?? "").trim();
     const state = (url.searchParams.get("state") ?? "").trim();
     const error = (url.searchParams.get("error") ?? "").trim();
+    const callbackUrl = getConnectorOAuthCallbackUrlFromLocation({
+      currentUrl: url.toString(),
+    });
+    const openerOrigin = getConnectorOAuthOpenerOriginFromLocation({
+      currentUrl: url.toString(),
+    });
     return {
       id,
       code,
       state,
       error,
-      callbackUrl: `${window.location.origin}/oauth/connectors/callback?id=${encodeURIComponent(id)}`,
+      callbackUrl,
+      openerOrigin,
     };
   }, []);
 
   useEffect(() => {
-    if (!payload || !payload.id || payload.error || !payload.code || !payload.state) {
+    if (
+      !payload ||
+      !payload.id ||
+      payload.error ||
+      !payload.code ||
+      !payload.state ||
+      !payload.callbackUrl ||
+      !payload.openerOrigin
+    ) {
       return;
     }
 
@@ -34,7 +53,7 @@ export default function ConnectorOAuthCallbackPage() {
           type: MESSAGE_TYPE,
           payload,
         },
-        window.location.origin,
+        payload.openerOrigin,
       );
       window.setTimeout(() => {
         window.close();
@@ -52,7 +71,7 @@ export default function ConnectorOAuthCallbackPage() {
     if (payload.error) {
       return `授权失败: ${payload.error}`;
     }
-    if (!payload.code || !payload.state) {
+    if (!payload.code || !payload.state || !payload.callbackUrl) {
       return "缺少 code 或 state，无法完成授权";
     }
     if (!window.opener) {

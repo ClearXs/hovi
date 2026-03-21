@@ -32,6 +32,11 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  getConnectorOAuthCallbackUrl,
+  getConnectorOAuthMessageOrigins,
+} from "@/lib/runtime/desktop-env";
+import { getMcpSoDetail, importMcpSo, searchMcpSo as searchMcpSoCatalog } from "@/services/mcpso";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useToastStore } from "@/stores/toastStore";
 
@@ -411,27 +416,8 @@ export function ConnectorsTab() {
       }
       setIsMcpImporting(true);
       try {
-        const resp = await fetch("/api/mcpso/import", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ url }),
-        });
-        const data = (await resp.json()) as {
-          ok?: boolean;
-          error?: string;
-          item?: {
-            name: string;
-            description?: string;
-            config?: Record<string, unknown>;
-          };
-        };
-        if (!resp.ok || !data.ok || !data.item) {
-          throw new Error(data.error || "导入失败");
-        }
-
-        const name = data.item.name.trim() || "Imported MCP";
+        const item = await importMcpSo(url);
+        const name = item.name.trim() || "Imported MCP";
         if (existingCustomMcpNameSet.has(name.toLowerCase())) {
           addToast({ title: "该 MCP 已存在", variant: "error" });
           return;
@@ -441,9 +427,9 @@ export function ConnectorsTab() {
           id,
           type: "custom_mcp",
           name,
-          description: data.item.description ?? "",
+          description: item.description ?? "",
           authMode: "none",
-          config: data.item.config ?? {},
+          config: item.config ?? {},
         });
 
         addToast({ title: "MCP 导入成功", variant: "success" });
@@ -467,22 +453,11 @@ export function ConnectorsTab() {
       const append = options?.append ?? false;
       setMcpSoLoading(true);
       try {
-        const url = new URL("/api/mcpso/search", window.location.origin);
-        if (mcpSoQuery.trim()) {
-          url.searchParams.set("q", mcpSoQuery.trim());
-        }
-        url.searchParams.set("limit", "60");
-        url.searchParams.set("page", String(page));
-        const resp = await fetch(url.toString(), { method: "GET" });
-        const data = (await resp.json()) as {
-          ok?: boolean;
-          error?: string;
-          items?: McpSoItem[];
-          hasMore?: boolean;
-        };
-        if (!resp.ok || !data.ok) {
-          throw new Error(data.error || "搜索失败");
-        }
+        const data = await searchMcpSoCatalog({
+          query: mcpSoQuery.trim(),
+          limit: 60,
+          page,
+        });
         const nextItems = data.items ?? [];
         setMcpSoItems((prev) => {
           if (!append) return nextItems;
@@ -537,18 +512,8 @@ export function ConnectorsTab() {
         serverPageUrl: item.serverPageUrl,
       });
       try {
-        const url = new URL("/api/mcpso/detail", window.location.origin);
-        url.searchParams.set("url", item.serverPageUrl);
-        const resp = await fetch(url.toString(), { method: "GET" });
-        const data = (await resp.json()) as {
-          ok?: boolean;
-          error?: string;
-          item?: McpSoDetailItem;
-        };
-        if (!resp.ok || !data.ok || !data.item) {
-          throw new Error(data.error || "加载详情失败");
-        }
-        setMcpSoDetailItem(data.item);
+        const detailItem = await getMcpSoDetail(item.serverPageUrl);
+        setMcpSoDetailItem(detailItem);
       } catch (error) {
         addToast({
           title: "加载 MCP 详情失败",
@@ -569,7 +534,7 @@ export function ConnectorsTab() {
         return false;
       }
       setOauthPendingId(id);
-      const callbackUrl = `${window.location.origin}/oauth/connectors/callback?id=${encodeURIComponent(id)}`;
+      const callbackUrl = getConnectorOAuthCallbackUrl(id);
       // Pre-open window in click gesture to avoid popup blockers.
       const popup = window.open("", `oauth-${id}`, "width=560,height=780");
       try {
@@ -669,8 +634,10 @@ export function ConnectorsTab() {
   ]);
 
   useEffect(() => {
+    const allowedOrigins = new Set(getConnectorOAuthMessageOrigins());
+
     const handler = (event: MessageEvent<OAuthCallbackMessage>) => {
-      if (event.origin !== window.location.origin) {
+      if (!allowedOrigins.has(event.origin)) {
         return;
       }
       if (!event.data || event.data.type !== OAUTH_MESSAGE_TYPE) {

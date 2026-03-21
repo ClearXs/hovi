@@ -7,6 +7,7 @@ import { CitationBlock, Citation } from "@/components/chat/CitationBlock";
 import type { Message } from "@/components/chat/MessageList";
 import { FileList, FileItemProps } from "@/components/files/FileList";
 import { useStreamingReplay } from "@/contexts/StreamingReplayContext";
+import { useResponsive } from "@/hooks/useResponsive";
 
 interface MessageBubbleProps {
   role: "user" | "assistant";
@@ -75,6 +76,7 @@ export function MessageBubble({
   const isWaiting = status === "waiting";
   const isCancelled = status === "cancelled";
   const { isStreaming, getDisplayedText, currentMessageIndex } = useStreamingReplay();
+  const { isMobile } = useResponsive();
   const [toolsOpen, setToolsOpen] = useState(false);
   const [editContent, setEditContent] = useState("");
   const editInputRef = useRef<HTMLTextAreaElement>(null);
@@ -125,7 +127,7 @@ export function MessageBubble({
   return (
     <div className={`flex w-full mb-lg ${isUser ? "justify-end" : "justify-start"}`}>
       <div
-        style={{ minWidth: "200px" }}
+        style={{ minWidth: isMobile ? "120px" : "200px" }}
         className={`flex gap-sm max-w-[90%] md:max-w-[680px] lg:max-w-[800px] transition-shadow ${
           isUser ? "flex-row-reverse" : "flex-row"
         } ${isHighlighted ? "rounded-xl ring-2 ring-primary/40 shadow-[0_0_0_6px_rgba(99,102,241,0.15)] animate-attention" : ""}`}
@@ -144,7 +146,7 @@ export function MessageBubble({
         </div>
 
         {/* 消息内容 */}
-        <div className="flex flex-col gap-xs min-w-[150px]">
+        <div className={`flex flex-col gap-xs ${isMobile ? "min-w-[100px]" : "min-w-[150px]"}`}>
           <div
             className={`px-lg py-md rounded-lg ${
               isUser
@@ -209,7 +211,6 @@ export function MessageBubble({
               citations={citations}
               onCitationClick={(citation) => {
                 // TODO: 实现点击跳转到文档详情
-                console.log("Citation clicked:", citation);
               }}
             />
           )}

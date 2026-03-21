@@ -216,7 +216,6 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     const wsClient = useConnectionStore.getState().wsClient;
     const connectionStatus = useConnectionStore.getState().status;
     if (!wsClient || !wsClient.isConnected()) {
-      console.warn("[sessionStore] createSession failed: not connected, status:", connectionStatus);
       return null;
     }
     const key = buildSessionKey();
@@ -243,7 +242,6 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
           return { labelOverrides: nextOverrides };
         });
       }
-      console.warn("[sessionStore] createSession failed", error);
       return null;
     }
   },

@@ -65,9 +65,11 @@ export function TopBar({
     connect,
     reconnectAttempts,
     lastConnectedAt,
+    gatewayUrl,
     gatewayToken,
     pairingRequestId,
     pairingDeviceId,
+    setGatewayUrl,
     setGatewayToken,
     clearPairingRequest,
   } = useConnectionStore();
@@ -75,6 +77,7 @@ export function TopBar({
   const { openSettings } = useSettingsStore();
   const [isDetailsOpen, setIsDetailsOpen] = useState(false);
   const [isTokenOpen, setIsTokenOpen] = useState(false);
+  const [gatewayUrlInput, setGatewayUrlInput] = useState(gatewayUrl);
   const [tokenInput, setTokenInput] = useState(gatewayToken);
   const [deviceId, setDeviceId] = useState<string | null>(null);
 
@@ -93,6 +96,10 @@ export function TopBar({
   useEffect(() => {
     setTokenInput(gatewayToken);
   }, [gatewayToken]);
+
+  useEffect(() => {
+    setGatewayUrlInput(gatewayUrl);
+  }, [gatewayUrl]);
 
   useEffect(() => {
     if (status !== "connected") return;
@@ -274,6 +281,20 @@ export function TopBar({
               <span>Gateway Token</span>
               <span className="text-text-primary">{gatewayToken ? "已设置" : "未设置"}</span>
             </div>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span>Gateway 地址</span>
+                <span className="text-text-primary text-xs">{gatewayUrl}</span>
+              </div>
+              <Input
+                placeholder="ws://192.168.110.193:18789"
+                value={gatewayUrlInput}
+                onChange={(event) => setGatewayUrlInput(event.target.value)}
+              />
+              <p className="text-xs text-text-tertiary">
+                地址仅保存在当前浏览器，用于这台设备连接网关。
+              </p>
+            </div>
             {pairingRequestId && (
               <div className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs">
                 <p className="font-medium text-warning">需要配对审批</p>
@@ -323,7 +344,17 @@ export function TopBar({
               <KeyRound className="mr-2 h-4 w-4" />
               填写 Token
             </Button>
-            <Button size="sm" onClick={() => connect()}>
+            <Button
+              size="sm"
+              onClick={() => {
+                const nextGatewayUrl = gatewayUrlInput.trim();
+                const gatewayChanged = nextGatewayUrl && nextGatewayUrl !== gatewayUrl;
+                if (gatewayChanged) {
+                  setGatewayUrl(nextGatewayUrl);
+                }
+                connect();
+              }}
+            >
               <RefreshCcw className="mr-2 h-4 w-4" />
               重新连接
             </Button>

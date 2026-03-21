@@ -112,7 +112,6 @@ export const useSessionDocumentStore = create<SessionDocumentState>((set, get) =
   // Delete document
   deleteDocument: async (_sessionKey: string, _documentId: string) => {
     // TODO: 实现删除功能
-    console.warn("deleteDocument not implemented yet");
   },
 
   // Open preview

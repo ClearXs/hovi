@@ -151,6 +151,7 @@ export type KnowledgeBaseTag = {
 export type KnowledgeBaseWithMeta = KnowledgeBaseEntry & {
   tags: KnowledgeBaseTag[];
   settings: KnowledgeBaseRuntimeSettings;
+  documentCount: number;
 };
 
 export type KnowledgeBaseDeleteResult = {
@@ -1335,6 +1336,7 @@ export class KnowledgeManager {
         now,
       );
     try {
+      log.info(`knowledge: extractGraphForDocument content length: ${params.content.length}`);
       const extractResult = await extractTriplesViaLlm({
         text: params.content,
         settings: params.settings as KnowledgeGraphSettings,
@@ -1343,7 +1345,9 @@ export class KnowledgeManager {
         workspaceDir: this.baseDir,
         agentDir: resolveAgentDir(this.cfg, params.agentId),
       });
-      log.info(`knowledge: extractGraphForDocument got ${extractResult.triples.length} triples`);
+      log.info(
+        `knowledge: extractGraphForDocument got ${extractResult.triples.length} triples, rawText length: ${extractResult.rawText.length}`,
+      );
       const triples = extractResult.triples
         .map((triple) => normalizeTripleOrNull(triple))
         .filter((triple): triple is KnowledgeGraphTripleInput => Boolean(triple));
@@ -1823,10 +1827,15 @@ export class KnowledgeManager {
     if (!base) {
       return null;
     }
+    // 计算该知识库的文档数量
+    const docCountRow = this.db
+      .prepare("SELECT COUNT(*) as count FROM kb_documents WHERE kb_id = ? AND owner_agent_id = ?")
+      .get(kbId, agentId) as { count: number } | undefined;
     return {
       ...base,
       tags: this.getBaseTags(agentId, kbId),
       settings: this.getBaseSettingsById(agentId, kbId),
+      documentCount: docCountRow?.count ?? 0,
     };
   }
 

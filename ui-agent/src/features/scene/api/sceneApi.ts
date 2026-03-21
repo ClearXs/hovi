@@ -39,7 +39,6 @@ export async function fetchScene(
     const scene = await client.sendRequest<Scene>("scenes.get", { agentId, sceneId });
     return scene;
   } catch (error) {
-    console.error("Failed to fetch scene:", error);
     return null;
   }
 }

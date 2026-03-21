@@ -1,5 +1,6 @@
 "use client";
 
+import { Menu, MessageSquare, Plus, Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentManageDialog } from "@/components/agent-manage/AgentManageDialog";
 import { ComputerPanelWrapper } from "@/components/agent/ComputerPanelWrapper";
@@ -10,9 +11,12 @@ import { SessionPreviewPanel } from "@/components/chat/SessionPreviewPanel";
 import { CronJobsDialog } from "@/components/cron/CronJobsDialog";
 import { SettingsPanel } from "@/components/desk-pet/SettingsPanel";
 import { VirtualAssistantPage } from "@/components/desk-pet/VirtualAssistantPage";
+import { DesktopBootstrap } from "@/components/desktop/DesktopBootstrap";
 import { FileItemProps } from "@/components/files/FileList";
 import { KnowledgeBasePage } from "@/components/knowledge/KnowledgeBasePage";
 import MainLayout from "@/components/layout/MainLayout";
+import { MobileSessionDrawer } from "@/components/layout/MobileSessionDrawer";
+import { MyPage } from "@/components/my/MyPage";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -29,6 +33,8 @@ import { StreamingReplayProvider, useStreamingReplay } from "@/contexts/Streamin
 import { fetchAgents } from "@/features/persona/services/personaApi";
 import type { AgentInfo } from "@/features/persona/types/persona";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { useResponsive } from "@/hooks/useResponsive";
+import { isSubagentLifecycleEvent } from "@/lib/agent-stream-events";
 import { isPageIndexSupported } from "@/services/pageindexApi";
 import { useAgentStore } from "@/stores/agentStore";
 import { useAvatarStateStore } from "@/stores/avatarStateStore";
@@ -38,7 +44,6 @@ import { useSessionStore } from "@/stores/sessionStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useShortcutStore } from "@/stores/shortcutStore";
 import { useToastStore } from "@/stores/toastStore";
-import type { SubagentMessageProps } from "@/types";
 
 type ConnectorItem = {
   id: string;
@@ -79,13 +84,20 @@ function HomeContent() {
   const { addToast } = useToastStore();
   const shortcutStore = useShortcutStore();
   const agentStore = useAgentStore();
-  const { openSettings } = useSettingsStore();
+  const { openSettings, config, loadConfig } = useSettingsStore();
+  const { isMobile } = useResponsive();
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
-  const [activeMainView, setActiveMainView] = useState<"chat" | "knowledge" | "persona">("chat");
-  const [assistantVisible, setAssistantVisible] = useState(true);
+  const [activeMainView, setActiveMainView] = useState<"chat" | "knowledge" | "persona" | "my">(
+    "chat",
+  );
+
+  // Get user name from config
+  const userName = config?.ui?.assistant?.name || "张三";
+  const [assistantVisible, setAssistantVisible] = useState(false);
   const [personaSettingsOpen, setPersonaSettingsOpen] = useState(false);
   const [cronJobsOpen, setCronJobsOpen] = useState(false);
   const [agentManageOpen, setAgentManageOpen] = useState(false);
+  const [sessionDrawerOpen, setSessionDrawerOpen] = useState(false);
   const { isStreaming, startStreaming, stopStreaming } = useStreamingReplay();
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [detailSessionKey, setDetailSessionKey] = useState<string | null>(null);
@@ -138,6 +150,26 @@ function HomeContent() {
   // 动态消息状态管理 - 支持多轮对话
   const [conversationMessages, setConversationMessages] = useState<Record<string, Message[]>>({});
 
+  // 从配置初始化虚拟角色可见性
+  useEffect(() => {
+    let initialized = false;
+    const init = async () => {
+      if (initialized) return;
+      await loadConfig();
+      initialized = true;
+    };
+    void init();
+    return () => {
+      initialized = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (config?.ui?.assistant?.enabled === true) {
+      setAssistantVisible(true);
+    }
+  }, [config]);
+
   useEffect(() => {
     if (status === "connected") {
       void fetchSessions();
@@ -160,6 +192,47 @@ function HomeContent() {
       setCurrentConversationId(activeSessionKey);
     }
   }, [activeSessionKey]);
+
+  // Mobile events - listen for mobile tab bar actions
+  useEffect(() => {
+    const handleOpenChat = () => {
+      setCurrentConversationId(null);
+      setActiveMainView("chat");
+    };
+    const handleOpenPersona = () => {
+      setCurrentConversationId(null);
+      setActiveMainView("persona");
+    };
+    const handleOpenSettings = () => openSettings();
+    const handleOpenCronJobs = () => setCronJobsOpen(true);
+    const handleOpenAgentManage = () => setAgentManageOpen(true);
+    const handleOpenKnowledge = () => {
+      setCurrentConversationId(null);
+      setActiveMainView("knowledge");
+    };
+    const handleOpenMy = () => {
+      setCurrentConversationId(null);
+      setActiveMainView("my");
+    };
+
+    window.addEventListener("mobile:open-chat", handleOpenChat);
+    window.addEventListener("mobile:open-persona", handleOpenPersona);
+    window.addEventListener("mobile:open-settings", handleOpenSettings);
+    window.addEventListener("mobile:open-cron-jobs", handleOpenCronJobs);
+    window.addEventListener("mobile:open-agent-manage", handleOpenAgentManage);
+    window.addEventListener("mobile:open-knowledge", handleOpenKnowledge);
+    window.addEventListener("mobile:open-my", handleOpenMy);
+
+    return () => {
+      window.removeEventListener("mobile:open-chat", handleOpenChat);
+      window.removeEventListener("mobile:open-persona", handleOpenPersona);
+      window.removeEventListener("mobile:open-settings", handleOpenSettings);
+      window.removeEventListener("mobile:open-cron-jobs", handleOpenCronJobs);
+      window.removeEventListener("mobile:open-agent-manage", handleOpenAgentManage);
+      window.removeEventListener("mobile:open-knowledge", handleOpenKnowledge);
+      window.removeEventListener("mobile:open-my", handleOpenMy);
+    };
+  }, [openSettings]);
 
   // 注册快捷键
   const shortcuts = useMemo(() => {
@@ -818,8 +891,8 @@ function HomeContent() {
       }
 
       // 处理 subagent lifecycle 事件
-      if (data.stream === "lifecycle" && data.data?.subagent) {
-        const subagentData = data.data.subagent as SubagentMessageProps;
+      if (isSubagentLifecycleEvent(data)) {
+        const subagentData = data.data.subagent;
         const phase = data.data.phase;
 
         if (phase === "start") {
@@ -868,7 +941,6 @@ function HomeContent() {
             emoteId: resultData.details.emoteId || null,
             expression: resultData.details.expression || "neutral",
           };
-          console.log("[Page] Setting avatar state from tool:", avatarState);
           useAvatarStateStore.getState().setAvatarState(avatarState);
         }
       }
@@ -1214,9 +1286,7 @@ function HomeContent() {
       for (const file of attachments) {
         if (isPageIndexSupported(file.name)) {
           // 后台上传，不阻塞消息发送
-          uploadDocument(sessionKey, file).catch((err) => {
-            console.error("Failed to upload to PageIndex:", err);
-          });
+          uploadDocument(sessionKey, file).catch((err) => {});
         }
       }
     }
@@ -1394,7 +1464,6 @@ function HomeContent() {
       // 清除 activeRunId
       setActiveRunId(null);
     } catch (error) {
-      console.error("取消生成失败:", error);
       addToast({
         title: "取消失败",
         description: error instanceof Error ? error.message : "未知错误",
@@ -1538,10 +1607,12 @@ function HomeContent() {
     !currentConversationId ||
     (currentMessages.length === 0 && historyLoadingKey !== currentConversationId);
 
+  // DEBUG
+
   return (
     <>
       <MainLayout
-        userName="张三"
+        userName={userName}
         sessions={getFilteredSessions()}
         isLoading={isSessionsLoading}
         unreadMap={getUnreadMap()}
@@ -1583,14 +1654,15 @@ function HomeContent() {
         onOpenPersonaSettings={() => {
           setCurrentConversationId(null);
           setActiveMainView("persona");
+          setPersonaSettingsOpen(true);
         }}
         onOpenCronJobs={() => setCronJobsOpen(true)}
         onOpenAgentManage={() => setAgentManageOpen(true)}
         onGoHome={() => setActiveMainView("chat")}
         assistantVisible={activeMainView !== "persona" && assistantVisible}
         onToggleAssistantVisible={() => setAssistantVisible(!assistantVisible)}
-        showTopBar={activeMainView !== "persona"}
-        showSidebar={activeMainView !== "persona"}
+        showTopBar={activeMainView !== "persona" && activeMainView !== "my"}
+        showSidebar={activeMainView !== "persona" && activeMainView !== "my"}
         activeView={activeMainView}
         onDeleteSession={(key) => {
           setDialogSessionKey(key);
@@ -1602,7 +1674,18 @@ function HomeContent() {
         onDelete={handleDelete}
         onRename={handleRename}
       >
-        <div className="h-full flex flex-col">
+        <div className="h-full flex flex-col relative">
+          {/* 移动端：会话列表按钮 - 左上角 */}
+          {isMobile && activeMainView === "chat" && (
+            <button
+              onClick={() => setSessionDrawerOpen(true)}
+              className="fixed left-2 top-2 z-50 flex items-center gap-2 px-3 py-2 hover:bg-surface-hover rounded-lg transition-colors"
+            >
+              <Menu className="w-5 h-5 text-text-primary" />
+              <span className="text-sm font-medium text-text-primary">会话</span>
+            </button>
+          )}
+
           {/* 主内容区域 */}
           <div className="flex-1 overflow-hidden flex flex-col">
             {activeMainView === "persona" ? (
@@ -1614,68 +1697,70 @@ function HomeContent() {
               <div className="flex-1 overflow-hidden bg-background-tertiary">
                 <KnowledgeBasePage />
               </div>
+            ) : activeMainView === "my" ? (
+              <div className="flex-1 overflow-hidden">
+                <MyPage userName={userName} onClose={() => setActiveMainView("chat")} />
+              </div>
             ) : !showWelcomePage ? (
               // 对话内容区域
-              <div className="flex-1 flex overflow-hidden">
-                <div className="flex-1 flex flex-col overflow-hidden">
-                  {/* 消息列表 */}
-                  <MessageList
-                    messages={currentMessages}
-                    isLoading={historyLoadingKey === currentConversationId}
-                    autoScrollToBottom={!(historyLoadingKey === currentConversationId)}
-                    emptyState={{
-                      title: currentHistoryError ? "历史记录加载失败" : "暂无消息",
-                      description: currentHistoryError
-                        ? "请检查网关连接后重试"
-                        : "发送第一条消息开始对话",
-                      actionLabel: currentHistoryError ? "重试" : undefined,
-                      onAction:
-                        currentHistoryError && currentConversationId
-                          ? () => {
-                              void fetchHistory(currentConversationId, true);
-                            }
-                          : undefined,
-                    }}
-                    onRetryMessage={handleRetryMessage}
-                    onEditMessage={handleEditMessage}
-                    onCopyMessage={handleCopyToDraft}
-                    onDeleteMessage={handleDeleteFailedMessage}
-                    onCancelMessage={handleCancelMessage}
-                    onStartEdit={handleStartEdit}
-                    onConfirmEdit={handleConfirmEdit}
-                    onCancelEdit={handleCancelEdit}
-                    onCopy={handleCopyContent}
-                    editingMessageId={editingMessageId}
-                    highlightMessageId={highlightMessageId}
+              <div className="flex-1 flex flex-col overflow-hidden">
+                {/* 消息列表 */}
+                <MessageList
+                  messages={currentMessages}
+                  isLoading={historyLoadingKey === currentConversationId}
+                  autoScrollToBottom={!(historyLoadingKey === currentConversationId)}
+                  emptyState={{
+                    title: currentHistoryError ? "历史记录加载失败" : "暂无消息",
+                    description: currentHistoryError
+                      ? "请检查网关连接后重试"
+                      : "发送第一条消息开始对话",
+                    actionLabel: currentHistoryError ? "重试" : undefined,
+                    onAction:
+                      currentHistoryError && currentConversationId
+                        ? () => {
+                            void fetchHistory(currentConversationId, true);
+                          }
+                        : undefined,
+                  }}
+                  onRetryMessage={handleRetryMessage}
+                  onEditMessage={handleEditMessage}
+                  onCopyMessage={handleCopyToDraft}
+                  onDeleteMessage={handleDeleteFailedMessage}
+                  onCancelMessage={handleCancelMessage}
+                  onStartEdit={handleStartEdit}
+                  onConfirmEdit={handleConfirmEdit}
+                  onCancelEdit={handleCancelEdit}
+                  onCopy={handleCopyContent}
+                  editingMessageId={editingMessageId}
+                  highlightMessageId={highlightMessageId}
+                />
+
+                {/* 输入框 - 底部 */}
+                <div className="flex-shrink-0">
+                  {/* 触发按钮横条 - 在有文件时显示 */}
+                  <ComputerPanelWrapper
+                    files={generatedFiles}
+                    isOpen={workspaceOpen}
+                    onToggle={() => setWorkspaceOpen((prev) => !prev)}
+                    compact={true}
                   />
 
-                  {/* 输入框 - 底部 */}
-                  <div className="flex-shrink-0">
-                    {/* 触发按钮横条 - 在有文件时显示 */}
-                    <ComputerPanelWrapper
-                      files={generatedFiles}
-                      isOpen={workspaceOpen}
-                      onToggle={() => setWorkspaceOpen((prev) => !prev)}
-                      compact={true}
-                    />
-
-                    <EnhancedChatInput
-                      onSend={handleSendMessage}
-                      placeholder="输入消息... (支持 @ 提及和 / 命令)"
-                      compact={true}
-                      draftValue={draftMessage}
-                      onDraftChange={setDraftMessage}
-                      draftAttachments={draftAttachments}
-                      onDraftAttachmentsChange={setDraftAttachments}
-                      highlight={highlightDraft}
-                      onWorkspaceClick={() => setWorkspaceOpen((prev) => !prev)}
-                      hasGeneratedFiles={generatedFiles.length > 0}
-                      workspaceOpen={workspaceOpen}
-                      connectors={availableConnectors}
-                      activeConnectorIds={activeConnectorIds}
-                      onToggleConnector={handleToggleConnector}
-                    />
-                  </div>
+                  <EnhancedChatInput
+                    onSend={handleSendMessage}
+                    placeholder="输入消息... (支持 @ 提及和 / 命令)"
+                    compact={true}
+                    draftValue={draftMessage}
+                    onDraftChange={setDraftMessage}
+                    draftAttachments={draftAttachments}
+                    onDraftAttachmentsChange={setDraftAttachments}
+                    highlight={highlightDraft}
+                    onWorkspaceClick={() => setWorkspaceOpen((prev) => !prev)}
+                    hasGeneratedFiles={generatedFiles.length > 0}
+                    workspaceOpen={workspaceOpen}
+                    connectors={availableConnectors}
+                    activeConnectorIds={activeConnectorIds}
+                    onToggleConnector={handleToggleConnector}
+                  />
                 </div>
               </div>
             ) : (
@@ -1891,6 +1976,20 @@ function HomeContent() {
         </Dialog>
       </MainLayout>
 
+      {/* 移动端会话列表抽屉 */}
+      {isMobile && (
+        <MobileSessionDrawer
+          sessions={getFilteredSessions()}
+          currentSessionKey={currentConversationId}
+          unreadMap={getUnreadMap()}
+          onSelectSession={handleSelectConversation}
+          onNewSession={handleNewConversation}
+          onDeleteSession={deleteSession}
+          open={sessionDrawerOpen}
+          onOpenChange={setSessionDrawerOpen}
+        />
+      )}
+
       {/* Session 文档预览面板 */}
       {currentConversationId && <SessionPreviewPanelWrapper sessionKey={currentConversationId} />}
 
@@ -1913,7 +2012,9 @@ function HomeContent() {
 export default function Home() {
   return (
     <StreamingReplayProvider>
-      <HomeContent />
+      <DesktopBootstrap>
+        <HomeContent />
+      </DesktopBootstrap>
     </StreamingReplayProvider>
   );
 }

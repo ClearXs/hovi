@@ -27,7 +27,7 @@ import {
   ContextMenuSeparator,
 } from "@/components/ui/context-menu";
 import { useVoiceInput } from "@/features/avatar/hooks/useVoiceInput";
-import { getAgentFile } from "@/features/persona/services/personaApi";
+import { buildFileUrl, getAgentFile } from "@/features/persona/services/personaApi";
 import type { MotionConfig } from "@/features/persona/types/persona";
 import { useAvatarStateStore, type AvatarStatePayload } from "@/stores/avatarStateStore";
 import { useConnectionStore } from "@/stores/connectionStore";
@@ -134,7 +134,7 @@ export function VirtualAssistantPage({ onClose }: VirtualAssistantPageProps) {
         return;
       }
       // 构建场景 URL: /files/{agentId}/{main_file}，和 motion 一样
-      const url = `/files/${AGENT_ID}/${scene.main_file}`;
+      const url = buildFileUrl(AGENT_ID, scene.main_file);
       setSceneUrl(url);
     },
     [],
@@ -159,7 +159,7 @@ export function VirtualAssistantPage({ onClose }: VirtualAssistantPageProps) {
           try {
             const config = JSON.parse(trimmed);
             if (config.vrm) {
-              const url = `/files/${AGENT_ID}/${config.vrm}`;
+              const url = buildFileUrl(AGENT_ID, config.vrm);
               setVrmUrl(url);
 
               // VRM URL 已设置，加载配置完成，隐藏初始加载动画
@@ -185,7 +185,7 @@ export function VirtualAssistantPage({ onClose }: VirtualAssistantPageProps) {
               }
 
               if (motionUrlValue) {
-                const mUrl = `/files/${AGENT_ID}/${motionUrlValue}`;
+                const mUrl = buildFileUrl(AGENT_ID, motionUrlValue);
                 setMotionUrl(mUrl);
               } else {
                 setMotionUrl(null);

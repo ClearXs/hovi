@@ -64,6 +64,10 @@ export function SubagentCard({
 
   const icon = subagent.type ? typeIcons[subagent.type] : <Bot className="w-4 h-4" />;
   const typeLabel = subagent.type ? typeLabels[subagent.type] : "Agent";
+  const computedDurationMs =
+    subagent.endedAt && subagent.startedAt
+      ? subagent.endedAt.getTime() - subagent.startedAt.getTime()
+      : subagent.duration;
 
   return (
     <div className="border border-border-light rounded-lg bg-background-secondary overflow-hidden">
@@ -88,11 +92,7 @@ export function SubagentCard({
 
       {/* Footer */}
       <div className="flex items-center justify-between px-md py-xs border-t border-border-light">
-        <span className="text-xs text-text-tertiary">
-          {subagent.endedAt && subagent.startedAt
-            ? formatDuration(subagent.endedAt - subagent.startedAt)
-            : formatDuration(subagent.duration)}
-        </span>
+        <span className="text-xs text-text-tertiary">{formatDuration(computedDurationMs)}</span>
         <button
           onClick={() => setIsExpanded(!isExpanded)}
           className="flex items-center gap-xs text-xs text-text-tertiary hover:text-text-secondary"

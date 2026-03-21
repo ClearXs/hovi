@@ -1,4 +1,4 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { getGatewayHttpBaseUrl } from "./runtime/desktop-env";
 
 export interface ApiResponse<T = any> {
   data?: T;
@@ -18,7 +18,7 @@ class ApiError extends Error {
 }
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
-  const url = `${API_BASE_URL}${endpoint}`;
+  const url = `${getGatewayHttpBaseUrl()}${endpoint}`;
   const config: RequestInit = {
     headers: {
       "Content-Type": "application/json",

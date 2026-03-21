@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import { useState, useCallback, useEffect, useRef } from "react";
 import Draggable from "react-draggable";
 import { useVoiceInput } from "@/features/avatar/hooks/useVoiceInput";
-import { getAgentFile } from "@/features/persona/services/personaApi";
+import { buildFileUrl, getAgentFile } from "@/features/persona/services/personaApi";
 import { fetchScenes } from "@/features/scene/api/sceneApi";
 import { useConnectionStore } from "@/stores/connectionStore";
 
@@ -92,7 +92,7 @@ function VirtualAssistant({
 
         // VRM 模型
         if (config.vrm) {
-          setVrmUrl(`/files/main/${config.vrm}`);
+          setVrmUrl(buildFileUrl("main", config.vrm));
         }
 
         // 动作配置
@@ -100,7 +100,7 @@ function VirtualAssistant({
           setMotions(config.motions);
           // 加载 idle 动作
           if (config.motions.idle?.file) {
-            setMotionUrl(`/files/main/${config.motions.idle.file}`);
+            setMotionUrl(buildFileUrl("main", config.motions.idle.file));
           }
         }
 
@@ -111,7 +111,7 @@ function VirtualAssistant({
         // 当前激活的场景
         const activeScene = scenesData?.find((s: Scene) => s.id === config.currentScene);
         if (activeScene && activeScene.main_file) {
-          setSceneUrl(`/files/main/${activeScene.main_file}`);
+          setSceneUrl(buildFileUrl("main", activeScene.main_file));
           setCurrentScene(activeScene);
         }
       }
@@ -149,7 +149,7 @@ function VirtualAssistant({
   const handleSceneSelect = (scene: Scene) => {
     setCurrentScene(scene);
     if (scene.main_file) {
-      setSceneUrl(`/files/main/${scene.main_file}`);
+      setSceneUrl(buildFileUrl("main", scene.main_file));
     } else {
       setSceneUrl(null);
     }
@@ -159,12 +159,12 @@ function VirtualAssistant({
   // 切换动作
   const handleMotionSelect = (motion: { file?: string; id?: string }) => {
     if (motion.file) {
-      setMotionUrl(`/files/main/${motion.file}`);
+      setMotionUrl(buildFileUrl("main", motion.file));
       setCurrentMotion(motion.id || motion.file);
     } else if (motion.id === "idle") {
       // 切换回 idle
       if (motions?.idle?.file) {
-        setMotionUrl(`/files/main/${motions.idle.file}`);
+        setMotionUrl(buildFileUrl("main", motions.idle.file));
       } else {
         setMotionUrl(null);
       }

@@ -1,6 +1,7 @@
 // Custom hook for Agent execution with streaming
 
 import { useState, useCallback, useRef } from "react";
+import { buildGatewayUrl } from "@/lib/runtime/desktop-env";
 import { AgentExecution, AgentTask } from "@/types/agent";
 
 interface UseAgentExecutionOptions {
@@ -27,7 +28,7 @@ export function useAgentExecution(options: UseAgentExecutionOptions = {}) {
 
       try {
         // Create execution first
-        const createResponse = await fetch("/api/v1/agent/execute", {
+        const createResponse = await fetch(buildGatewayUrl("/api/v1/agent/execute"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -42,7 +43,7 @@ export function useAgentExecution(options: UseAgentExecutionOptions = {}) {
         }
 
         // For streaming, we use the streaming endpoint
-        const response = await fetch("/api/v1/agent/execute/stream", {
+        const response = await fetch(buildGatewayUrl("/api/v1/agent/execute/stream"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -167,7 +168,7 @@ export function useAgentExecution(options: UseAgentExecutionOptions = {}) {
                     break;
                 }
               } catch (parseError) {
-                console.error("Failed to parse stream update:", parseError);
+                // Ignore parse errors
               }
             }
           }

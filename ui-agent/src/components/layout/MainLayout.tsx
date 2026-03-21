@@ -3,10 +3,14 @@
 import dynamic from "next/dynamic";
 import { ReactNode, useState, memo } from "react";
 import { Button } from "@/components/ui/button";
+import { useResponsive } from "@/hooks/useResponsive";
+import { cn } from "@/lib/utils";
 import type { GatewaySessionRow } from "@/types/clawdbot";
 import Sidebar from "../sidebar/Sidebar";
 import { ToastStack } from "../ui/toast-stack";
 import { TooltipProvider } from "../ui/tooltip";
+import { HydrationLoader } from "./HydrationLoader";
+import { MobileTabBar } from "./MobileTabBar";
 import { TopBar } from "./TopBar";
 
 // Dynamic import for VirtualAssistant (SSR disabled)
@@ -56,7 +60,7 @@ interface MainLayoutProps {
   onGoHome?: () => void;
   assistantVisible?: boolean;
   onToggleAssistantVisible?: () => void;
-  activeView?: "chat" | "knowledge" | "persona";
+  activeView?: "chat" | "knowledge" | "persona" | "my";
   onOpenChat?: () => void;
   onStartVoiceChat?: () => void;
   onOpenTasks?: () => void;
@@ -109,12 +113,14 @@ const MainLayout = ({
   onOpenTasks = () => {},
 }: MainLayoutProps) => {
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const { isDesktop, isHydrated } = useResponsive();
 
   return (
     <div className="flex h-screen bg-background">
+      <HydrationLoader isHydrated={isHydrated} />
       <ToastStack />
-      {/* Sidebar with integrated branding */}
-      {showSidebar && (
+      {/* Desktop: Sidebar with integrated branding */}
+      {isDesktop && showSidebar && (
         <TooltipProvider>
           <Sidebar
             sessions={sessions}
@@ -155,8 +161,8 @@ const MainLayout = ({
         </TooltipProvider>
       )}
 
-      {/* 虚拟助手 - 全局显示 */}
-      {assistantVisible && (
+      {/* 虚拟助手 - 桌面端显示 */}
+      {isDesktop && assistantVisible && (
         <VirtualAssistant
           onOpenSettings={onOpenPersonaSettings}
           onOpenChat={onOpenChat}
@@ -166,8 +172,8 @@ const MainLayout = ({
         />
       )}
 
-      {/* 虚拟助手隐藏时显示按钮（仅在非 persona 页面显示） */}
-      {!assistantVisible && activeView !== "persona" && (
+      {/* 虚拟助手隐藏时显示按钮（仅桌面端、非 persona 页面显示） */}
+      {isDesktop && !assistantVisible && activeView !== "persona" && (
         <Button
           variant="outline"
           size="icon"
@@ -178,10 +184,17 @@ const MainLayout = ({
         </Button>
       )}
 
+      {/* Mobile/Tablet: Bottom Tab Bar */}
+      {!isDesktop && (
+        <MobileTabBar
+          activeTab={activeView as "chat" | "personas" | "knowledge" | "my" | undefined}
+        />
+      )}
+
       {/* Main content - full height */}
       <main className="flex-1 flex flex-col overflow-hidden bg-background-tertiary">
-        {/* TopBar - context aware */}
-        {showTopBar && (
+        {/* TopBar - context aware (desktop only) */}
+        {isDesktop && showTopBar && (
           <TopBar
             mode={activeView === "chat" && currentSessionKey ? "chat" : "welcome"}
             conversationTitle={activeView === "chat" ? conversationTitle : undefined}
@@ -194,7 +207,9 @@ const MainLayout = ({
         )}
 
         {/* Content area */}
-        <div className="flex-1 min-h-0 overflow-hidden">{children}</div>
+        <div className={cn("flex-1 min-h-0 overflow-hidden", !isDesktop && "pb-14")}>
+          {children}
+        </div>
       </main>
     </div>
   );

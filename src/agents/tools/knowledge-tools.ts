@@ -123,17 +123,146 @@ export function createKnowledgeSearchTool(opts: { agentId: string }): AnyAgentTo
       const query = readStringParam(params, "query", { required: true });
       const kbId = readStringParam(params, "kbId");
       const limit = readNumberParam(params, "limit", { integer: true }) ?? 5;
-      const resolvedKbId = kbId ?? manager.getBase(opts.agentId)?.id;
 
+      // If no kbId specified, get all knowledge bases and search across them
+      let resolvedKbId = kbId;
       if (!resolvedKbId) {
-        throw new Error("No knowledge base specified or found");
+        const allBasesResult = manager.listBases({ agentId: opts.agentId, limit: 100 });
+        const allBases = allBasesResult.kbs;
+        if (allBases.length === 0) {
+          throw new Error("No knowledge base found. Please create a knowledge base first.");
+        }
+        // Cross-KB search: search across all knowledge bases
+        const { MemoryIndexManager } = await import("../../memory/manager.js");
+        const memoryManager = await MemoryIndexManager.get({
+          cfg: loadConfig(),
+          agentId: opts.agentId,
+        });
+
+        const allResults: Array<{
+          documentId: string;
+          kbId: string;
+          kbName: string;
+          filename: string;
+          chunkId: string;
+          snippet: string;
+          score: number;
+          lines: string;
+          sourceType: "vector" | "graph_entity" | "graph_relation";
+        }> = [];
+
+        let totalEntitiesCount = 0;
+        let totalRelationsCount = 0;
+
+        for (const base of allBases) {
+          if (!memoryManager) {
+            continue;
+          }
+          const baseSettings = manager.getBaseSettings({ agentId: opts.agentId, kbId: base.id });
+          const kbName = base.name;
+          const maxResults = Math.max(1, Math.min(limit, baseSettings.retrieval.topK));
+
+          // 1. Vector Search
+          try {
+            const rawResults = await memoryManager.search(query, {
+              maxResults: Math.max(maxResults, baseSettings.retrieval.topK),
+              minScore: 0,
+            });
+
+            const vectorResults = rawResults
+              .filter((result) => result.source === "knowledge")
+              .map((result) => {
+                const documentId = result.path.replace(/^knowledge\//, "");
+                const doc = manager.getDocument({
+                  documentId,
+                  agentId: opts.agentId,
+                });
+                return {
+                  documentId,
+                  kbId: base.id,
+                  kbName,
+                  filename: doc?.filename ?? documentId,
+                  chunkId: result.id,
+                  snippet: result.snippet,
+                  score: result.score,
+                  lines: `${result.startLine}-${result.endLine}`,
+                  sourceType: "vector" as const,
+                };
+              });
+
+            allResults.push(...vectorResults);
+          } catch (err) {
+            console.error(`Cross-KB vector search failed for kb ${base.id}:`, err);
+          }
+
+          // 2. Graph Search (if enabled)
+          if (baseSettings.graph?.enabled) {
+            try {
+              const graphSearchResult = await manager.searchKnowledgeGraph({
+                agentId: opts.agentId,
+                kbId: base.id,
+                query,
+                mode: "hybrid",
+                topK: maxResults,
+              });
+
+              totalEntitiesCount += graphSearchResult.entities.length;
+              totalRelationsCount += graphSearchResult.relations.length;
+
+              // Convert graph entities to results
+              for (const entity of graphSearchResult.entities) {
+                allResults.push({
+                  documentId: entity.documentId || "",
+                  kbId: base.id,
+                  kbName,
+                  filename: "",
+                  chunkId: entity.id,
+                  snippet: entity.description || entity.name,
+                  score: entity.score,
+                  lines: "",
+                  sourceType: "graph_entity" as const,
+                });
+              }
+
+              // Convert graph relations to results
+              for (const relation of graphSearchResult.relations) {
+                allResults.push({
+                  documentId: "",
+                  kbId: base.id,
+                  kbName,
+                  filename: "",
+                  chunkId: relation.id,
+                  snippet:
+                    relation.description || `${relation.sourceName} → ${relation.targetName}`,
+                  score: relation.score || 0,
+                  lines: "",
+                  sourceType: "graph_relation" as const,
+                });
+              }
+            } catch (err) {
+              console.error(`Cross-KB graph search failed for kb ${base.id}:`, err);
+            }
+          }
+        }
+
+        const mergedResults = allResults
+          .filter((r) => r.score > 0)
+          .toSorted((a, b) => b.score - a.score)
+          .slice(0, limit);
+
+        return jsonResult({
+          query,
+          resultsCount: mergedResults.length,
+          results: mergedResults,
+          graph: { entitiesCount: totalEntitiesCount, relationsCount: totalRelationsCount },
+        });
       }
 
       const baseSettings = manager.getBaseSettings({ agentId: opts.agentId, kbId: resolvedKbId });
       const maxResults = Math.max(1, Math.min(limit, baseSettings.retrieval.topK));
 
       // Get knowledge base info for name
-      const kbInfo = manager.getBase({ agentId: opts.agentId, kbId: resolvedKbId });
+      const kbInfo = manager.getBase(opts.agentId, resolvedKbId);
       const kbName = kbInfo?.name || "默认知识库";
 
       // ============================================================
@@ -151,6 +280,7 @@ export function createKnowledgeSearchTool(opts: { agentId: string }): AnyAgentTo
           maxResults: Math.max(maxResults, baseSettings.retrieval.topK),
           minScore: 0,
         });
+
         const rankedResults = rankKnowledgeResults({
           results: rawResults,
           query,

@@ -24,7 +24,6 @@ function getStoredTheme(): ThemeName {
     const stored = localStorage.getItem("theme") as ThemeName;
     return stored || DEFAULT_THEME;
   } catch (error) {
-    console.warn("Failed to read theme from localStorage:", error);
     return DEFAULT_THEME;
   }
 }
@@ -45,7 +44,7 @@ export const useThemeStore = create<ThemeState>((set) => ({
       try {
         localStorage.setItem("theme", theme);
       } catch (error) {
-        console.warn("Failed to save theme to localStorage:", error);
+        // Ignore localStorage errors
       }
     }
   },

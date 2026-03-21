@@ -1,8 +1,8 @@
 // ASR Gateway handlers - integrates with sherpa-onnx and cloud ASR
 
 import { resolveAsrConfig, DEFAULT_ASR_CONFIG } from "../../asr/config.js";
-import { SherpaVad, SherpaAsr } from "../../asr/index.js";
 import type { SherpaVadConfig, SherpaAsrConfig } from "../../asr/index.js";
+import type { SherpaAsr, SherpaVad } from "../../asr/index.js";
 import type { AsrConfig, AsrProvider } from "../../asr/types.js";
 import { getLogger } from "../../logging.js";
 import type { GatewayRequestHandlers } from "./types.js";
@@ -12,15 +12,24 @@ const logger = getLogger();
 // Singleton instances
 let vadInstance: SherpaVad | null = null;
 let asrInstance: SherpaAsr | null = null;
+let sherpaRuntimePromise: Promise<typeof import("../../asr/index.js")> | null = null;
 
 // Current configuration
 let currentConfig: AsrConfig = DEFAULT_ASR_CONFIG;
 
+async function loadSherpaRuntime() {
+  if (!sherpaRuntimePromise) {
+    sherpaRuntimePromise = import("../../asr/index.js");
+  }
+  return await sherpaRuntimePromise;
+}
+
 /**
  * Get or create VAD instance
  */
-function getVadInstance(agentId: string): SherpaVad {
+async function getVadInstance(agentId: string): Promise<SherpaVad> {
   if (!vadInstance) {
+    const { SherpaVad } = await loadSherpaRuntime();
     const vadConfig: SherpaVadConfig = {
       runtimeDir: "",
       modelPath: SherpaVad.getDefaultModelPath(agentId),
@@ -36,8 +45,9 @@ function getVadInstance(agentId: string): SherpaVad {
 /**
  * Get or create ASR instance
  */
-function getAsrInstance(agentId: string): SherpaAsr {
+async function getAsrInstance(agentId: string): Promise<SherpaAsr> {
   if (!asrInstance) {
+    const { SherpaAsr } = await loadSherpaRuntime();
     const asrConfig: SherpaAsrConfig = {
       modelDir: SherpaAsr.getDefaultModelDir(agentId),
       modelType: "whisper",
@@ -70,7 +80,7 @@ async function transcribeWithSherpa(
 
   // Initialize if needed
   if (!asrInstance?.isReady()) {
-    const asr = getAsrInstance(agentId);
+    const asr = await getAsrInstance(agentId);
     try {
       await asr.initialize();
     } catch (error) {
@@ -104,7 +114,7 @@ async function detectWithSherpa(
 
   // Initialize if needed
   if (!vadInstance?.isReady()) {
-    const vad = getVadInstance(agentId);
+    const vad = await getVadInstance(agentId);
     try {
       await vad.initialize();
     } catch (error) {
@@ -417,11 +427,11 @@ export const asrHandlers: GatewayRequestHandlers = {
 
     try {
       // Initialize VAD
-      const vad = getVadInstance(agentId);
+      const vad = await getVadInstance(agentId);
       await vad.initialize();
 
       // Initialize ASR
-      const asr = getAsrInstance(agentId);
+      const asr = await getAsrInstance(agentId);
       await asr.initialize();
 
       return {

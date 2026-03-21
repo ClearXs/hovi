@@ -30,6 +30,8 @@ export function KnowledgeDetail({ activeDocumentId, onBack }: KnowledgeDetailPro
   const [editError, setEditError] = useState<string | null>(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
   const selectDocument = useKnowledgeBaseStore((state) => state.selectDocument);
+  const navigateToSearchResult = useKnowledgeBaseStore((state) => state.navigateToSearchResult);
+  const activeKbId = useKnowledgeBaseStore((state) => state.activeKbId);
   const updateDocumentMetadata = useKnowledgeBaseStore((state) => state.updateDocumentMetadata);
   const rebuildDocument = useKnowledgeBaseStore((state) => state.rebuildDocument);
   const isRebuilding = useKnowledgeBaseStore((state) => state.isRebuilding);
@@ -42,11 +44,22 @@ export function KnowledgeDetail({ activeDocumentId, onBack }: KnowledgeDetailPro
   }, [currentDocument?.id, editFilename]);
 
   const handleOpenDocument = useCallback(
-    (documentId: string) => {
-      void selectDocument(documentId);
+    async (documentId: string) => {
+      // 使用 navigateToSearchResult 确保状态更新完成后切换 tab
+      await navigateToSearchResult({
+        documentId,
+        chunkId: "",
+        kbId: activeKbId ?? null,
+        filename: "",
+        snippet: "",
+        score: 0,
+        lines: "",
+      });
+      // 切换到文档标签页并显示详情
       setTab("documents");
+      setDocumentsMode("detail");
     },
-    [selectDocument],
+    [navigateToSearchResult, activeKbId],
   );
 
   const handleHeaderBack = () => {
@@ -60,7 +73,7 @@ export function KnowledgeDetail({ activeDocumentId, onBack }: KnowledgeDetailPro
   return (
     <div className="flex h-full min-h-0 flex-col gap-md">
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="max-w-[28rem]">
+        <DialogContent className="max-w-[48rem] w-[90vw]">
           <DialogHeader>
             <DialogTitle>编辑文档信息</DialogTitle>
           </DialogHeader>
@@ -198,7 +211,7 @@ export function KnowledgeDetail({ activeDocumentId, onBack }: KnowledgeDetailPro
               {/* Edit button */}
               <button
                 type="button"
-                className="text-text-tertiary transition-colors hover:text-text-primary"
+                className="inline-flex items-center gap-1 text-text-tertiary transition-colors hover:text-text-primary px-2 py-1 rounded hover:bg-primary/5"
                 aria-label="编辑文档信息"
                 title="编辑文档信息"
                 onClick={() => {
@@ -209,6 +222,7 @@ export function KnowledgeDetail({ activeDocumentId, onBack }: KnowledgeDetailPro
                 }}
               >
                 <Pencil className="h-4 w-4" />
+                <span className="text-xs">编辑</span>
               </button>
             </div>
           )}

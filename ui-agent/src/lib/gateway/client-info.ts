@@ -18,6 +18,16 @@ export type GatewayClientId = (typeof GATEWAY_CLIENT_IDS)[keyof typeof GATEWAY_C
 export const GATEWAY_CLIENT_NAMES = GATEWAY_CLIENT_IDS;
 export type GatewayClientName = GatewayClientId;
 
+const LEGACY_HOVI_CONTROL_UI_IDS = new Set([GATEWAY_CLIENT_IDS.WEBCHAT_UI, "ui-agent-web"]);
+
+export function normalizeGatewayClientId(value?: string | null): GatewayClientId {
+  const trimmed = value?.trim();
+  if (!trimmed || LEGACY_HOVI_CONTROL_UI_IDS.has(trimmed)) {
+    return GATEWAY_CLIENT_IDS.CONTROL_UI;
+  }
+  return trimmed as GatewayClientId;
+}
+
 export const GATEWAY_CLIENT_MODES = {
   WEBCHAT: "webchat",
   CLI: "cli",

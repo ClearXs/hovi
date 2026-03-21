@@ -6,7 +6,6 @@ import { ErrorCodes, errorShape } from "./protocol/index.js";
 import { isRoleAuthorizedForMethod, parseGatewayRole } from "./role-policy.js";
 import { agentHandlers } from "./server-methods/agent.js";
 import { agentsHandlers } from "./server-methods/agents.js";
-import { asrHandlers } from "./server-methods/asr.js";
 import { browserHandlers } from "./server-methods/browser.js";
 import { channelsHandlers } from "./server-methods/channels.js";
 import { chatHandlers } from "./server-methods/chat.js";
@@ -34,7 +33,11 @@ import { systemHandlers } from "./server-methods/system.js";
 import { talkHandlers } from "./server-methods/talk.js";
 import { toolsCatalogHandlers } from "./server-methods/tools-catalog.js";
 import { ttsHandlers } from "./server-methods/tts.js";
-import type { GatewayRequestHandlers, GatewayRequestOptions } from "./server-methods/types.js";
+import type {
+  GatewayRequestHandlerOptions,
+  GatewayRequestHandlers,
+  GatewayRequestOptions,
+} from "./server-methods/types.js";
 import { updateHandlers } from "./server-methods/update.js";
 import { usageHandlers } from "./server-methods/usage.js";
 import { voicewakeHandlers } from "./server-methods/voicewake.js";
@@ -42,6 +45,17 @@ import { webHandlers } from "./server-methods/web.js";
 import { wizardHandlers } from "./server-methods/wizard.js";
 
 const CONTROL_PLANE_WRITE_METHODS = new Set(["config.apply", "config.patch", "update.run"]);
+const ASR_GATEWAY_METHODS = [
+  "asr.config.get",
+  "asr.config.set",
+  "asr.status",
+  "asr.transcribe",
+  "asr.vad.detect",
+  "asr.sherpa.init",
+  "asr.sherpa.info",
+  "asr.provider.switch",
+] as const;
+
 function authorizeGatewayMethod(method: string, client: GatewayRequestOptions["client"]) {
   if (!client?.connect) {
     return null;
@@ -71,6 +85,47 @@ function authorizeGatewayMethod(method: string, client: GatewayRequestOptions["c
   return null;
 }
 
+function createLazyGatewayHandlers(params: {
+  methodNames: readonly string[];
+  loadHandlers: () => Promise<GatewayRequestHandlers>;
+}): GatewayRequestHandlers {
+  let handlersPromise: Promise<GatewayRequestHandlers> | null = null;
+
+  const loadHandlersOnce = async () => {
+    if (!handlersPromise) {
+      handlersPromise = params.loadHandlers();
+    }
+    return await handlersPromise;
+  };
+
+  return Object.fromEntries(
+    params.methodNames.map((methodName) => [
+      methodName,
+      async (opts: GatewayRequestHandlerOptions) => {
+        const handlers = await loadHandlersOnce();
+        const handler = handlers[methodName];
+        if (!handler) {
+          opts.respond(
+            false,
+            undefined,
+            errorShape(ErrorCodes.UNAVAILABLE, `gateway handler unavailable: ${methodName}`),
+          );
+          return;
+        }
+        await handler(opts);
+      },
+    ]),
+  );
+}
+
+const lazyGatewayHandlers: GatewayRequestHandlers = {
+  ...createLazyGatewayHandlers({
+    methodNames: ASR_GATEWAY_METHODS,
+    // Keep optional ASR dependencies out of the default gateway startup path.
+    loadHandlers: async () => (await import("./server-methods/asr.js")).asrHandlers,
+  }),
+};
+
 export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...connectHandlers,
   ...logsHandlers,
@@ -90,7 +145,7 @@ export const coreGatewayHandlers: GatewayRequestHandlers = {
   ...talkHandlers,
   ...toolsCatalogHandlers,
   ...ttsHandlers,
-  ...asrHandlers,
+  ...lazyGatewayHandlers,
   ...skillsHandlers,
   ...sessionsHandlers,
   ...systemHandlers,

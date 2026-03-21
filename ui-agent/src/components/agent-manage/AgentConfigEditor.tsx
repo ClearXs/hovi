@@ -57,7 +57,6 @@ export function AgentConfigEditor({ agentId, agentName, onClose }: AgentConfigEd
         setContent(file.content || "");
         setHasChanges(false);
       } catch (error) {
-        console.error("Failed to load agent file:", error);
         setContent("");
       } finally {
         setLoading(false);
@@ -79,7 +78,6 @@ export function AgentConfigEditor({ agentId, agentName, onClose }: AgentConfigEd
       await setAgentFile(wsClient, agentId, activeFile, content);
       setHasChanges(false);
     } catch (error) {
-      console.error("Failed to save agent file:", error);
       alert("保存失败");
     } finally {
       setSaving(false);

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { fetchAgents, createAgent, deleteAgent } from "@/features/agent-manage/api/agentManageApi";
+import { useResponsive } from "@/hooks/useResponsive";
 import { useConnectionStore } from "@/stores/connectionStore";
 import type { AgentManageInfo, AgentManageCreate } from "@/types/agent-manage";
 import { AgentConfigEditor } from "./AgentConfigEditor";
@@ -19,6 +20,7 @@ interface AgentManageDialogProps {
 
 export function AgentManageDialog({ open, onOpenChange }: AgentManageDialogProps) {
   const wsClient = useConnectionStore((s) => s.wsClient);
+  const { isMobile } = useResponsive();
   const [agents, setAgents] = useState<AgentManageInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -35,7 +37,7 @@ export function AgentManageDialog({ open, onOpenChange }: AgentManageDialogProps
       const list = await fetchAgents(wsClient);
       setAgents(list);
     } catch (error) {
-      console.error("Failed to load agents:", error);
+      // Ignore error
     } finally {
       setLoading(false);
     }
@@ -52,7 +54,6 @@ export function AgentManageDialog({ open, onOpenChange }: AgentManageDialogProps
     if (!wsClient || !open) return;
 
     const handleAgentEvent = (event: unknown) => {
-      console.log("Agent event:", event);
       loadAgents();
     };
 
@@ -71,7 +72,6 @@ export function AgentManageDialog({ open, onOpenChange }: AgentManageDialogProps
       await loadAgents();
       setFormOpen(false);
     } catch (error) {
-      console.error("Failed to create agent:", error);
       alert("创建失败");
     } finally {
       setCreating(false);
@@ -85,7 +85,6 @@ export function AgentManageDialog({ open, onOpenChange }: AgentManageDialogProps
       await deleteAgent(wsClient, agentId);
       await loadAgents();
     } catch (error) {
-      console.error("Failed to delete agent:", error);
       alert("删除失败");
     }
   };
@@ -118,7 +117,10 @@ export function AgentManageDialog({ open, onOpenChange }: AgentManageDialogProps
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-[64rem] h-[80vh] flex flex-col p-0 gap-0">
+        <DialogContent
+          mobileFullScreen={isMobile}
+          className="max-w-[64rem] h-[80vh] flex flex-col p-0 gap-0"
+        >
           <DialogHeader className="px-6 pt-6 pb-0 flex-shrink-0">
             <DialogTitle className="text-lg font-semibold">Agent 管理</DialogTitle>
           </DialogHeader>
@@ -156,7 +158,7 @@ export function AgentManageDialog({ open, onOpenChange }: AgentManageDialogProps
 
       {/* Create Form Dialog */}
       <Dialog open={formOpen} onOpenChange={handleFormClose}>
-        <DialogContent className="max-w-[32rem]">
+        <DialogContent mobileFullScreen={isMobile} className="max-w-[32rem]">
           <DialogHeader>
             <DialogTitle>新建Agent</DialogTitle>
           </DialogHeader>
@@ -166,7 +168,7 @@ export function AgentManageDialog({ open, onOpenChange }: AgentManageDialogProps
 
       {/* Config Editor Dialog */}
       <Dialog open={configOpen} onOpenChange={handleConfigClose}>
-        <DialogContent className="max-w-[64rem] max-h-[85vh]">
+        <DialogContent mobileFullScreen={isMobile} className="max-w-[64rem] max-h-[85vh]">
           <DialogHeader>
             <DialogTitle>配置文件编辑 - {configAgent?.name}</DialogTitle>
           </DialogHeader>

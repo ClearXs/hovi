@@ -10,7 +10,8 @@ import { UniverUIPlugin } from "@univerjs/ui";
 import uiZhCN from "@univerjs/ui/locale/zh-CN";
 import { Loader2, AlertCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { buildHeaders, getGatewayBaseUrl } from "@/services/knowledgeApi";
+import { convertToUniver } from "@/services/knowledgeApi";
+import { useConnectionStore } from "@/stores/connectionStore";
 import "@univerjs/design/lib/index.css";
 import "@univerjs/ui/lib/index.css";
 import "@univerjs/docs-ui/lib/index.css";
@@ -24,6 +25,7 @@ const univerLocales = {
 
 interface UniverDocPreviewProps {
   documentId: string;
+  kbId?: string;
   onError?: (error: Error) => void;
 }
 
@@ -89,53 +91,42 @@ function normalizeDocSnapshot(raw: unknown): unknown {
   };
 }
 
-export function UniverDocPreview({ documentId, onError }: UniverDocPreviewProps) {
+export function UniverDocPreview({ documentId, kbId, onError }: UniverDocPreviewProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [documentData, setDocumentData] = useState<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const wsClient = useConnectionStore((state) => state.wsClient);
 
   useEffect(() => {
-    const controller = new AbortController();
-
     const loadDocument = async () => {
+      if (!wsClient) {
+        setError("WebSocket 未连接");
+        setLoading(false);
+        return;
+      }
+
       try {
         setLoading(true);
         setError(null);
 
-        const url = new URL(`/api/knowledge/convert/to-univer/${documentId}`, getGatewayBaseUrl());
-        url.searchParams.set("type", "docx");
-
-        const response = await fetch(url.toString(), {
-          headers: buildHeaders(),
-          signal: controller.signal,
+        const result = await convertToUniver({
+          documentId,
+          type: "docx",
+          kbId,
         });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(
-            `Failed to load document: ${response.status} ${response.statusText} ${errorText}`,
-          );
-        }
-
-        const result = await response.json();
         setDocumentData(normalizeDocSnapshot(result.data));
       } catch (err) {
-        if (controller.signal.aborted) return;
         const loadError = err instanceof Error ? err : new Error("Failed to load document");
         setError(loadError.message);
         onError?.(loadError);
       } finally {
-        if (!controller.signal.aborted) {
-          setLoading(false);
-        }
+        setLoading(false);
       }
     };
 
     void loadDocument();
-
-    return () => controller.abort();
-  }, [documentId, onError]);
+  }, [documentId, kbId, onError, wsClient]);
 
   useEffect(() => {
     if (!documentData || !containerRef.current) {
@@ -143,6 +134,11 @@ export function UniverDocPreview({ documentId, onError }: UniverDocPreviewProps)
     }
 
     const container = containerRef.current;
+
+    // 设置容器样式确保滚动工作
+    container.style.overflowY = "auto";
+    container.style.height = "100%";
+
     const univer = new Univer({
       theme: defaultTheme,
       locale: LocaleType.ZH_CN,
@@ -151,84 +147,17 @@ export function UniverDocPreview({ documentId, onError }: UniverDocPreviewProps)
 
     univer.registerPlugin(UniverRenderEnginePlugin);
     univer.registerPlugin(UniverUIPlugin, { container });
-    univer.registerPlugin(UniverDocsPlugin, { hasScroll: true });
+    univer.registerPlugin(UniverDocsPlugin, { hasScroll: false }); // 禁用插件内部滚动，使用容器滚动
     univer.registerPlugin(UniverDocsUIPlugin);
 
     const docUnit = univer.createUnit(UniverInstanceType.UNIVER_DOC, documentData);
-    const injector = (univer as unknown as { __getInjector?: () => unknown }).__getInjector?.() as
-      | { get?: (token: unknown) => unknown }
-      | undefined;
 
-    const unitId =
-      typeof (docUnit as { getUnitId?: () => string }).getUnitId === "function"
-        ? (docUnit as { getUnitId: () => string }).getUnitId()
-        : "";
-
-    const instanceService = injector?.get?.(IUniverInstanceService) as
-      | IUniverInstanceService
-      | undefined;
-    const renderManagerService = injector?.get?.(IRenderManagerService) as
-      | IRenderManagerService
-      | undefined;
-    const editorService = injector?.get?.(IEditorService) as IEditorService | undefined;
-
-    const ensureActiveUnit = () => {
-      if (!unitId || !instanceService) return;
-      instanceService.setCurrentUnitForType(unitId);
-      instanceService.focusUnit(unitId);
-      container.focus({ preventScroll: true });
-      const editor = editorService?.getEditor(unitId);
-      if (editor && !editor.params.scrollBar) {
-        editor.update({ scrollBar: true });
-      }
-    };
-    const handleWheel = (event: WheelEvent) => {
-      if (!unitId || !renderManagerService || event.ctrlKey) return;
-      const render = renderManagerService.getRenderById(unitId);
-      if (!render) return;
-      const scene = render.scene;
-      const target = event.target as HTMLElement | null;
-      const x =
-        typeof (event as WheelEvent & { offsetX?: number }).offsetX === "number"
-          ? (event as WheelEvent & { offsetX: number }).offsetX
-          : target?.getBoundingClientRect
-            ? event.clientX - target.getBoundingClientRect().left
-            : 0;
-      const y =
-        typeof (event as WheelEvent & { offsetY?: number }).offsetY === "number"
-          ? (event as WheelEvent & { offsetY: number }).offsetY
-          : target?.getBoundingClientRect
-            ? event.clientY - target.getBoundingClientRect().top
-            : 0;
-      const activeViewport =
-        scene.getActiveViewportByCoord({ x, y } as never) ??
-        scene.getViewport("viewMain") ??
-        scene.getMainViewport();
-      if (!activeViewport) return;
-      activeViewport.onMouseWheel(
-        event as unknown as never,
-        {
-          stopPropagation: () => {},
-          skipNextObservers: false,
-          isStopPropagation: false,
-        } as unknown as never,
-      );
-    };
-
-    ensureActiveUnit();
-    const timers = [0, 80, 200].map((delay) => window.setTimeout(ensureActiveUnit, delay));
-
-    container.addEventListener("pointerdown", ensureActiveUnit, { capture: true });
-    container.addEventListener("mouseenter", ensureActiveUnit);
-    container.addEventListener("focusin", ensureActiveUnit);
-    container.addEventListener("wheel", handleWheel, { capture: true, passive: false });
+    // 确保文档获得焦点
+    setTimeout(() => {
+      container.focus();
+    }, 100);
 
     return () => {
-      timers.forEach((timer) => window.clearTimeout(timer));
-      container.removeEventListener("pointerdown", ensureActiveUnit, true);
-      container.removeEventListener("mouseenter", ensureActiveUnit);
-      container.removeEventListener("focusin", ensureActiveUnit);
-      container.removeEventListener("wheel", handleWheel, true);
       univer.dispose();
     };
   }, [documentData]);
@@ -254,5 +183,5 @@ export function UniverDocPreview({ documentId, onError }: UniverDocPreviewProps)
     );
   }
 
-  return <div ref={containerRef} tabIndex={0} className="h-full w-full min-h-0 overflow-hidden" />;
+  return <div ref={containerRef} tabIndex={0} className="h-full w-full" />;
 }

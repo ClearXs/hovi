@@ -77,7 +77,7 @@ interface SidebarProps {
   onGoHome?: () => void;
   assistantVisible?: boolean;
   onToggleAssistantVisible?: () => void;
-  activeView?: "chat" | "knowledge" | "persona";
+  activeView?: "chat" | "knowledge" | "persona" | "my";
 }
 
 const Sidebar = ({

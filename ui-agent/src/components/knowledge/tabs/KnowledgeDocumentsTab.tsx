@@ -250,7 +250,7 @@ export function KnowledgeDocumentsTab({
         </DialogContent>
       </Dialog>
       <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="max-w-[28rem]">
+        <DialogContent className="max-w-[48rem] w-[90vw]">
           <DialogHeader>
             <DialogTitle>编辑文档信息</DialogTitle>
           </DialogHeader>

@@ -56,7 +56,7 @@ export function SidebarQuotaBar() {
           });
         }
       } catch (e) {
-        console.error("Failed to fetch quota/usage:", e);
+        // Ignore error
       } finally {
         setLoading(false);
       }

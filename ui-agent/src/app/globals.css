@@ -40,8 +40,8 @@ body {
 
 /* ==================== 自定义滚动条样式 / Custom Scrollbar ==================== */
 .scrollbar-thin::-webkit-scrollbar {
-  width: 3px;
-  height: 3px;
+  width: 2px;
+  height: 2px;
 }
 
 .scrollbar-thin::-webkit-scrollbar-track {
@@ -50,7 +50,7 @@ body {
 
 .scrollbar-thin::-webkit-scrollbar-thumb {
   background-color: var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: 2px;
 }
 
 .scrollbar-thin::-webkit-scrollbar-thumb:hover {

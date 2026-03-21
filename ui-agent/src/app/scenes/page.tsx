@@ -1,8 +1,9 @@
 "use client";
 
 import { Plus, Box, MoreVertical, Trash2, Loader2 } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
+import { SceneDetailView } from "@/components/scene/SceneDetailView";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -18,9 +19,11 @@ import { fetchScenes, createScene, deleteScene } from "@/features/scene/api/scen
 import type { Scene } from "@/features/scene/types/scene";
 import { useConnectionStore } from "@/stores/connectionStore";
 
-export default function ScenesPage() {
+function ScenesPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const wsClient = useConnectionStore((s) => s.wsClient);
+  const activeSceneId = searchParams.get("id")?.trim() || "";
   const [scenes, setScenes] = useState<Scene[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -43,7 +46,7 @@ export default function ScenesPage() {
 
   // Navigate to scene detail
   const handleSceneClick = (sceneId: string) => {
-    router.push(`/scenes/${sceneId}`);
+    router.push(`/scenes?id=${encodeURIComponent(sceneId)}`);
   };
 
   // Load scenes list
@@ -63,7 +66,7 @@ export default function ScenesPage() {
       const sceneList = await fetchScenes(wsClient, agentId);
       setScenes(sceneList || []);
     } catch (error) {
-      console.error("Failed to load scenes:", error);
+      // Ignore error
     } finally {
       setLoading(false);
     }
@@ -128,7 +131,6 @@ export default function ScenesPage() {
       await loadScenes();
       setDialogOpen(false);
     } catch (error) {
-      console.error("Failed to create scene:", error);
       alert("创建失败");
     } finally {
       setCreating(false);
@@ -145,10 +147,13 @@ export default function ScenesPage() {
       await deleteScene(wsClient, agentId, sceneId);
       await loadScenes();
     } catch (error) {
-      console.error("Failed to delete scene:", error);
       alert("删除失败");
     }
   };
+
+  if (activeSceneId) {
+    return <SceneDetailView sceneId={activeSceneId} onBack={() => router.push("/scenes")} />;
+  }
 
   return (
     <>
@@ -309,5 +314,19 @@ export default function ScenesPage() {
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+export default function ScenesPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex h-full items-center justify-center p-2xl">
+          <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+        </div>
+      }
+    >
+      <ScenesPageContent />
+    </Suspense>
   );
 }

@@ -229,7 +229,6 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
         kbLimit: nextLimit,
       });
     } catch (err) {
-      console.error("loadKbList failed:", err);
       set({ kbError: err instanceof Error ? err.message : "加载失败" });
     }
   },
@@ -578,8 +577,9 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
     const { selectDocument, loadChunks } = get();
     await selectDocument(result.documentId);
     if (result.chunkId) {
-      set({ targetChunkId: result.chunkId });
+      // 先加载chunks，等加载完成后再设置targetChunkId触发滚动
       await loadChunks(result.documentId, { offset: 0 });
+      set({ targetChunkId: result.chunkId });
     }
   },
 
@@ -656,6 +656,8 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
           graphBuilt: result.graphBuilt,
         },
       });
+      // 重建完成后刷新 chunks
+      await get().loadChunks(documentId, { offset: 0 });
     } finally {
       set({ isRebuilding: false });
     }

@@ -15,7 +15,8 @@ import { UniverUIPlugin } from "@univerjs/ui";
 import uiZhCN from "@univerjs/ui/locale/zh-CN";
 import { Loader2, AlertCircle } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { buildHeaders, getGatewayBaseUrl } from "@/services/knowledgeApi";
+import { convertToUniver } from "@/services/knowledgeApi";
+import { useConnectionStore } from "@/stores/connectionStore";
 import "@univerjs/design/lib/index.css";
 import "@univerjs/ui/lib/index.css";
 import "@univerjs/sheets-ui/lib/index.css";
@@ -31,12 +32,14 @@ const univerLocales = {
 
 interface UniverSheetPreviewProps {
   documentId: string;
+  kbId?: string;
   fileType?: "xlsx" | "csv";
   onError?: (error: Error) => void;
 }
 
 export function UniverSheetPreview({
   documentId,
+  kbId,
   fileType = "xlsx",
   onError,
 }: UniverSheetPreviewProps) {
@@ -44,47 +47,37 @@ export function UniverSheetPreview({
   const [error, setError] = useState<string | null>(null);
   const [workbookData, setWorkbookData] = useState<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const wsClient = useConnectionStore((state) => state.wsClient);
 
   useEffect(() => {
-    const controller = new AbortController();
-
     const loadDocument = async () => {
+      if (!wsClient) {
+        setError("WebSocket 未连接");
+        setLoading(false);
+        return;
+      }
+
       try {
         setLoading(true);
         setError(null);
 
-        const url = new URL(`/api/knowledge/convert/to-univer/${documentId}`, getGatewayBaseUrl());
-        url.searchParams.set("type", fileType);
-
-        const response = await fetch(url.toString(), {
-          headers: buildHeaders(),
-          signal: controller.signal,
+        const result = await convertToUniver({
+          documentId,
+          type: fileType,
+          kbId,
         });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          throw new Error(
-            `Failed to load spreadsheet: ${response.status} ${response.statusText} ${errorText}`,
-          );
-        }
-
-        const result = await response.json();
         setWorkbookData(result.data);
       } catch (err) {
-        if (controller.signal.aborted) return;
         const loadError = err instanceof Error ? err : new Error("Failed to load spreadsheet");
         setError(loadError.message);
         onError?.(loadError);
       } finally {
-        if (!controller.signal.aborted) {
-          setLoading(false);
-        }
+        setLoading(false);
       }
     };
 
     void loadDocument();
-    return () => controller.abort();
-  }, [documentId, fileType, onError]);
+  }, [documentId, kbId, fileType, onError, wsClient]);
 
   useEffect(() => {
     if (!workbookData || !containerRef.current) {

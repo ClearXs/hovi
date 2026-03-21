@@ -14,6 +14,7 @@ import {
   deleteCronJob,
   runCronJob,
 } from "@/features/cron/api/cronApi";
+import { useResponsive } from "@/hooks/useResponsive";
 import { useConnectionStore } from "@/stores/connectionStore";
 import type { CronJob, CronJobCreate, CronJobPatch, CronStatus } from "@/types/cron";
 import { CronJobForm } from "./CronJobForm";
@@ -26,6 +27,7 @@ interface CronJobsDialogProps {
 
 export function CronJobsDialog({ open, onOpenChange }: CronJobsDialogProps) {
   const wsClient = useConnectionStore((s) => s.wsClient);
+  const { isMobile } = useResponsive();
   const [status, setStatus] = useState<CronStatus | null>(null);
   const [jobs, setJobs] = useState<CronJob[]>([]);
   const [loading, setLoading] = useState(true);
@@ -45,7 +47,7 @@ export function CronJobsDialog({ open, onOpenChange }: CronJobsDialogProps) {
       setStatus(statusResult);
       setJobs(jobsResult.jobs);
     } catch (error) {
-      console.error("Failed to load cron data:", error);
+      // Ignore error
     } finally {
       setLoading(false);
     }
@@ -62,7 +64,6 @@ export function CronJobsDialog({ open, onOpenChange }: CronJobsDialogProps) {
     if (!wsClient || !open) return;
 
     const handleCronEvent = (event: unknown) => {
-      console.log("Cron event:", event);
       loadData();
     };
 
@@ -81,7 +82,6 @@ export function CronJobsDialog({ open, onOpenChange }: CronJobsDialogProps) {
       await loadData();
       setFormOpen(false);
     } catch (error) {
-      console.error("Failed to create cron job:", error);
       alert("创建失败");
     } finally {
       setCreating(false);
@@ -96,7 +96,6 @@ export function CronJobsDialog({ open, onOpenChange }: CronJobsDialogProps) {
       setEditingJob(null);
       setFormOpen(false);
     } catch (error) {
-      console.error("Failed to update cron job:", error);
       alert("更新失败");
     }
   };
@@ -108,7 +107,6 @@ export function CronJobsDialog({ open, onOpenChange }: CronJobsDialogProps) {
       await deleteCronJob(wsClient, id);
       await loadData();
     } catch (error) {
-      console.error("Failed to delete cron job:", error);
       alert("删除失败");
     }
   };
@@ -118,7 +116,6 @@ export function CronJobsDialog({ open, onOpenChange }: CronJobsDialogProps) {
     try {
       await runCronJob(wsClient, id, "force");
     } catch (error) {
-      console.error("Failed to run cron job:", error);
       alert("触发失败");
     }
   };
@@ -129,7 +126,7 @@ export function CronJobsDialog({ open, onOpenChange }: CronJobsDialogProps) {
       await updateCronJob(wsClient, job.id, { enabled: !job.enabled });
       await loadData();
     } catch (error) {
-      console.error("Failed to toggle cron job:", error);
+      // Ignore error
     }
   };
 
@@ -151,7 +148,10 @@ export function CronJobsDialog({ open, onOpenChange }: CronJobsDialogProps) {
   return (
     <>
       <Dialog open={open} onOpenChange={onOpenChange}>
-        <DialogContent className="max-w-[48rem] h-[80vh] flex flex-col p-0 gap-0">
+        <DialogContent
+          mobileFullScreen={isMobile}
+          className="max-w-[48rem] h-[80vh] flex flex-col p-0 gap-0"
+        >
           <DialogHeader className="px-6 pt-6 pb-0 flex-shrink-0">
             <DialogTitle className="text-lg font-semibold">定时任务</DialogTitle>
           </DialogHeader>
@@ -241,7 +241,10 @@ export function CronJobsDialog({ open, onOpenChange }: CronJobsDialogProps) {
 
       {/* Create/Edit Form Dialog */}
       <Dialog open={formOpen} onOpenChange={handleFormClose}>
-        <DialogContent className="max-w-[48rem] max-h-[80vh] overflow-y-auto">
+        <DialogContent
+          mobileFullScreen={isMobile}
+          className="max-w-[48rem] max-h-[80vh] overflow-y-auto"
+        >
           <DialogHeader>
             <DialogTitle>{editingJob ? "编辑定时任务" : "新建定时任务"}</DialogTitle>
           </DialogHeader>

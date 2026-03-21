@@ -1,3 +1,4 @@
+import { getGatewayHttpBaseUrl } from "@/lib/runtime/desktop-env";
 import { useConnectionStore } from "@/stores/connectionStore";
 import type { ClawdbotWebSocketClient } from "./clawdbot-websocket";
 
@@ -223,12 +224,14 @@ export type KnowledgeSearchResult = {
 };
 
 export const getGatewayBaseUrl = () => {
-  const GATEWAY_HTTP_URL = process.env.NEXT_PUBLIC_GATEWAY_HTTP_URL || "";
-  if (/^https?:\/\//.test(GATEWAY_HTTP_URL)) return GATEWAY_HTTP_URL;
-  if (typeof window !== "undefined") {
-    return `${window.location.origin}${GATEWAY_HTTP_URL}`;
+  const configuredPath = process.env.NEXT_PUBLIC_GATEWAY_HTTP_URL || "";
+  if (/^https?:\/\//.test(configuredPath)) return configuredPath;
+
+  if (configuredPath) {
+    return new URL(configuredPath, `${getGatewayHttpBaseUrl()}/`).toString().replace(/\/$/, "");
   }
-  return `http://localhost${GATEWAY_HTTP_URL}`;
+
+  return getGatewayHttpBaseUrl();
 };
 
 // ========== API 函数 ==========
@@ -299,6 +302,28 @@ export async function listKnowledge(params: {
 
 export async function getKnowledge(documentId: string, kbId?: string): Promise<KnowledgeDetail> {
   return callKnowledgeWs<KnowledgeDetail>("knowledge.documentGet", { documentId, kbId });
+}
+
+export async function getKnowledgeFile(params: {
+  documentId: string;
+  kbId?: string;
+}): Promise<{ content: string; mimetype: string; filename: string }> {
+  return callKnowledgeWs("knowledge.file.get", {
+    documentId: params.documentId,
+    kbId: params.kbId,
+  });
+}
+
+export async function convertToUniver(params: {
+  documentId: string;
+  type: "docx" | "xlsx" | "csv";
+  kbId?: string;
+}): Promise<{ data: unknown; documentId: string }> {
+  return callKnowledgeWs("knowledge.convert.toUniver", {
+    documentId: params.documentId,
+    type: params.type,
+    kbId: params.kbId,
+  });
 }
 
 export async function deleteKnowledge(params: {

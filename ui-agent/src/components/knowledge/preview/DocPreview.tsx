@@ -6,9 +6,7 @@ interface PdfJsLib {
   getDocument: (src: string) => {
     promise: Promise<{
       numPages: number;
-      getPage: (
-        pageNumber: number,
-      ) => Promise<{
+      getPage: (pageNumber: number) => Promise<{
         getViewport: (options: { scale: number }) => { width: number; height: number };
         render: (options: {
           canvas: HTMLCanvasElement;
@@ -50,8 +48,10 @@ import type { KnowledgeDetail } from "@/services/knowledgeApi";
 import {
   buildHeaders,
   getGatewayBaseUrl,
+  getKnowledgeFile,
   updateKnowledgeDocumentContent,
 } from "@/services/knowledgeApi";
+import { useConnectionStore } from "@/stores/connectionStore";
 import { useToastStore } from "@/stores/toastStore";
 import { UniverDocPreview } from "./UniverDocPreview";
 import { UniverSheetPreview } from "./UniverSheetPreview";
@@ -196,7 +196,7 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
   const isMarkdown =
     mime === "text/markdown" || filename.endsWith(".md") || filename.endsWith(".mdx");
   const isText = mime.startsWith("text/") || isMarkdown;
-  const canZoom = mime.startsWith("image/") || mime === "application/pdf";
+  const canZoom = false; // 暂时禁用缩放功能
   const isMarkdownFile = isText && isMarkdown; // 新增：区分纯文本和 Markdown
   const zoomOptions = useMemo(() => [1, 1.25, 1.5], []);
   const keywords = useMemo(
@@ -334,34 +334,51 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
   useEffect(() => {
     let isActive = true;
     let nextUrl: string | null = null;
+    const wsClient = useConnectionStore.getState().wsClient;
 
     const loadFile = async () => {
       if (!detail) return;
-      setIsLoading(true);
-      const url = new URL("/api/knowledge/file", getGatewayBaseUrl());
-      url.searchParams.set("documentId", detail.id);
-      if (detail.kbId) {
-        url.searchParams.set("kbId", detail.kbId);
-      }
-      const response = await fetch(url.toString(), { headers: buildHeaders() });
-      if (!response.ok) {
+      if (!wsClient) {
         setIsLoading(false);
         return;
       }
-      const blob = await response.blob();
-      if (!isActive) return;
-      nextUrl = URL.createObjectURL(blob);
-      setBlobUrl(nextUrl);
-      if (
-        detail.mimetype.startsWith("text/") ||
-        detail.mimetype === "text/markdown" ||
-        detail.mimetype === "application/json"
-      ) {
-        const text = await blob.text();
+
+      setIsLoading(true);
+
+      try {
+        const fileData = await getKnowledgeFile({
+          documentId: detail.id,
+          kbId: detail.kbId,
+        });
+
         if (!isActive) return;
-        setTextContent(text);
+
+        // 将 base64 转换为 blob
+        const binaryString = atob(fileData.content);
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+          bytes[i] = binaryString.charCodeAt(i);
+        }
+        const blob = new Blob([bytes], { type: fileData.mimetype });
+        nextUrl = URL.createObjectURL(blob);
+        setBlobUrl(nextUrl);
+
+        if (
+          fileData.mimetype.startsWith("text/") ||
+          fileData.mimetype === "text/markdown" ||
+          fileData.mimetype === "application/json"
+        ) {
+          const text = await blob.text();
+          if (!isActive) return;
+          setTextContent(text);
+        }
+      } catch (err) {
+        // Ignore error
+      } finally {
+        if (isActive) {
+          setIsLoading(false);
+        }
       }
-      setIsLoading(false);
     };
 
     setBlobUrl(null);
@@ -434,7 +451,6 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
         // 触发重新渲染
         setPdfRenderKey((k) => k + 1);
       } catch (err) {
-        console.error("PDF load error:", err);
         setPdfError(err instanceof Error ? err.message : "PDF 加载失败");
       } finally {
         if (isActive) {
@@ -622,33 +638,23 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
     return (
       <div>
         {toolbar}
-        <div className="text-sm text-text-tertiary">加载预览中...</div>
+        <div className="flex items-center justify-center h-full text-sm text-text-tertiary">
+          加载预览中...
+        </div>
       </div>
     );
   }
 
   if (isDocx) {
-    return blobUrl ? (
-      <UniverDocPreview documentId={detail.id} />
-    ) : (
-      <div className="text-sm text-text-tertiary">加载 Word 中...</div>
-    );
+    return <UniverDocPreview documentId={detail.id} kbId={detail.kbId} />;
   }
 
   if (isXlsx) {
-    return blobUrl ? (
-      <UniverSheetPreview documentId={detail.id} />
-    ) : (
-      <div className="text-sm text-text-tertiary">加载 Excel 中...</div>
-    );
+    return <UniverSheetPreview documentId={detail.id} kbId={detail.kbId} fileType="xlsx" />;
   }
 
   if (isCsv) {
-    return blobUrl ? (
-      <UniverSheetPreview documentId={detail.id} fileType="csv" />
-    ) : (
-      <div className="text-sm text-text-tertiary">加载 CSV 中...</div>
-    );
+    return <UniverSheetPreview documentId={detail.id} kbId={detail.kbId} fileType="csv" />;
   }
 
   if (isPptx) {
@@ -1232,18 +1238,24 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
                 <TooltipTrigger asChild>
                   <button
                     type="button"
-                    className="flex h-7 w-7 items-center justify-center rounded-md bg-background/80 text-primary transition-colors hover:bg-primary/15 hover:text-primary"
+                    className="flex items-center gap-1.5 h-7 px-2 rounded-md bg-background/80 text-primary transition-colors hover:bg-primary/15 hover:text-primary"
                     onClick={() => setMarkdownEditMode(!markdownEditMode)}
                   >
                     {markdownEditMode ? (
-                      <Eye className="h-3.5 w-3.5" />
+                      <>
+                        <Eye className="h-3.5 w-3.5" />
+                        <span className="text-xs">阅读</span>
+                      </>
                     ) : (
-                      <Edit className="h-3.5 w-3.5" />
+                      <>
+                        <Edit className="h-3.5 w-3.5" />
+                        <span className="text-xs">编辑</span>
+                      </>
                     )}
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="bottom">
-                  {markdownEditMode ? "阅读模式" : "编辑模式"}
+                  {markdownEditMode ? "切换到阅读模式" : "切换到编辑模式"}
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>

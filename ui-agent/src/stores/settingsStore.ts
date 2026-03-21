@@ -9,7 +9,8 @@ export type SettingsTab =
   | "models"
   | "appearance"
   | "advanced"
-  | "quota";
+  | "quota"
+  | "avatar";
 
 /** Partial config shape for the fields we expose in the UI */
 export interface OpenClawConfigPartial {
@@ -18,6 +19,7 @@ export interface OpenClawConfigPartial {
     assistant?: {
       name?: string;
       avatar?: string;
+      enabled?: boolean;
     };
   };
   models?: {

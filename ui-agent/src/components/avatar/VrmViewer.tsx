@@ -33,7 +33,6 @@ function VRMModel({
   explicitWidth?: number;
   explicitHeight?: number;
 }) {
-  const groupRef = useRef<THREE.Group>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { scene, camera, gl } = useThree() as any;
   const vrmRef = useRef<VRM | null>(null);
@@ -78,12 +77,10 @@ function VRMModel({
           animations = gltf.animations;
         }
       } else {
-        console.warn("[VrmViewer] Unsupported motion file format:", fileExtension);
         return;
       }
 
       if (animations.length === 0) {
-        console.warn("[VrmViewer] No motion data loaded");
         return;
       }
 
@@ -110,7 +107,7 @@ function VRMModel({
         action.play();
       }
     } catch (error) {
-      console.error("[VrmViewer] Failed to load motion:", error);
+      // Ignore error
     }
   };
 
@@ -125,9 +122,7 @@ function VRMModel({
 
     // 添加错误处理
     const loaderErrorHandler = (error: Error) => {
-      console.error("[VrmViewer] Failed to load VRM:", error);
-      console.error("[VrmViewer] URL:", url);
-      console.error("[VrmViewer] Error message:", error.message);
+      // Ignore error
     };
 
     loader.load(
@@ -136,7 +131,6 @@ function VRMModel({
       async (gltf: any) => {
         const vrm = gltf.userData.vrm as VRM;
         if (!vrm) {
-          console.error("No VRM found in loaded GLTF");
           return;
         }
 
@@ -156,17 +150,6 @@ function VRMModel({
           (explicitWidth !== undefined && explicitWidth < 300) ||
           (explicitHeight !== undefined && explicitHeight < 300) ||
           (!explicitWidth && !explicitHeight && width < 300 && height < 300);
-        console.log(
-          "[VrmViewer] Size:",
-          width,
-          "x",
-          height,
-          "isFloating:",
-          isFloating,
-          "explicit:",
-          explicitWidth,
-          explicitHeight,
-        );
 
         // For floating mode, move VRM up so feet are visible
         const offset = isFloating ? 0.4 : verticalOffset;
@@ -203,7 +186,7 @@ function VRMModel({
       },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (error: any) => {
-        console.error("[VrmViewer] Error loading VRM:", error);
+        // Ignore error
       },
     );
 
@@ -261,19 +244,6 @@ function VRMModel({
       if (vrmRef.current) {
         const offset = isFloating ? 0.4 : verticalOffset;
         vrmRef.current.scene.position.y = offset;
-        console.log(
-          "[VrmViewer] Resize update - Size:",
-          width,
-          "x",
-          height,
-          "isFloating:",
-          isFloating,
-          "offset:",
-          offset,
-          "explicit:",
-          explicitWidth,
-          explicitHeight,
-        );
       }
     };
 
@@ -328,18 +298,14 @@ function CameraController({
         (explicitHeight !== undefined && explicitHeight < 300) ||
         (!explicitWidth && !explicitHeight && width < 300 && height < 300);
 
-      console.log("[CameraController] Size:", width, "x", height, "isFloating:", isFloating);
-
       if (isFloating) {
         // Floating pet mode - higher camera to see feet, look at higher point
         camera.position.set(0, 1.6, 3);
         camera.lookAt(0, 1.5, 0);
-        console.log("[CameraController] Using floating mode camera");
       } else {
         // Fullscreen mode - standard view
         camera.position.set(0, 1.2, 2);
         camera.lookAt(0, 1, 0);
-        console.log("[CameraController] Using fullscreen mode camera");
       }
     };
 
@@ -407,9 +373,6 @@ export const VrmViewer = forwardRef<VrmViewerRef, VrmViewerProps>(
     const sceneRef = useRef<any>(null);
     const sceneGltfRef = useRef<any>(null);
 
-    // 调试日志 - 显示接收到的参数
-    console.log("[VrmViewer] Received props - width:", width, "height:", height);
-
     // 加载场景 GLTF
     useEffect(() => {
       if (!sceneRef.current) return;
@@ -432,7 +395,7 @@ export const VrmViewer = forwardRef<VrmViewerRef, VrmViewerProps>(
         },
         undefined,
         (error) => {
-          console.error("Failed to load scene:", error);
+          // Ignore error
         },
       );
     }, [sceneUrl]);
@@ -453,14 +416,22 @@ export const VrmViewer = forwardRef<VrmViewerRef, VrmViewerProps>(
     // 加载 motion 配置并预加载所有动作
     useEffect(() => {
       if (avatarControllerRef.current && motionConfig) {
-        // 从 modelUrl 提取基础路径（如 /files/main）
+        // 从 modelUrl 提取基础路径，兼容 http://host/files/main/model.vrm
         let basePath = "";
         if (modelUrl) {
-          const urlParts = modelUrl.split("/");
-          // 找到 files 之后的部分作为基础路径
-          const filesIndex = urlParts.indexOf("files");
-          if (filesIndex !== -1) {
-            basePath = "/" + urlParts.slice(0, filesIndex + 2).join("/");
+          try {
+            const parsedUrl = new URL(modelUrl, window.location.origin);
+            const pathParts = parsedUrl.pathname.split("/").filter(Boolean);
+            const filesIndex = pathParts.indexOf("files");
+            if (filesIndex !== -1 && pathParts.length > filesIndex + 1) {
+              basePath = `${parsedUrl.origin}/${pathParts.slice(0, filesIndex + 2).join("/")}`;
+            }
+          } catch {
+            const urlParts = modelUrl.split("/");
+            const filesIndex = urlParts.indexOf("files");
+            if (filesIndex !== -1) {
+              basePath = "/" + urlParts.slice(0, filesIndex + 2).join("/");
+            }
           }
         }
         if (basePath) {

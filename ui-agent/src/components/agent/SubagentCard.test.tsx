@@ -1,4 +1,3 @@
-import { describe, it, expect } from "@jest/globals";
 import { render, screen } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import { SubagentCard } from "./SubagentCard";
@@ -38,5 +37,18 @@ describe("SubagentCard", () => {
     const failedSubagent = { ...mockSubagent, status: "failed" as const };
     render(<SubagentCard subagent={failedSubagent} />);
     expect(screen.getByText("失败")).toBeDefined();
+  });
+
+  it("should render duration from startedAt and endedAt dates", () => {
+    const datedSubagent = {
+      ...mockSubagent,
+      status: "completed" as const,
+      startedAt: new Date("2026-03-17T10:00:00.000Z"),
+      endedAt: new Date("2026-03-17T10:00:05.000Z"),
+    };
+
+    render(<SubagentCard subagent={datedSubagent} />);
+
+    expect(screen.getByText("5s")).toBeDefined();
   });
 });

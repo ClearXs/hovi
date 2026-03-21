@@ -6,6 +6,7 @@ module.exports = {
   moduleNameMapper: {
     "^@/(.*)$": "<rootDir>/src/$1",
   },
+  modulePathIgnorePatterns: ["<rootDir>/src-tauri/resources/runtime", "<rootDir>/src-tauri/target"],
   testMatch: ["**/*.test.(ts|tsx)"],
   collectCoverageFrom: ["src/**/*.(ts|tsx)", "!src/**/*.d.ts", "!src/app/**"],
   coverageDirectory: "coverage",

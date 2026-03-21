@@ -19,7 +19,7 @@ export const useStore = () => {
             document.documentElement.classList.toggle("dark", state.theme === "dark");
           }
         } catch (error) {
-          console.error("Failed to parse theme from localStorage:", error);
+          // Ignore parse errors
         }
       }
     }

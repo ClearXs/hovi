@@ -3,6 +3,7 @@
  * Handles connection, authentication, and RPC communication with Clawdbot Gateway
  */
 
+import { normalizeGatewayClientId } from "../lib/gateway/client-info";
 import type {
   WSMessage,
   WSRequest,
@@ -57,7 +58,7 @@ export class ClawdbotWebSocketClient {
     this.options = {
       url: options.url,
       token: options.token || "",
-      clientId: options.clientId || "ui-agent-web",
+      clientId: normalizeGatewayClientId(options.clientId),
       clientVersion: options.clientVersion || "1.0.0",
       locale: options.locale || "zh-CN",
       autoReconnect: options.autoReconnect !== false,
@@ -296,10 +297,6 @@ export class ClawdbotWebSocketClient {
 
     this.reconnectAttempts++;
 
-    console.log(
-      `[WebSocket] Reconnecting in ${delay / 1000}s (attempt ${this.reconnectAttempts})...`,
-    );
-
     this.reconnectTimer = setTimeout(() => {
       this.connect().catch(() => {
         // Reconnect failed, will schedule next attempt
@@ -318,9 +315,7 @@ export class ClawdbotWebSocketClient {
         // Send a ping frame (browser WebSocket doesn't have built-in ping, so we use a JSON message)
         try {
           this.ws.send(JSON.stringify({ type: "ping" }));
-        } catch (error) {
-          console.warn("[ClawdbotWebSocket] Heartbeat failed:", error);
-        }
+        } catch (error) {}
       }
     }, 30000);
   }

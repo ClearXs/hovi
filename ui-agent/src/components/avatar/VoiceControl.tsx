@@ -21,14 +21,6 @@ export function VoiceControl({
 }: VoiceControlProps) {
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
 
-  console.log(
-    "[VoiceControl] Render, isRecording:",
-    isRecording,
-    "isSpeaking:",
-    isSpeaking,
-    "hasPermission:",
-    hasPermission,
-  );
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
 
@@ -39,7 +31,6 @@ export function VoiceControl({
       stream.getTracks().forEach((track) => track.stop());
       setHasPermission(true);
     } catch (error) {
-      console.error("Microphone permission denied:", error);
       setHasPermission(false);
     }
   }, []);
@@ -49,14 +40,11 @@ export function VoiceControl({
   }, [requestPermission]);
 
   const handleMouseDown = () => {
-    console.log("[VoiceControl] MouseDown, hasPermission:", hasPermission);
     if (!hasPermission) {
       requestPermission();
       return;
     }
-    console.log("[VoiceControl] Calling onRecordingStart");
     onRecordingStart();
-    console.log("[VoiceControl] Calling startRecording");
     startRecording();
   };
 
@@ -88,7 +76,7 @@ export function VoiceControl({
 
       mediaRecorder.start(100); // 每 100ms 收集一次数据
     } catch (error) {
-      console.error("Error starting recording:", error);
+      // Ignore error
     }
   };
 
@@ -129,7 +117,7 @@ export function VoiceControl({
               ? "bg-gray-400 cursor-not-allowed"
               : "bg-primary hover:bg-primary/90"
         }`}
-        onClick={() => console.log("[VoiceControl] Click!")}
+        onClick={() => {}}
         onMouseDown={handleMouseDown}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}

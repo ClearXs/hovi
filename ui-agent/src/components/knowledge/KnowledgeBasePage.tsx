@@ -155,7 +155,7 @@ export function KnowledgeBasePage() {
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent
-                  className="z-[60] w-[20rem] max-w-[92vw] p-sm shadow-xl"
+                  className="!z-[100] w-[20rem] max-w-[92vw] p-sm shadow-xl"
                   align="start"
                   side="bottom"
                   sideOffset={8}
@@ -286,7 +286,7 @@ export function KnowledgeBasePage() {
         </div>
       )}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-        <DialogContent className="max-w-[56rem]">
+        <DialogContent className="max-w-[64rem] w-[90vw]">
           <DialogHeader>
             <DialogTitle>新建知识库</DialogTitle>
           </DialogHeader>

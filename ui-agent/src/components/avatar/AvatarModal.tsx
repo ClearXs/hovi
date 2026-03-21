@@ -66,7 +66,7 @@ export function AvatarModal({ isOpen, onClose, persona }: AvatarModalProps) {
           }
         }
       } catch (error) {
-        console.error("Failed to load agent config:", error);
+        // Ignore error
       } finally {
         setIsLoadingVrm(false);
       }
@@ -111,7 +111,6 @@ export function AvatarModal({ isOpen, onClose, persona }: AvatarModalProps) {
           setCurrentText("");
         });
       } catch (error) {
-        console.error("Failed to process voice input:", error);
         setIsSpeaking(false);
         setCurrentText("");
       }
@@ -148,7 +147,6 @@ export function AvatarModal({ isOpen, onClose, persona }: AvatarModalProps) {
   const handleRecordingEnd = async (audioBlob: Blob) => {
     setIsRecording(false);
     stopAsr();
-    console.log("Recording ended, blob size:", audioBlob.size);
   };
 
   // Test TTS - 发送文本到 TTS
@@ -174,7 +172,6 @@ export function AvatarModal({ isOpen, onClose, persona }: AvatarModalProps) {
         if (lipSyncInterval) clearInterval(lipSyncInterval);
       });
     } catch (error) {
-      console.error("TTS failed:", error);
       setIsSpeaking(false);
       setCurrentText("");
       setLipSyncValue(0);

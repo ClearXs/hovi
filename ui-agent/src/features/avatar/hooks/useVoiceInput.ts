@@ -113,16 +113,9 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
 
   // 切换语音输入
   const toggle = useCallback(() => {
-    console.log(
-      "[useVoiceInput] toggle called, current status:",
-      status,
-      "asr.isSupported:",
-      asr.isSupported,
-    );
     if (status === "idle") {
       if (!asr.isSupported) {
         setError("浏览器不支持语音识别");
-        console.log("[useVoiceInput] ASR not supported");
         return;
       }
       setError(null);
@@ -158,7 +151,6 @@ export function useVoiceInput(options: UseVoiceInputOptions = {}): UseVoiceInput
       // 使用 Ctrl+X 快捷键，与 Violet 一致
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "x") {
         e.preventDefault();
-        console.log("[useVoiceInput] Ctrl+X pressed, status:", status);
         if (status === "speaking") {
           interrupt();
         } else if (status !== "processing") {

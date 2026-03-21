@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 
+import fs from "node:fs";
 import module from "node:module";
+import { fileURLToPath } from "node:url";
 
 const MIN_NODE_MAJOR = 22;
 const MIN_NODE_MINOR = 12;
@@ -70,20 +72,48 @@ await installProcessWarningFilter();
 const tryImport = async (specifier) => {
   try {
     await import(specifier);
-    return true;
+    return { ok: true };
   } catch (err) {
     // Only swallow missing-module errors; rethrow real runtime errors.
     if (isModuleNotFoundError(err)) {
-      return false;
+      return { ok: false, error: err };
     }
     throw err;
   }
 };
 
-if (await tryImport("./dist/entry.js")) {
-  // OK
-} else if (await tryImport("./dist/entry.mjs")) {
-  // OK
-} else {
-  throw new Error("openclaw: missing dist/entry.(m)js (build output).");
+const localSpecifierExists = (specifier) => {
+  if (!specifier.startsWith("./") && !specifier.startsWith("../")) {
+    return false;
+  }
+
+  return fs.existsSync(fileURLToPath(new URL(specifier, import.meta.url)));
+};
+
+const entrySpecifiers = ["./dist/entry.js", "./dist/entry.mjs", "../entry.js", "../entry.mjs"];
+
+let lastMissingModuleError = null;
+for (const specifier of entrySpecifiers) {
+  const entryExists = localSpecifierExists(specifier);
+  const result = await tryImport(specifier);
+  if (result.ok) {
+    lastMissingModuleError = null;
+    break;
+  }
+
+  if (entryExists && result.error) {
+    throw new Error(
+      `openclaw: failed to load CLI entry ${specifier}.\n` +
+        `Module-not-found while loading existing entry: ${result.error.message}`,
+    );
+  }
+
+  lastMissingModuleError = result.error ?? lastMissingModuleError;
+}
+
+if (lastMissingModuleError) {
+  throw new Error(
+    `openclaw: failed to load CLI entry. Tried ${entrySpecifiers.join(", ")}.\n` +
+      `Last module-not-found error: ${lastMissingModuleError.message}`,
+  );
 }

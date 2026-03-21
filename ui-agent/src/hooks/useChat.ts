@@ -51,7 +51,6 @@ export const useChat = () => {
         }
       } catch (error) {
         if (error instanceof ApiError) {
-          console.error("Chat API error:", error.message);
           // Add error message
           addMessage(currentChatId, {
             role: "assistant",
@@ -59,7 +58,6 @@ export const useChat = () => {
             chatId: currentChatId,
           });
         } else {
-          console.error("Unexpected error:", error);
           addMessage(currentChatId, {
             role: "assistant",
             content: "An unexpected error occurred. Please try again.",

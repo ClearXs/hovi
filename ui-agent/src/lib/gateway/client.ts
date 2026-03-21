@@ -270,7 +270,7 @@ export class GatewayBrowserClient {
       try {
         this.opts.onEvent?.(evt);
       } catch (err) {
-        console.error("[gateway] event handler error:", err);
+        // Event handler error, already logged upstream
       }
       return;
     }

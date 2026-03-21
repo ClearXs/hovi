@@ -1,84 +1,57 @@
-# Bid Agent Frontend
+# UI Agent
 
-A modern Next.js frontend for the Bid Agent platform, built with TypeScript, Tailwind CSS, and Shadcn UI.
+`ui-agent` 现在支持两种运行形态：
 
-## Features
+1. 浏览器开发模式：Next.js 页面直接连本地或远端 gateway。
+2. Tauri 桌面模式：启动桌面应用时自动拉起内置 gateway，待健康检查通过后进入 UI。
 
-- **Next.js 14+** with App Router
-- **TypeScript** for type safety
-- **Tailwind CSS** for styling
-- **Shadcn UI** components
-- **Zustand** for state management
-- **Real-time communication** with SSE support
-- **Dark/Light theme** support
-- **Responsive design**
+## 环境要求
 
-## Getting Started
+- Node.js 22+
+- `pnpm`
+- Rust / Cargo
+- Tauri 2 桌面构建环境
 
-1. Install dependencies:
+## 常用命令
 
-   ```bash
-   npm install
-   ```
+- 安装依赖：`pnpm install`
+- 浏览器开发：`pnpm -C ui-agent dev`
+- 桌面开发：`pnpm -C ui-agent dev:desktop`
+- 类型检查：`pnpm -C ui-agent type-check`
+- 静态导出：`pnpm -C ui-agent build:web-static`
+- 准备 gateway sidecar：`pnpm -C ui-agent prepare:gateway-sidecar`
+- 生成桌面调试包：`pnpm -C ui-agent exec tauri build --debug --bundles app`
+- 生成桌面应用包：`pnpm -C ui-agent build:desktop`
 
-2. Copy environment variables:
+## 桌面打包说明
 
-   ```bash
-   cp .env.local.example .env.local
-   ```
+桌面模式采用 `Tauri + OpenClaw gateway sidecar + 静态 ui-agent`：
 
-3. Start the development server:
+- `pnpm -C ui-agent build:web-static` 会把前端导出到 `ui-agent/out`
+- `pnpm -C ui-agent prepare:gateway-sidecar` 会把以下资源复制到 `ui-agent/src-tauri/resources/runtime`
+  - `node`
+  - `openclaw/dist`
+  - `openclaw.mjs`
+  - `package.json`
+  - `ui-agent/out`
+- Tauri 启动桌面应用后，会先启动本地 gateway
+- gateway 健康检查通过后，主界面才会进入 UI
 
-   ```bash
-   npm run dev
-   ```
+桌面模式默认连接：
 
-4. Open [http://localhost:3000](http://localhost:3000) in your browser.
+- HTTP: `http://127.0.0.1:18789`
+- WebSocket: `ws://127.0.0.1:18789`
 
-## Available Scripts
+打包后的 OAuth 回调页会走本地 loopback gateway 提供的静态页面，避免依赖 `tauri://` 之类不可回调的自定义协议。
 
-- `npm run dev` - Start development server
-- `npm run build` - Build for production
-- `npm run start` - Start production server
-- `npm run lint` - Run ESLint
-- `npm run type-check` - Run TypeScript type checking
+## 当前产物位置
 
-## Project Structure
+调试打包命令成功后，macOS `.app` 产物默认位于：
 
-```
-src/
-├── app/                    # Next.js App Router
-├── components/
-│   ├── ui/                 # Shadcn UI components
-│   ├── chat/               # Chat-related components
-│   ├── sidebar/            # Sidebar components
-│   ├── agent/              # Agent panel components
-│   └── layout/             # Layout components
-├── hooks/                  # Custom React hooks
-├── lib/                    # Utility functions
-├── stores/                 # Zustand stores
-└── types/                  # TypeScript type definitions
-```
+- `ui-agent/src-tauri/target/debug/bundle/macos/Hovi.app`
 
-## Key Components
+## 开发建议
 
-- **Chat System**: Real-time chat with AI assistant
-- **Agent Panel**: Monitor and control AI agent execution
-- **Sidebar**: Navigation between chats and agent status
-- **Theme System**: Dark/light mode toggle
-- **State Management**: Zustand stores for chat, agent, and UI state
-
-## Dependencies
-
-- [Next.js](https://nextjs.org/) - React framework
-- [Tailwind CSS](https://tailwindcss.com/) - CSS framework
-- [Radix UI](https://www.radix-ui.com/) - Headless UI components
-- [Lucide React](https://lucide.dev/) - Icon library
-- [Zustand](https://github.com/pmndrs/zustand) - State management
-
-## Contributing
-
-1. Follow the existing code style and conventions
-2. Add TypeScript types for new components
-3. Test your changes thoroughly
-4. Update documentation as needed
+- 只改前端逻辑时，优先用 `pnpm -C ui-agent dev`
+- 验证桌面启动链路时，用 `pnpm -C ui-agent dev:desktop`
+- 验证最终打包结果时，用 `pnpm -C ui-agent exec tauri build --debug --bundles app`
