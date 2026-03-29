@@ -939,7 +939,7 @@ export function SettingsPanel({
   return (
     <div className="w-full bg-background rounded-lg shadow-lg overflow-hidden flex flex-col h-full">
       {/* Content - 使用原生滚动 */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 pointer-events-auto scrollbar-thin">
+      <div className="flex-1 overflow-y-auto scrollbar-default p-4 space-y-4 pointer-events-auto">
         {loading ? (
           <div className="flex items-center justify-center py-8">
             <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-900" />

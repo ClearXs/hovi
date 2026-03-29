@@ -104,7 +104,7 @@ const ExecutionLog = ({ maxHeight = "200px" }: ExecutionLogProps) => {
         执行日志
       </h4>
       <div
-        className="bg-gray-900 rounded-lg p-3 font-mono text-xs overflow-y-auto scrollbar-thin"
+        className="bg-gray-900 rounded-lg p-3 font-mono text-xs overflow-y-auto scrollbar-default"
         style={{ maxHeight }}
       >
         <div className="space-y-1">

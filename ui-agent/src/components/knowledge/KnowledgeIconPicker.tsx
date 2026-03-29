@@ -60,7 +60,7 @@ export function KnowledgeIconPicker({
                 placeholder="搜索图标（Lucide / React Icons）"
               />
             </div>
-            <div className="grid max-h-[26rem] grid-cols-3 gap-sm overflow-auto pr-1 md:grid-cols-6">
+            <div className="grid max-h-[26rem] grid-cols-3 gap-sm overflow-auto scrollbar-default pr-1 md:grid-cols-6">
               {filtered.map((item) => {
                 const active = item.key === selected.key;
                 return (

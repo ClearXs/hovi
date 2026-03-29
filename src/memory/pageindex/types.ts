@@ -87,6 +87,8 @@ export interface SearchParams {
 // Session 文档元数据
 export interface SessionDocumentMeta {
   documentId: string;
+  knowledgeDocumentId?: string;
+  kbId?: string;
   filename: string;
   mimeType: string;
   indexPath: string | null;

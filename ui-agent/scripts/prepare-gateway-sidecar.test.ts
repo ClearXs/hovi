@@ -60,6 +60,1269 @@ describe("prepare-gateway-sidecar", () => {
     expect(resolvePnpmExecutable("win32")).toBe("pnpm.cmd");
   });
 
+  it("runs pnpm deploy in offline mode for desktop sidecar packaging", async () => {
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
+    const runtimeDir = path.join(tempRoot, "runtime", "openclaw");
+    let deployArgs: readonly string[] | null = null;
+
+    try {
+      await expect(
+        deployPortableOpenClawRuntime({
+          repoRoot: "/repo",
+          openclawRuntimeDir: runtimeDir,
+          execFileImpl: async (_file, args) => {
+            deployArgs = args;
+            throw new Error("stop-after-arg-capture");
+          },
+        }),
+      ).rejects.toThrow("stop-after-arg-capture");
+
+      expect(deployArgs).not.toBeNull();
+      expect(deployArgs).toContain("--offline");
+      expect(deployArgs).toContain("--prod");
+      expect(deployArgs).toContain("--config.virtual-store-dir-max-length=40");
+      expect(deployArgs?.at(-1)).toMatch(/^\/.+openclaw-sidecar-deploy-/);
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("injects libsignal npm override into deploy args while preserving existing overrides", async () => {
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
+    const runtimeDir = path.join(tempRoot, "runtime", "openclaw");
+    let deployArgs: readonly string[] | undefined;
+
+    try {
+      await fsPromises.writeFile(
+        path.join(tempRoot, "package.json"),
+        JSON.stringify({
+          name: "tmp-root",
+          pnpm: {
+            overrides: {
+              hono: "4.12.7",
+            },
+          },
+        }),
+        "utf8",
+      );
+
+      await expect(
+        deployPortableOpenClawRuntime({
+          repoRoot: tempRoot,
+          openclawRuntimeDir: runtimeDir,
+          execFileImpl: async (_file, args) => {
+            deployArgs = args;
+            throw new Error("stop-after-env-capture");
+          },
+        }),
+      ).rejects.toThrow("stop-after-env-capture");
+
+      const overridesArg = deployArgs?.find((arg) => arg.startsWith("--config.overrides="));
+      expect(typeof overridesArg).toBe("string");
+      const overridesRaw = (overridesArg as string).slice("--config.overrides=".length);
+      const overrides = JSON.parse(overridesRaw) as Record<string, string>;
+      expect(overrides.hono).toBe("4.12.7");
+      expect(overrides["@whiskeysockets/baileys>libsignal"]).toBe(
+        "https://codeload.github.com/whiskeysockets/libsignal-node/tar.gz/1c30d7d7e76a3b0aa120b04dc6a26f5a12dccf67",
+      );
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("includes pnpm stderr in deploy failures", async () => {
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
+    const runtimeDir = path.join(tempRoot, "runtime", "openclaw");
+
+    try {
+      await expect(
+        deployPortableOpenClawRuntime({
+          repoRoot: "/repo",
+          openclawRuntimeDir: runtimeDir,
+          execFileImpl: async () => {
+            const error = Object.assign(new Error("Command failed with exit code 1"), {
+              stderr: "ssh: connect to host github.com port 22: Operation timed out",
+              stdout: "pnpm progress output",
+            });
+            throw error;
+          },
+        }),
+      ).rejects.toThrow(
+        "pnpm deploy --prod --offline failed: ssh: connect to host github.com port 22: Operation timed out",
+      );
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves pnpm virtual-store symlink layout for transitive deps", async () => {
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
+    const runtimeDir = path.join(tempRoot, "runtime", "openclaw");
+
+    try {
+      await deployPortableOpenClawRuntime({
+        repoRoot: "/repo",
+        openclawRuntimeDir: runtimeDir,
+        execFileImpl: async (_file, args) => {
+          const deployDir = args.at(-1);
+          if (!deployDir) {
+            throw new Error("missing deploy dir");
+          }
+
+          const promptsStoreDir = path.join(
+            deployDir,
+            "node_modules",
+            ".pnpm",
+            "@clack+prompts@1.1.0",
+            "node_modules",
+            "@clack",
+            "prompts",
+          );
+          const promptsScopeDir = path.join(
+            deployDir,
+            "node_modules",
+            ".pnpm",
+            "@clack+prompts@1.1.0",
+            "node_modules",
+            "@clack",
+          );
+          const coreStoreDir = path.join(
+            deployDir,
+            "node_modules",
+            ".pnpm",
+            "@clack+core@1.1.0",
+            "node_modules",
+            "@clack",
+            "core",
+          );
+          const rootClackDir = path.join(deployDir, "node_modules", "@clack");
+          const rootPromptsLink = path.join(rootClackDir, "prompts");
+          const promptsCoreLink = path.join(promptsScopeDir, "core");
+          const linkType = process.platform === "win32" ? "junction" : "dir";
+
+          await fsPromises.mkdir(path.join(deployDir, "dist"), { recursive: true });
+          await fsPromises.writeFile(path.join(deployDir, "openclaw.mjs"), "export {};\n", "utf8");
+          await fsPromises.writeFile(path.join(deployDir, "package.json"), "{}\n", "utf8");
+          await fsPromises.writeFile(
+            path.join(deployDir, "dist", "gateway-sidecar-entry.js"),
+            "export {};\n",
+            "utf8",
+          );
+          await fsPromises.mkdir(promptsStoreDir, { recursive: true });
+          await fsPromises.mkdir(coreStoreDir, { recursive: true });
+          await fsPromises.mkdir(rootClackDir, { recursive: true });
+          await fsPromises.writeFile(
+            path.join(promptsStoreDir, "package.json"),
+            '{"name":"@clack/prompts"}\n',
+            "utf8",
+          );
+          await fsPromises.writeFile(
+            path.join(coreStoreDir, "package.json"),
+            '{"name":"@clack/core"}\n',
+            "utf8",
+          );
+          await fsPromises.symlink(
+            path.relative(rootClackDir, promptsStoreDir),
+            rootPromptsLink,
+            linkType,
+          );
+          await fsPromises.symlink(
+            path.relative(promptsScopeDir, coreStoreDir),
+            promptsCoreLink,
+            linkType,
+          );
+
+          return { stdout: "", stderr: "" };
+        },
+      });
+
+      const promptsStat = await fsPromises.lstat(
+        path.join(runtimeDir, "node_modules", "@clack", "prompts"),
+      );
+      expect(promptsStat.isSymbolicLink()).toBe(true);
+      expect(
+        fs.existsSync(
+          path.join(
+            runtimeDir,
+            "node_modules",
+            ".pnpm",
+            "@clack+core@1.1.0",
+            "node_modules",
+            "@clack",
+            "core",
+            "package.json",
+          ),
+        ),
+      ).toBe(true);
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("removes dangling virtual-store symlinks after pruning optional heavy deps", async () => {
+    if (process.platform === "win32") {
+      // Windows symlink/junction behavior differs across CI environments.
+      return;
+    }
+
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
+    const runtimeDir = path.join(tempRoot, "runtime", "openclaw");
+
+    try {
+      await deployPortableOpenClawRuntime({
+        repoRoot: "/repo",
+        openclawRuntimeDir: runtimeDir,
+        execFileImpl: async (_file, args) => {
+          const deployDir = args.at(-1);
+          if (!deployDir) {
+            throw new Error("missing deploy dir");
+          }
+
+          const baileysNodeModulesDir = path.join(
+            deployDir,
+            "node_modules",
+            ".pnpm",
+            "@whiskeysockets+baileys@7.0.0-rc.9",
+            "node_modules",
+          );
+          const sharpStoreDir = path.join(
+            deployDir,
+            "node_modules",
+            ".pnpm",
+            "sharp@0.34.5",
+            "node_modules",
+            "sharp",
+          );
+          const sharpLinkPath = path.join(baileysNodeModulesDir, "sharp");
+
+          await fsPromises.mkdir(path.join(deployDir, "dist"), { recursive: true });
+          await fsPromises.writeFile(path.join(deployDir, "openclaw.mjs"), "export {};\n", "utf8");
+          await fsPromises.writeFile(path.join(deployDir, "package.json"), "{}\n", "utf8");
+          await fsPromises.writeFile(
+            path.join(deployDir, "dist", "gateway-sidecar-entry.js"),
+            "export {};\n",
+            "utf8",
+          );
+          await fsPromises.mkdir(baileysNodeModulesDir, { recursive: true });
+          await fsPromises.mkdir(sharpStoreDir, { recursive: true });
+          await fsPromises.symlink(
+            path.relative(baileysNodeModulesDir, sharpStoreDir),
+            sharpLinkPath,
+            "dir",
+          );
+
+          return { stdout: "", stderr: "" };
+        },
+      });
+
+      expect(
+        fs.existsSync(
+          path.join(
+            runtimeDir,
+            "node_modules",
+            ".pnpm",
+            "@whiskeysockets+baileys@7.0.0-rc.9",
+            "node_modules",
+          ),
+        ),
+      ).toBe(true);
+      await expect(
+        fsPromises.lstat(
+          path.join(
+            runtimeDir,
+            "node_modules",
+            ".pnpm",
+            "@whiskeysockets+baileys@7.0.0-rc.9",
+            "node_modules",
+            "sharp",
+          ),
+        ),
+      ).rejects.toThrow();
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("removes top-level symlinked optional packages after pruning", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
+    const runtimeDir = path.join(tempRoot, "runtime", "openclaw");
+
+    try {
+      await deployPortableOpenClawRuntime({
+        repoRoot: "/repo",
+        openclawRuntimeDir: runtimeDir,
+        execFileImpl: async (_file, args) => {
+          const deployDir = args.at(-1);
+          if (!deployDir) {
+            throw new Error("missing deploy dir");
+          }
+
+          const playwrightStoreDir = path.join(
+            deployDir,
+            "node_modules",
+            ".pnpm",
+            "playwright-core@1.58.2",
+            "node_modules",
+            "playwright-core",
+          );
+          const topLevelNodeModulesDir = path.join(deployDir, "node_modules");
+          const topLevelPlaywrightLink = path.join(topLevelNodeModulesDir, "playwright-core");
+
+          await fsPromises.mkdir(path.join(deployDir, "dist"), { recursive: true });
+          await fsPromises.writeFile(path.join(deployDir, "openclaw.mjs"), "export {};\n", "utf8");
+          await fsPromises.writeFile(path.join(deployDir, "package.json"), "{}\n", "utf8");
+          await fsPromises.writeFile(
+            path.join(deployDir, "dist", "gateway-sidecar-entry.js"),
+            "export {};\n",
+            "utf8",
+          );
+          await fsPromises.mkdir(playwrightStoreDir, { recursive: true });
+          await fsPromises.symlink(
+            path.relative(topLevelNodeModulesDir, playwrightStoreDir),
+            topLevelPlaywrightLink,
+            "dir",
+          );
+
+          return { stdout: "", stderr: "" };
+        },
+      });
+
+      await expect(
+        fsPromises.lstat(path.join(runtimeDir, "node_modules", "playwright-core")),
+      ).rejects.toThrow();
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("materializes @clack/prompt deps as real top-level packages", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
+    const runtimeDir = path.join(tempRoot, "runtime", "openclaw");
+
+    try {
+      await deployPortableOpenClawRuntime({
+        repoRoot: "/repo",
+        openclawRuntimeDir: runtimeDir,
+        execFileImpl: async (_file, args) => {
+          const deployDir = args.at(-1);
+          if (!deployDir) {
+            throw new Error("missing deploy dir");
+          }
+
+          const clackScopeDir = path.join(deployDir, "node_modules", "@clack");
+          const promptsStoreDir = path.join(
+            deployDir,
+            "node_modules",
+            ".pnpm",
+            "@clack+prompts@1.1.0",
+            "node_modules",
+            "@clack",
+            "prompts",
+          );
+          const coreStoreDir = path.join(
+            deployDir,
+            "node_modules",
+            ".pnpm",
+            "@clack+core@1.1.0",
+            "node_modules",
+            "@clack",
+            "core",
+          );
+          const sisteransiStoreDir = path.join(
+            deployDir,
+            "node_modules",
+            ".pnpm",
+            "sisteransi@1.0.5",
+            "node_modules",
+            "sisteransi",
+          );
+
+          await fsPromises.mkdir(path.join(deployDir, "dist"), { recursive: true });
+          await fsPromises.writeFile(path.join(deployDir, "openclaw.mjs"), "export {};\n", "utf8");
+          await fsPromises.writeFile(path.join(deployDir, "package.json"), "{}\n", "utf8");
+          await fsPromises.writeFile(
+            path.join(deployDir, "dist", "gateway-sidecar-entry.js"),
+            "export {};\n",
+            "utf8",
+          );
+          await fsPromises.mkdir(clackScopeDir, { recursive: true });
+          await fsPromises.mkdir(promptsStoreDir, { recursive: true });
+          await fsPromises.mkdir(coreStoreDir, { recursive: true });
+          await fsPromises.mkdir(sisteransiStoreDir, { recursive: true });
+          await fsPromises.writeFile(
+            path.join(promptsStoreDir, "package.json"),
+            JSON.stringify({
+              name: "@clack/prompts",
+              dependencies: {
+                "@clack/core": "^1.1.0",
+                sisteransi: "^1.0.5",
+              },
+            }),
+            "utf8",
+          );
+          await fsPromises.writeFile(
+            path.join(coreStoreDir, "package.json"),
+            '{"name":"@clack/core"}\n',
+            "utf8",
+          );
+          await fsPromises.writeFile(
+            path.join(sisteransiStoreDir, "package.json"),
+            '{"name":"sisteransi"}\n',
+            "utf8",
+          );
+          await fsPromises.symlink(
+            path.relative(clackScopeDir, promptsStoreDir),
+            path.join(clackScopeDir, "prompts"),
+            "dir",
+          );
+
+          return { stdout: "", stderr: "" };
+        },
+      });
+
+      const clackCoreStat = await fsPromises.lstat(
+        path.join(runtimeDir, "node_modules", "@clack", "core"),
+      );
+      expect(clackCoreStat.isSymbolicLink()).toBe(false);
+      expect(
+        fs.existsSync(path.join(runtimeDir, "node_modules", "@clack", "core", "package.json")),
+      ).toBe(true);
+      const sisteransiStat = await fsPromises.lstat(
+        path.join(runtimeDir, "node_modules", "sisteransi"),
+      );
+      expect(sisteransiStat.isSymbolicLink()).toBe(false);
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("materializes runtime-imported packages as real top-level packages", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
+    const runtimeDir = path.join(tempRoot, "runtime", "openclaw");
+
+    try {
+      await deployPortableOpenClawRuntime({
+        repoRoot: "/repo",
+        openclawRuntimeDir: runtimeDir,
+        execFileImpl: async (_file, args) => {
+          const deployDir = args.at(-1);
+          if (!deployDir) {
+            throw new Error("missing deploy dir");
+          }
+
+          const topLevelNodeModulesDir = path.join(deployDir, "node_modules");
+          const tslogStoreDir = path.join(
+            deployDir,
+            "node_modules",
+            ".pnpm",
+            "tslog@4.10.2",
+            "node_modules",
+            "tslog",
+          );
+          const tslogLink = path.join(topLevelNodeModulesDir, "tslog");
+
+          await fsPromises.mkdir(path.join(deployDir, "dist"), { recursive: true });
+          await fsPromises.writeFile(path.join(deployDir, "openclaw.mjs"), "export {};\n", "utf8");
+          await fsPromises.writeFile(path.join(deployDir, "package.json"), "{}\n", "utf8");
+          await fsPromises.writeFile(
+            path.join(deployDir, "dist", "gateway-sidecar-entry.js"),
+            'import "tslog";\nexport {};\n',
+            "utf8",
+          );
+          await fsPromises.mkdir(tslogStoreDir, { recursive: true });
+          await fsPromises.writeFile(
+            path.join(tslogStoreDir, "package.json"),
+            '{"name":"tslog","version":"4.10.2"}\n',
+            "utf8",
+          );
+          await fsPromises.symlink(
+            path.relative(topLevelNodeModulesDir, tslogStoreDir),
+            tslogLink,
+            "dir",
+          );
+
+          return { stdout: "", stderr: "" };
+        },
+      });
+
+      const tslogStat = await fsPromises.lstat(path.join(runtimeDir, "node_modules", "tslog"));
+      expect(tslogStat.isSymbolicLink()).toBe(false);
+      expect(fs.existsSync(path.join(runtimeDir, "node_modules", "tslog", "package.json"))).toBe(
+        true,
+      );
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("materializes runtime-imported scoped packages from hashed virtual-store dirs", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
+    const runtimeDir = path.join(tempRoot, "runtime", "openclaw");
+
+    try {
+      await deployPortableOpenClawRuntime({
+        repoRoot: "/repo",
+        openclawRuntimeDir: runtimeDir,
+        execFileImpl: async (_file, args) => {
+          const deployDir = args.at(-1);
+          if (!deployDir) {
+            throw new Error("missing deploy dir");
+          }
+
+          const topLevelScopeDir = path.join(deployDir, "node_modules", "@buape");
+          const carbonStoreDir = path.join(
+            deployDir,
+            "node_modules",
+            ".pnpm",
+            "@buape+carbon_nksmt6rltdtco2p27e43qr32ma",
+            "node_modules",
+            "@buape",
+            "carbon",
+          );
+          const carbonLink = path.join(topLevelScopeDir, "carbon");
+
+          await fsPromises.mkdir(path.join(deployDir, "dist"), { recursive: true });
+          await fsPromises.writeFile(path.join(deployDir, "openclaw.mjs"), "export {};\n", "utf8");
+          await fsPromises.writeFile(path.join(deployDir, "package.json"), "{}\n", "utf8");
+          await fsPromises.writeFile(
+            path.join(deployDir, "dist", "gateway-sidecar-entry.js"),
+            'import "@buape/carbon";\nexport {};\n',
+            "utf8",
+          );
+          await fsPromises.mkdir(carbonStoreDir, { recursive: true });
+          await fsPromises.mkdir(topLevelScopeDir, { recursive: true });
+          await fsPromises.writeFile(
+            path.join(carbonStoreDir, "package.json"),
+            '{"name":"@buape/carbon","version":"0.0.0"}\n',
+            "utf8",
+          );
+          await fsPromises.symlink(
+            path.relative(topLevelScopeDir, carbonStoreDir),
+            carbonLink,
+            "dir",
+          );
+
+          return { stdout: "", stderr: "" };
+        },
+      });
+
+      const carbonStat = await fsPromises.lstat(
+        path.join(runtimeDir, "node_modules", "@buape", "carbon"),
+      );
+      expect(carbonStat.isSymbolicLink()).toBe(false);
+      expect(
+        fs.existsSync(path.join(runtimeDir, "node_modules", "@buape", "carbon", "package.json")),
+      ).toBe(true);
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("materializes undici when runtime dist imports it", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
+    const runtimeDir = path.join(tempRoot, "runtime", "openclaw");
+
+    try {
+      await deployPortableOpenClawRuntime({
+        repoRoot: "/repo",
+        openclawRuntimeDir: runtimeDir,
+        execFileImpl: async (_file, args) => {
+          const deployDir = args.at(-1);
+          if (!deployDir) {
+            throw new Error("missing deploy dir");
+          }
+
+          const topLevelNodeModulesDir = path.join(deployDir, "node_modules");
+          const undiciStoreDir = path.join(
+            deployDir,
+            "node_modules",
+            ".pnpm",
+            "undici@7.24.1",
+            "node_modules",
+            "undici",
+          );
+          const undiciLink = path.join(topLevelNodeModulesDir, "undici");
+
+          await fsPromises.mkdir(path.join(deployDir, "dist"), { recursive: true });
+          await fsPromises.writeFile(path.join(deployDir, "openclaw.mjs"), "export {};\n", "utf8");
+          await fsPromises.writeFile(path.join(deployDir, "package.json"), "{}\n", "utf8");
+          await fsPromises.writeFile(
+            path.join(deployDir, "dist", "gateway-sidecar-entry.js"),
+            'import { EnvHttpProxyAgent } from "undici";\nvoid EnvHttpProxyAgent;\nexport {};\n',
+            "utf8",
+          );
+          await fsPromises.mkdir(undiciStoreDir, { recursive: true });
+          await fsPromises.writeFile(
+            path.join(undiciStoreDir, "package.json"),
+            '{"name":"undici","version":"7.24.1"}\n',
+            "utf8",
+          );
+          await fsPromises.symlink(
+            path.relative(topLevelNodeModulesDir, undiciStoreDir),
+            undiciLink,
+            "dir",
+          );
+
+          return { stdout: "", stderr: "" };
+        },
+      });
+
+      const undiciStat = await fsPromises.lstat(path.join(runtimeDir, "node_modules", "undici"));
+      expect(undiciStat.isSymbolicLink()).toBe(false);
+      expect(fs.existsSync(path.join(runtimeDir, "node_modules", "undici", "package.json"))).toBe(
+        true,
+      );
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("follows only gateway entry reachable imports when verifying runtime packages", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
+    const runtimeDir = path.join(tempRoot, "runtime", "openclaw");
+
+    try {
+      await deployPortableOpenClawRuntime({
+        repoRoot: "/repo",
+        openclawRuntimeDir: runtimeDir,
+        execFileImpl: async (_file, args) => {
+          const deployDir = args.at(-1);
+          if (!deployDir) {
+            throw new Error("missing deploy dir");
+          }
+
+          const topLevelNodeModulesDir = path.join(deployDir, "node_modules");
+          const tslogStoreDir = path.join(
+            deployDir,
+            "node_modules",
+            ".pnpm",
+            "tslog@4.10.2",
+            "node_modules",
+            "tslog",
+          );
+
+          await fsPromises.mkdir(path.join(deployDir, "dist"), { recursive: true });
+          await fsPromises.writeFile(path.join(deployDir, "openclaw.mjs"), "export {};\n", "utf8");
+          await fsPromises.writeFile(path.join(deployDir, "package.json"), "{}\n", "utf8");
+          await fsPromises.writeFile(
+            path.join(deployDir, "dist", "gateway-sidecar-entry.js"),
+            'import "./reachable.js";\nexport {};\n',
+            "utf8",
+          );
+          await fsPromises.writeFile(
+            path.join(deployDir, "dist", "reachable.js"),
+            'import "tslog";\nexport {};\n',
+            "utf8",
+          );
+          await fsPromises.writeFile(
+            path.join(deployDir, "dist", "unrelated.js"),
+            'import "pkg-that-does-not-exist";\nexport {};\n',
+            "utf8",
+          );
+          await fsPromises.mkdir(tslogStoreDir, { recursive: true });
+          await fsPromises.writeFile(
+            path.join(tslogStoreDir, "package.json"),
+            '{"name":"tslog","version":"4.10.2"}\n',
+            "utf8",
+          );
+          await fsPromises.symlink(
+            path.relative(topLevelNodeModulesDir, tslogStoreDir),
+            path.join(topLevelNodeModulesDir, "tslog"),
+            "dir",
+          );
+
+          return { stdout: "", stderr: "" };
+        },
+      });
+
+      expect(fs.existsSync(path.join(runtimeDir, "node_modules", "tslog", "package.json"))).toBe(
+        true,
+      );
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("follows reachable local dynamic imports and materializes their static package deps", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
+    const runtimeDir = path.join(tempRoot, "runtime", "openclaw");
+
+    try {
+      await deployPortableOpenClawRuntime({
+        repoRoot: "/repo",
+        openclawRuntimeDir: runtimeDir,
+        execFileImpl: async (_file, args) => {
+          const deployDir = args.at(-1);
+          if (!deployDir) {
+            throw new Error("missing deploy dir");
+          }
+
+          const topLevelNodeModulesDir = path.join(deployDir, "node_modules");
+          const wsStoreDir = path.join(
+            deployDir,
+            "node_modules",
+            ".pnpm",
+            "ws@8.19.0",
+            "node_modules",
+            "ws",
+          );
+
+          await fsPromises.mkdir(path.join(deployDir, "dist"), { recursive: true });
+          await fsPromises.writeFile(path.join(deployDir, "openclaw.mjs"), "export {};\n", "utf8");
+          await fsPromises.writeFile(path.join(deployDir, "package.json"), "{}\n", "utf8");
+          await fsPromises.writeFile(
+            path.join(deployDir, "dist", "gateway-sidecar-entry.js"),
+            'await import("./lazy.js");\nexport {};\n',
+            "utf8",
+          );
+          await fsPromises.writeFile(
+            path.join(deployDir, "dist", "lazy.js"),
+            'import WebSocket from "ws";\nvoid WebSocket;\nexport {};\n',
+            "utf8",
+          );
+          await fsPromises.mkdir(wsStoreDir, { recursive: true });
+          await fsPromises.writeFile(
+            path.join(wsStoreDir, "package.json"),
+            '{"name":"ws","version":"8.19.0"}\n',
+            "utf8",
+          );
+          await fsPromises.symlink(
+            path.relative(topLevelNodeModulesDir, wsStoreDir),
+            path.join(topLevelNodeModulesDir, "ws"),
+            "dir",
+          );
+
+          return { stdout: "", stderr: "" };
+        },
+      });
+
+      const wsStat = await fsPromises.lstat(path.join(runtimeDir, "node_modules", "ws"));
+      expect(wsStat.isSymbolicLink()).toBe(false);
+      expect(fs.existsSync(path.join(runtimeDir, "node_modules", "ws", "package.json"))).toBe(true);
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores Node builtin bare imports in runtime verification", async () => {
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
+    const runtimeDir = path.join(tempRoot, "runtime", "openclaw");
+
+    try {
+      await expect(
+        deployPortableOpenClawRuntime({
+          repoRoot: "/repo",
+          openclawRuntimeDir: runtimeDir,
+          execFileImpl: async (_file, args) => {
+            const deployDir = args.at(-1);
+            if (!deployDir) {
+              throw new Error("missing deploy dir");
+            }
+
+            await fsPromises.mkdir(path.join(deployDir, "dist"), { recursive: true });
+            await fsPromises.writeFile(
+              path.join(deployDir, "openclaw.mjs"),
+              "export {};\n",
+              "utf8",
+            );
+            await fsPromises.writeFile(path.join(deployDir, "package.json"), "{}\n", "utf8");
+            await fsPromises.writeFile(
+              path.join(deployDir, "dist", "gateway-sidecar-entry.js"),
+              'import fs from "fs";\nimport path from "path";\nvoid fs;\nvoid path;\nexport {};\n',
+              "utf8",
+            );
+
+            return { stdout: "", stderr: "" };
+          },
+        }),
+      ).resolves.toBeUndefined();
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("fails fast when runtime imports cannot be materialized", async () => {
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
+    const runtimeDir = path.join(tempRoot, "runtime", "openclaw");
+
+    try {
+      await expect(
+        deployPortableOpenClawRuntime({
+          repoRoot: "/repo",
+          openclawRuntimeDir: runtimeDir,
+          execFileImpl: async (_file, args) => {
+            const deployDir = args.at(-1);
+            if (!deployDir) {
+              throw new Error("missing deploy dir");
+            }
+
+            await fsPromises.mkdir(path.join(deployDir, "dist"), { recursive: true });
+            await fsPromises.writeFile(
+              path.join(deployDir, "openclaw.mjs"),
+              "export {};\n",
+              "utf8",
+            );
+            await fsPromises.writeFile(path.join(deployDir, "package.json"), "{}\n", "utf8");
+            await fsPromises.writeFile(
+              path.join(deployDir, "dist", "gateway-sidecar-entry.js"),
+              'import "pkg-that-does-not-exist";\nexport {};\n',
+              "utf8",
+            );
+
+            return { stdout: "", stderr: "" };
+          },
+        }),
+      ).rejects.toThrow(
+        "gateway sidecar runtime missing imported packages: pkg-that-does-not-exist",
+      );
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("allows missing packages that are explicitly pruned for sidecar runtime", async () => {
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
+    const runtimeDir = path.join(tempRoot, "runtime", "openclaw");
+
+    try {
+      await expect(
+        deployPortableOpenClawRuntime({
+          repoRoot: "/repo",
+          openclawRuntimeDir: runtimeDir,
+          execFileImpl: async (_file, args) => {
+            const deployDir = args.at(-1);
+            if (!deployDir) {
+              throw new Error("missing deploy dir");
+            }
+
+            await fsPromises.mkdir(path.join(deployDir, "dist"), { recursive: true });
+            await fsPromises.writeFile(
+              path.join(deployDir, "openclaw.mjs"),
+              "export {};\n",
+              "utf8",
+            );
+            await fsPromises.writeFile(path.join(deployDir, "package.json"), "{}\n", "utf8");
+            await fsPromises.writeFile(
+              path.join(deployDir, "dist", "gateway-sidecar-entry.js"),
+              'import "playwright-core";\nimport "onnxruntime-node";\nexport {};\n',
+              "utf8",
+            );
+
+            return { stdout: "", stderr: "" };
+          },
+        }),
+      ).resolves.toBeUndefined();
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("materializes transitive dependencies under the importing package node_modules", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
+    const runtimeDir = path.join(tempRoot, "runtime", "openclaw");
+
+    try {
+      await deployPortableOpenClawRuntime({
+        repoRoot: "/repo",
+        openclawRuntimeDir: runtimeDir,
+        execFileImpl: async (_file, args) => {
+          const deployDir = args.at(-1);
+          if (!deployDir) {
+            throw new Error("missing deploy dir");
+          }
+
+          const topLevelNodeModulesDir = path.join(deployDir, "node_modules");
+          const mcpScopeDir = path.join(topLevelNodeModulesDir, "@modelcontextprotocol");
+          const sdkStoreDir = path.join(
+            deployDir,
+            "node_modules",
+            ".pnpm",
+            "@modelcontextprotocol+sdk@1.27.1",
+            "node_modules",
+            "@modelcontextprotocol",
+            "sdk",
+          );
+          const crossSpawnStoreDir = path.join(
+            deployDir,
+            "node_modules",
+            ".pnpm",
+            "cross-spawn@7.0.6",
+            "node_modules",
+            "cross-spawn",
+          );
+
+          await fsPromises.mkdir(path.join(deployDir, "dist"), { recursive: true });
+          await fsPromises.writeFile(path.join(deployDir, "openclaw.mjs"), "export {};\n", "utf8");
+          await fsPromises.writeFile(path.join(deployDir, "package.json"), "{}\n", "utf8");
+          await fsPromises.writeFile(
+            path.join(deployDir, "dist", "gateway-sidecar-entry.js"),
+            'import "@modelcontextprotocol/sdk";\nexport {};\n',
+            "utf8",
+          );
+          await fsPromises.mkdir(mcpScopeDir, { recursive: true });
+          await fsPromises.mkdir(sdkStoreDir, { recursive: true });
+          await fsPromises.mkdir(crossSpawnStoreDir, { recursive: true });
+          await fsPromises.writeFile(
+            path.join(sdkStoreDir, "package.json"),
+            JSON.stringify({
+              name: "@modelcontextprotocol/sdk",
+              version: "1.27.1",
+              dependencies: {
+                "cross-spawn": "^7.0.6",
+              },
+            }),
+            "utf8",
+          );
+          await fsPromises.writeFile(
+            path.join(crossSpawnStoreDir, "package.json"),
+            '{"name":"cross-spawn","version":"7.0.6"}\n',
+            "utf8",
+          );
+          await fsPromises.symlink(
+            path.relative(mcpScopeDir, sdkStoreDir),
+            path.join(mcpScopeDir, "sdk"),
+            "dir",
+          );
+          await fsPromises.symlink(
+            path.relative(topLevelNodeModulesDir, crossSpawnStoreDir),
+            path.join(topLevelNodeModulesDir, "cross-spawn"),
+            "dir",
+          );
+
+          return { stdout: "", stderr: "" };
+        },
+      });
+
+      const crossSpawnStat = await fsPromises.lstat(
+        path.join(
+          runtimeDir,
+          "node_modules",
+          "@modelcontextprotocol",
+          "sdk",
+          "node_modules",
+          "cross-spawn",
+        ),
+      );
+      expect(crossSpawnStat.isSymbolicLink()).toBe(false);
+      expect(
+        fs.existsSync(
+          path.join(
+            runtimeDir,
+            "node_modules",
+            "@modelcontextprotocol",
+            "sdk",
+            "node_modules",
+            "cross-spawn",
+            "package.json",
+          ),
+        ),
+      ).toBe(true);
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("materializes dependency versions relative to the importing package", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
+    const runtimeDir = path.join(tempRoot, "runtime", "openclaw");
+
+    try {
+      await deployPortableOpenClawRuntime({
+        repoRoot: "/repo",
+        openclawRuntimeDir: runtimeDir,
+        execFileImpl: async (_file, args) => {
+          const deployDir = args.at(-1);
+          if (!deployDir) {
+            throw new Error("missing deploy dir");
+          }
+
+          const topLevelNodeModulesDir = path.join(deployDir, "node_modules");
+          const grammyScopeDir = topLevelNodeModulesDir;
+          const grammyStoreNodeModulesDir = path.join(
+            deployDir,
+            "node_modules",
+            ".pnpm",
+            "grammy@1.41.1",
+            "node_modules",
+          );
+          const grammyStoreDir = path.join(grammyStoreNodeModulesDir, "grammy");
+          const nodeFetchV2StoreDir = path.join(
+            deployDir,
+            "node_modules",
+            ".pnpm",
+            "node-fetch@2.7.0",
+            "node_modules",
+            "node-fetch",
+          );
+          const nodeFetchV3StoreDir = path.join(
+            deployDir,
+            "node_modules",
+            ".pnpm",
+            "node-fetch@3.3.2",
+            "node_modules",
+            "node-fetch",
+          );
+
+          await fsPromises.mkdir(path.join(deployDir, "dist"), { recursive: true });
+          await fsPromises.writeFile(path.join(deployDir, "openclaw.mjs"), "export {};\n", "utf8");
+          await fsPromises.writeFile(path.join(deployDir, "package.json"), "{}\n", "utf8");
+          await fsPromises.writeFile(
+            path.join(deployDir, "dist", "gateway-sidecar-entry.js"),
+            'import "grammy";\nimport "node-fetch";\nexport {};\n',
+            "utf8",
+          );
+          await fsPromises.mkdir(grammyStoreDir, { recursive: true });
+          await fsPromises.mkdir(nodeFetchV2StoreDir, { recursive: true });
+          await fsPromises.mkdir(nodeFetchV3StoreDir, { recursive: true });
+          await fsPromises.writeFile(
+            path.join(grammyStoreDir, "package.json"),
+            JSON.stringify({
+              name: "grammy",
+              version: "1.41.1",
+              dependencies: {
+                "node-fetch": "^2.7.0",
+              },
+            }),
+            "utf8",
+          );
+          await fsPromises.writeFile(
+            path.join(nodeFetchV2StoreDir, "package.json"),
+            '{"name":"node-fetch","version":"2.7.0"}\n',
+            "utf8",
+          );
+          await fsPromises.writeFile(
+            path.join(nodeFetchV3StoreDir, "package.json"),
+            '{"name":"node-fetch","version":"3.3.2"}\n',
+            "utf8",
+          );
+          await fsPromises.symlink(
+            path.relative(topLevelNodeModulesDir, grammyStoreDir),
+            path.join(grammyScopeDir, "grammy"),
+            "dir",
+          );
+          await fsPromises.symlink(
+            path.relative(grammyStoreNodeModulesDir, nodeFetchV2StoreDir),
+            path.join(grammyStoreNodeModulesDir, "node-fetch"),
+            "dir",
+          );
+          await fsPromises.symlink(
+            path.relative(topLevelNodeModulesDir, nodeFetchV3StoreDir),
+            path.join(topLevelNodeModulesDir, "node-fetch"),
+            "dir",
+          );
+
+          return { stdout: "", stderr: "" };
+        },
+      });
+
+      const topLevelNodeFetch = JSON.parse(
+        await fsPromises.readFile(
+          path.join(runtimeDir, "node_modules", "node-fetch", "package.json"),
+          "utf8",
+        ),
+      ) as { version?: string };
+      expect(topLevelNodeFetch.version).toBe("3.3.2");
+
+      const grammyNodeFetch = JSON.parse(
+        await fsPromises.readFile(
+          path.join(
+            runtimeDir,
+            "node_modules",
+            "grammy",
+            "node_modules",
+            "node-fetch",
+            "package.json",
+          ),
+          "utf8",
+        ),
+      ) as { version?: string };
+      expect(grammyNodeFetch.version).toBe("2.7.0");
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves top-level symlink-resolved version when multiple virtual-store versions exist", async () => {
+    if (process.platform === "win32") {
+      return;
+    }
+
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
+    const runtimeDir = path.join(tempRoot, "runtime", "openclaw");
+
+    try {
+      await deployPortableOpenClawRuntime({
+        repoRoot: "/repo",
+        openclawRuntimeDir: runtimeDir,
+        execFileImpl: async (_file, args) => {
+          const deployDir = args.at(-1);
+          if (!deployDir) {
+            throw new Error("missing deploy dir");
+          }
+
+          const topLevelNodeModulesDir = path.join(deployDir, "node_modules");
+          const chalkV5StoreDir = path.join(
+            deployDir,
+            "node_modules",
+            ".pnpm",
+            "chalk@5.6.2",
+            "node_modules",
+            "chalk",
+          );
+          const chalkV4StoreDir = path.join(
+            deployDir,
+            "node_modules",
+            ".pnpm",
+            "chalk@4.1.2",
+            "node_modules",
+            "chalk",
+          );
+
+          await fsPromises.mkdir(path.join(deployDir, "dist"), { recursive: true });
+          await fsPromises.writeFile(path.join(deployDir, "openclaw.mjs"), "export {};\n", "utf8");
+          await fsPromises.writeFile(path.join(deployDir, "package.json"), "{}\n", "utf8");
+          await fsPromises.writeFile(
+            path.join(deployDir, "dist", "gateway-sidecar-entry.js"),
+            'import "chalk";\nexport {};\n',
+            "utf8",
+          );
+          await fsPromises.mkdir(chalkV5StoreDir, { recursive: true });
+          await fsPromises.mkdir(chalkV4StoreDir, { recursive: true });
+          await fsPromises.writeFile(
+            path.join(chalkV5StoreDir, "package.json"),
+            '{"name":"chalk","version":"5.6.2"}\n',
+            "utf8",
+          );
+          await fsPromises.writeFile(
+            path.join(chalkV4StoreDir, "package.json"),
+            '{"name":"chalk","version":"4.1.2"}\n',
+            "utf8",
+          );
+          await fsPromises.symlink(
+            path.relative(topLevelNodeModulesDir, chalkV5StoreDir),
+            path.join(topLevelNodeModulesDir, "chalk"),
+            "dir",
+          );
+
+          return { stdout: "", stderr: "" };
+        },
+      });
+
+      const chalkPackageJson = JSON.parse(
+        await fsPromises.readFile(
+          path.join(runtimeDir, "node_modules", "chalk", "package.json"),
+          "utf8",
+        ),
+      ) as { version?: string };
+      expect(chalkPackageJson.version).toBe("5.6.2");
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("fails fast when transitive dependencies of runtime-imported packages are missing", async () => {
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
+    const runtimeDir = path.join(tempRoot, "runtime", "openclaw");
+
+    try {
+      await expect(
+        deployPortableOpenClawRuntime({
+          repoRoot: "/repo",
+          openclawRuntimeDir: runtimeDir,
+          execFileImpl: async (_file, args) => {
+            const deployDir = args.at(-1);
+            if (!deployDir) {
+              throw new Error("missing deploy dir");
+            }
+
+            const topLevelNodeModulesDir = path.join(deployDir, "node_modules");
+            const mcpScopeDir = path.join(topLevelNodeModulesDir, "@modelcontextprotocol");
+            const sdkStoreDir = path.join(
+              deployDir,
+              "node_modules",
+              ".pnpm",
+              "@modelcontextprotocol+sdk@1.27.1",
+              "node_modules",
+              "@modelcontextprotocol",
+              "sdk",
+            );
+
+            await fsPromises.mkdir(path.join(deployDir, "dist"), { recursive: true });
+            await fsPromises.writeFile(
+              path.join(deployDir, "openclaw.mjs"),
+              "export {};\n",
+              "utf8",
+            );
+            await fsPromises.writeFile(path.join(deployDir, "package.json"), "{}\n", "utf8");
+            await fsPromises.writeFile(
+              path.join(deployDir, "dist", "gateway-sidecar-entry.js"),
+              'import "@modelcontextprotocol/sdk";\nexport {};\n',
+              "utf8",
+            );
+            await fsPromises.mkdir(mcpScopeDir, { recursive: true });
+            await fsPromises.mkdir(sdkStoreDir, { recursive: true });
+            await fsPromises.writeFile(
+              path.join(sdkStoreDir, "package.json"),
+              JSON.stringify({
+                name: "@modelcontextprotocol/sdk",
+                version: "1.27.1",
+                dependencies: {
+                  "cross-spawn": "^7.0.6",
+                },
+              }),
+              "utf8",
+            );
+            await fsPromises.symlink(
+              path.relative(mcpScopeDir, sdkStoreDir),
+              path.join(mcpScopeDir, "sdk"),
+              "dir",
+            );
+
+            return { stdout: "", stderr: "" };
+          },
+        }),
+      ).rejects.toThrow("gateway sidecar runtime missing imported packages: cross-spawn");
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("rejects sidecar node versions below the openclaw runtime minimum", () => {
     expect(() => assertSupportedSidecarNodeVersion("22.11.0")).toThrow(
       "桌面版内置 Node 运行时必须 >= 22.12.0，当前打包环境是 22.11.0",
@@ -124,7 +1387,24 @@ describe("prepare-gateway-sidecar", () => {
               recursive: true,
             },
           );
+          await fsPromises.mkdir(
+            path.join(
+              deployDir,
+              "node_modules",
+              ".pnpm",
+              "@clack+core@1.1.0",
+              "node_modules",
+              "@clack",
+              "core",
+            ),
+            {
+              recursive: true,
+            },
+          );
           await fsPromises.mkdir(path.join(deployDir, "node_modules", "@mariozechner"), {
+            recursive: true,
+          });
+          await fsPromises.mkdir(path.join(deployDir, "node_modules", "@larksuiteoapi"), {
             recursive: true,
           });
           await fsPromises.mkdir(path.join(deployDir, "node_modules", "onnxruntime-node"), {
@@ -168,33 +1448,45 @@ describe("prepare-gateway-sidecar", () => {
           );
           await fsPromises.writeFile(path.join(deployDir, "README.md"), "readme\n", "utf8");
           await fsPromises.writeFile(path.join(deployDir, "CHANGELOG.md"), "changelog\n", "utf8");
+          // pnpm deploy produces a flat node_modules/ structure.
+          // The pruning function scans node_modules/ directly for packages to remove.
+          // We create real directories (not symlinks) to avoid cp/dereference issues.
+          await fsPromises.mkdir(path.join(deployDir, "node_modules", "@mariozechner", "pi-tui"), {
+            recursive: true,
+          });
+          await fsPromises.mkdir(path.join(deployDir, "node_modules", "node-llama-cpp"), {
+            recursive: true,
+          });
+          await fsPromises.mkdir(
+            path.join(deployDir, "node_modules", "@larksuiteoapi", "node-sdk"),
+            {
+              recursive: true,
+            },
+          );
+          await fsPromises.mkdir(path.join(deployDir, "node_modules", "onnxruntime-node"), {
+            recursive: true,
+          });
           await fsPromises.writeFile(
-            path.join(
-              deployDir,
-              "node_modules",
-              ".pnpm",
-              "@mariozechner+pi-tui@0.58.0",
-              "node_modules",
-              "@mariozechner",
-              "pi-tui",
-              "package.json",
-            ),
+            path.join(deployDir, "node_modules", "@mariozechner", "pi-tui", "package.json"),
             '{"name":"@mariozechner/pi-tui"}\n',
             "utf8",
           );
-          await fsPromises.symlink(
-            path.join(
-              deployDir,
-              "node_modules",
-              ".pnpm",
-              "@mariozechner+pi-tui@0.58.0",
-              "node_modules",
-              "@mariozechner",
-              "pi-tui",
-            ),
-            path.join(deployDir, "node_modules", "@mariozechner", "pi-tui"),
-            "dir",
+          await fsPromises.writeFile(
+            path.join(deployDir, "node_modules", "node-llama-cpp", "package.json"),
+            '{"name":"node-llama-cpp"}\n',
+            "utf8",
           );
+          await fsPromises.writeFile(
+            path.join(deployDir, "node_modules", "@larksuiteoapi", "node-sdk", "package.json"),
+            '{"name":"@larksuiteoapi/node-sdk"}\n',
+            "utf8",
+          );
+          await fsPromises.writeFile(
+            path.join(deployDir, "node_modules", "onnxruntime-node", "package.json"),
+            '{"name":"onnxruntime-node"}\n',
+            "utf8",
+          );
+
           return { stdout: "", stderr: "" };
         },
       });
@@ -212,43 +1504,28 @@ describe("prepare-gateway-sidecar", () => {
       expect(fs.existsSync(path.join(runtimeDir, "assets"))).toBe(false);
       expect(fs.existsSync(path.join(runtimeDir, "README.md"))).toBe(false);
       expect(fs.existsSync(path.join(runtimeDir, "CHANGELOG.md"))).toBe(false);
-      expect(
-        fs.existsSync(
-          path.join(runtimeDir, "node_modules", ".pnpm", "@mariozechner+pi-tui@0.58.0"),
-        ),
-      ).toBe(false);
-      expect(
-        fs.existsSync(path.join(runtimeDir, "node_modules", ".pnpm", "onnxruntime-node@1.24.2")),
-      ).toBe(false);
+      expect(fs.existsSync(path.join(runtimeDir, "node_modules", ".pnpm"))).toBe(true);
       expect(
         fs.existsSync(path.join(runtimeDir, "node_modules", ".pnpm", "node-llama-cpp@3.16.2")),
       ).toBe(false);
       expect(
-        fs.existsSync(
-          path.join(runtimeDir, "node_modules", ".pnpm", "@node-llama-cpp+mac-arm64-metal@3.16.2"),
-        ),
-      ).toBe(false);
+        fs.existsSync(path.join(runtimeDir, "node_modules", ".pnpm", "@clack+core@1.1.0")),
+      ).toBe(true);
+
+      // pi-coding-agent imports @mariozechner/pi-tui at startup; keep it in sidecar runtime.
+      expect(fs.existsSync(path.join(runtimeDir, "node_modules", "@mariozechner", "pi-tui"))).toBe(
+        true,
+      );
+      expect(fs.existsSync(path.join(runtimeDir, "node_modules", "node-llama-cpp"))).toBe(false);
       expect(
-        fs.existsSync(path.join(runtimeDir, "node_modules", ".pnpm", "onnxruntime-common@1.24.2")),
-      ).toBe(false);
-      expect(
-        fs.existsSync(
-          path.join(runtimeDir, "node_modules", ".pnpm", "@mariozechner+pi-tui@0.58.0"),
-        ),
-      ).toBe(false);
-      expect(
-        fs.existsSync(path.join(runtimeDir, "node_modules", ".pnpm", "onnxruntime-node@1.24.2")),
-      ).toBe(false);
-      expect(
-        fs.existsSync(
-          path.join(runtimeDir, "node_modules", ".pnpm", "node-llama-cpp@3.16.2_typescript@5.9.3"),
-        ),
-      ).toBe(false);
-      expect(
-        fs.existsSync(
-          path.join(runtimeDir, "node_modules", ".pnpm", "@node-llama-cpp+mac-arm64-metal@3.16.2"),
-        ),
-      ).toBe(false);
+        fs.existsSync(path.join(runtimeDir, "node_modules", "@larksuiteoapi", "node-sdk")),
+      ).toBe(true);
+      expect(fs.existsSync(path.join(runtimeDir, "node_modules", "onnxruntime-node"))).toBe(false);
+
+      // Valid packages should still be present
+      expect(fs.existsSync(path.join(runtimeDir, "node_modules", "chalk", "package.json"))).toBe(
+        true,
+      );
     } finally {
       await fsPromises.rm(tempRoot, { recursive: true, force: true });
     }

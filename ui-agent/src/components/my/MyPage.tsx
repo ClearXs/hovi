@@ -244,33 +244,38 @@ function SettingsContent({ onBack }: { onBack: () => void }) {
         className="flex-1 flex flex-col overflow-hidden"
       >
         {/* Tab 列表 - 横向滚动 */}
-        <TabsList
-          className="mx-4 mt-2 mb-0 justify-start bg-transparent border-b border-border-light rounded-none p-0 h-auto gap-0 overflow-x-auto scrollbar-thin"
-          style={{ scrollbarWidth: "thin" }}
+        <ScrollArea
+          className="mx-4 mt-2 mb-0 flex-shrink-0 border-b border-border-light"
+          showVerticalScrollbar={false}
+          showHorizontalScrollbar
         >
-          {tabs.map((tab) => (
-            <TabsTrigger
-              key={tab.value}
-              value={tab.value}
-              className="flex items-center gap-1.5 px-4 py-2.5 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-text-primary text-text-tertiary data-[state=active]:bg-transparent hover:text-text-primary transition-colors"
-            >
-              {tab.icon}
-              <span className="text-xs whitespace-nowrap">{tab.label}</span>
-            </TabsTrigger>
-          ))}
-        </TabsList>
+          <TabsList className="w-max justify-start bg-transparent rounded-none p-0 h-auto gap-0">
+            {tabs.map((tab) => (
+              <TabsTrigger
+                key={tab.value}
+                value={tab.value}
+                className="flex items-center gap-1.5 px-4 py-2.5 rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-text-primary text-text-tertiary data-[state=active]:bg-transparent hover:text-text-primary transition-colors"
+              >
+                {tab.icon}
+                <span className="text-xs whitespace-nowrap">{tab.label}</span>
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </ScrollArea>
 
-        <div className="flex-1 overflow-y-auto px-4 py-4">
-          {activeTab === "general" && <GeneralSettingsTab onClose={onBack} />}
-          {activeTab === "shortcuts" && <ShortcutsTab />}
-          {activeTab === "skills" && <SkillsTab />}
-          {activeTab === "connectors" && <ConnectorsTab />}
-          {activeTab === "models" && <ModelsTab onClose={onBack} />}
-          {activeTab === "appearance" && <AppearanceTab onClose={onBack} />}
-          {activeTab === "advanced" && <AdvancedTab onClose={onBack} />}
-          {activeTab === "quota" && <QuotaTab onClose={onBack} />}
-          {activeTab === "avatar" && <AvatarTab onClose={onBack} />}
-        </div>
+        <ScrollArea className="flex-1">
+          <div className="px-4 py-4">
+            {activeTab === "general" && <GeneralSettingsTab onClose={onBack} />}
+            {activeTab === "shortcuts" && <ShortcutsTab />}
+            {activeTab === "skills" && <SkillsTab />}
+            {activeTab === "connectors" && <ConnectorsTab />}
+            {activeTab === "models" && <ModelsTab onClose={onBack} />}
+            {activeTab === "appearance" && <AppearanceTab onClose={onBack} />}
+            {activeTab === "advanced" && <AdvancedTab onClose={onBack} />}
+            {activeTab === "quota" && <QuotaTab onClose={onBack} />}
+            {activeTab === "avatar" && <AvatarTab onClose={onBack} />}
+          </div>
+        </ScrollArea>
       </Tabs>
     </div>
   );
@@ -660,7 +665,7 @@ export const MyPage = memo(function MyPage({ userName, onClose }: MyPageProps) {
     return (
       <div className="flex flex-col h-full bg-background">
         {/* 内容区域 */}
-        <div className="flex-1 overflow-y-auto">
+        <div className="flex-1">
           {activeSection === "settings" && (
             <SettingsContent onBack={() => setActiveSection(null)} />
           )}

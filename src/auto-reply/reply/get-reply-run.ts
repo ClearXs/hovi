@@ -265,11 +265,13 @@ export async function runPreparedReply(
       })
     : "";
   const groupSystemPrompt = sessionCtx.GroupSystemPrompt?.trim() ?? "";
+  const attachmentTextContext = sessionCtx.AttachmentTextContext?.trim() ?? "";
   const inboundMetaPrompt = buildInboundMetaSystemPrompt(
     isNewSession ? sessionCtx : { ...sessionCtx, ThreadStarterBody: undefined },
   );
   const extraSystemPromptParts = [
     inboundMetaPrompt,
+    attachmentTextContext,
     groupChatContext,
     groupIntro,
     groupSystemPrompt,

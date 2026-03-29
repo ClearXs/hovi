@@ -232,6 +232,52 @@ describe("gateway server chat", () => {
     expect(ctx?.BodyForCommands).toBe("Café\tline");
   });
 
+  test("keeps attachment extraction out of user body text while preserving model context", async () => {
+    const spy = vi.mocked(getReplyFromConfig);
+    spy.mockClear();
+    const spyCalls = spy.mock.calls as unknown[][];
+    const callsBeforeSend = spyCalls.length;
+    const jsonB64 = Buffer.from(
+      JSON.stringify({
+        title: "GDB",
+        description: "Unleashing Linguistic Creativity.",
+      }),
+      "utf-8",
+    ).toString("base64");
+
+    const sendRes = await rpcReq(ws, "chat.send", {
+      sessionKey: "main",
+      message: "请总结附件",
+      idempotencyKey: "idem-attachment-context-1",
+      attachments: [
+        {
+          type: "file",
+          mimeType: "application/json",
+          fileName: "GDB数据引接.json",
+          content: jsonB64,
+        },
+      ],
+    });
+    expect(sendRes.ok).toBe(true);
+
+    await waitFor(() => spyCalls.length > callsBeforeSend);
+    const ctx = spyCalls.at(-1)?.[0] as
+      | {
+          Body?: string;
+          BodyForAgent?: string;
+          RawBody?: string;
+          BodyForCommands?: string;
+          AttachmentTextContext?: string;
+        }
+      | undefined;
+    expect(ctx?.Body).toBe("请总结附件");
+    expect(ctx?.RawBody).toBe("请总结附件");
+    expect(ctx?.BodyForCommands).toBe("请总结附件");
+    expect(ctx?.AttachmentTextContext).toContain("Attachment text context:");
+    expect(ctx?.AttachmentTextContext).toContain("GDB数据引接.json");
+    expect(ctx?.BodyForAgent ?? "").not.toContain("Attachment text context:");
+  });
+
   test("handles chat send and history flows", async () => {
     const tempDirs: string[] = [];
     let webchatWs: WebSocket | undefined;

@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  Palette,
   Lock,
   Bot,
   MessageSquare,
@@ -336,48 +335,6 @@ export function GeneralSettingsTab({ onClose }: { onClose?: () => void }) {
           </Button>
         </div>
       </div>
-
-      {/* ---- UI 自定义 ---- */}
-      <section>
-        <SectionHeader icon={<Palette className="w-4 h-4" />} title="界面个性化" />
-
-        <FieldRow label="主题色" description="界面强调色,影响按钮和高亮元素颜色">
-          <div className="flex items-center gap-2">
-            <input
-              type="color"
-              value={stringVal("ui.seamColor") || "#6366f1"}
-              onChange={(e) => setValue("ui.seamColor", e.target.value)}
-              className="w-8 h-8 rounded border border-border-light cursor-pointer"
-            />
-            <Input
-              value={stringVal("ui.seamColor") || ""}
-              onChange={(e) => setValue("ui.seamColor", e.target.value)}
-              placeholder="#6366f1"
-              className="h-8 text-xs flex-1"
-            />
-          </div>
-        </FieldRow>
-
-        <FieldRow label="助手名称" description="助手在对话中显示的名称">
-          <Input
-            value={stringVal("ui.assistant.name") || ""}
-            onChange={(e) => setValue("ui.assistant.name", e.target.value)}
-            placeholder="Assistant"
-            className="h-8 text-xs"
-          />
-        </FieldRow>
-
-        <FieldRow label="助手头像" description="支持 Emoji、短文本或图片 URL">
-          <Input
-            value={stringVal("ui.assistant.avatar") || ""}
-            onChange={(e) => setValue("ui.assistant.avatar", e.target.value)}
-            placeholder="🤖 或 图片 URL"
-            className="h-8 text-xs"
-          />
-        </FieldRow>
-      </section>
-
-      <hr className="border-border-light my-5" />
 
       {/* ---- 网关认证 ---- */}
       <section>

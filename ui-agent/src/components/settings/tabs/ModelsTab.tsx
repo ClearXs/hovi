@@ -717,7 +717,7 @@ function QuickAddModelDialog({
           <DialogDescription>手动输入模型信息并添加到提供商。</DialogDescription>
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto space-y-4">
+        <div className="flex-1 overflow-y-auto scrollbar-default space-y-4">
           {/* 模型信息 */}
           <div className="space-y-3 p-3 bg-surface-subtle rounded-md">
             <div>
@@ -1068,7 +1068,7 @@ function ProviderCard({
               <label className="text-xs text-text-secondary mb-1 block">
                 模型列表 ({provider.models.length})
               </label>
-              <div className="bg-surface-subtle rounded-md divide-y divide-border-light max-h-[200px] overflow-y-auto">
+              <div className="bg-surface-subtle rounded-md divide-y divide-border-light max-h-[200px] overflow-y-auto scrollbar-default">
                 {provider.models.map((model) => {
                   const isDefault = currentDefaultModel === model.id;
                   return (

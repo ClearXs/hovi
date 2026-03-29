@@ -14,6 +14,17 @@ interface PdfJsLib {
           viewport: { width: number; height: number };
         }) => { promise: Promise<void> };
       }>;
+      getOutline: () => Promise<Array<{
+        title?: string;
+        dest?: string | unknown[] | null;
+        items?: Array<{
+          title?: string;
+          dest?: string | unknown[] | null;
+          items?: unknown[];
+        }>;
+      }> | null>;
+      getDestination: (destinationId: string) => Promise<unknown[] | null>;
+      getPageIndex: (ref: { num: number; gen: number }) => Promise<number>;
     }>;
   };
 }
@@ -34,6 +45,7 @@ import {
   ExternalLink,
   Eye,
   GripHorizontal,
+  RefreshCw,
   RotateCcw,
   Save,
 } from "lucide-react";
@@ -59,6 +71,98 @@ import { UniverSheetPreview } from "./UniverSheetPreview";
 interface DocPreviewProps {
   detail: KnowledgeDetail | null;
   highlightKeywords?: string[];
+}
+
+interface PdfOutlineNode {
+  id: string;
+  title: string;
+  pageNumber: number | null;
+  children: PdfOutlineNode[];
+}
+
+function isPdfRefDestination(value: unknown): value is { num: number; gen: number } {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as { num?: unknown; gen?: unknown };
+  return typeof candidate.num === "number" && typeof candidate.gen === "number";
+}
+
+async function resolvePdfOutlinePageNumber(
+  pdf: {
+    getDestination: (destinationId: string) => Promise<unknown[] | null>;
+    getPageIndex: (ref: { num: number; gen: number }) => Promise<number>;
+  },
+  destination: string | unknown[] | null | undefined,
+): Promise<number | null> {
+  if (!destination) {
+    return null;
+  }
+
+  let resolvedDestination: unknown[] | null = null;
+  if (typeof destination === "string") {
+    resolvedDestination = await pdf.getDestination(destination);
+  } else if (Array.isArray(destination)) {
+    resolvedDestination = destination;
+  }
+  if (!resolvedDestination || resolvedDestination.length === 0) {
+    return null;
+  }
+
+  const target = resolvedDestination[0];
+  if (isPdfRefDestination(target)) {
+    const pageIndex = await pdf.getPageIndex(target);
+    return pageIndex + 1;
+  }
+  if (typeof target === "number") {
+    return target + 1;
+  }
+  return null;
+}
+
+async function buildPdfOutlineTree(
+  pdf: {
+    getDestination: (destinationId: string) => Promise<unknown[] | null>;
+    getPageIndex: (ref: { num: number; gen: number }) => Promise<number>;
+  },
+  items: Array<{
+    title?: string;
+    dest?: string | unknown[] | null;
+    items?: Array<{
+      title?: string;
+      dest?: string | unknown[] | null;
+      items?: unknown[];
+    }>;
+  }>,
+  parentPath = "root",
+): Promise<PdfOutlineNode[]> {
+  const result: PdfOutlineNode[] = [];
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    const itemPath = `${parentPath}-${index + 1}`;
+    const pageNumber = await resolvePdfOutlinePageNumber(pdf, item.dest);
+    const title = item.title?.trim() || `未命名书签 ${index + 1}`;
+    const children = Array.isArray(item.items)
+      ? await buildPdfOutlineTree(
+          pdf,
+          item.items as Array<{
+            title?: string;
+            dest?: string | unknown[] | null;
+            items?: Array<{
+              title?: string;
+              dest?: string | unknown[] | null;
+              items?: unknown[];
+            }>;
+          }>,
+          itemPath,
+        )
+      : [];
+    result.push({
+      id: itemPath,
+      title,
+      pageNumber,
+      children,
+    });
+  }
+  return result;
 }
 
 function escapeRegex(value: string): string {
@@ -93,10 +197,16 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
   const [textContent, setTextContent] = useState<string>("");
   const [isLoading, setIsLoading] = useState(false);
   const [zoom, setZoom] = useState(1);
+  const [imageZoom, setImageZoom] = useState(1);
+  const [imageRotation, setImageRotation] = useState(0);
   const [pdfPages, setPdfPages] = useState(0);
   const [pdfPage, setPdfPage] = useState(1);
   const [pdfLoading, setPdfLoading] = useState(false);
   const [pdfError, setPdfError] = useState<string | null>(null);
+  const [pdfOutline, setPdfOutline] = useState<PdfOutlineNode[]>([]);
+  const [pdfOutlineOpen, setPdfOutlineOpen] = useState(false);
+  const [pdfOutlineLoading, setPdfOutlineLoading] = useState(false);
+  const [pdfOutlineError, setPdfOutlineError] = useState<string | null>(null);
   const [pdfSearch, setPdfSearch] = useState("");
   const [pdfSearchStatus, setPdfSearchStatus] = useState<string | null>(null);
   const [pptxPreviewUrl, setPptxPreviewUrl] = useState<string | null>(null);
@@ -176,6 +286,8 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
   const [pdfToolbarPos, setPdfToolbarPos] = useState({ x: 16, y: 16 });
   const [pdfToolbarExpanded, setPdfToolbarExpanded] = useState(true);
   const pdfToolbarRef = useRef<HTMLDivElement | null>(null);
+  const pdfOutlinePanelRef = useRef<HTMLElement | null>(null);
+  const pdfOutlineToggleRef = useRef<HTMLButtonElement | null>(null);
   const pdfDragRef = useRef<{
     dragging: boolean;
     startX: number;
@@ -209,7 +321,9 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
     filename.endsWith(".docx");
   const isXlsx =
     mime === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
-    filename.endsWith(".xlsx");
+    mime === "application/vnd.ms-excel" ||
+    filename.endsWith(".xlsx") ||
+    filename.endsWith(".xls");
   const isCsv = mime === "text/csv" || mime === "application/csv" || filename.endsWith(".csv");
   const isPptx =
     mime === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
@@ -384,11 +498,17 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
     setBlobUrl(null);
     setTextContent("");
     setZoom(1);
+    setImageZoom(1);
+    setImageRotation(0);
     setPdfPages(0);
     setPdfError(null);
     setPdfPage(1);
     setPdfSearch("");
     setPdfSearchStatus(null);
+    setPdfOutline([]);
+    setPdfOutlineOpen(false);
+    setPdfOutlineLoading(false);
+    setPdfOutlineError(null);
     setPptxPreviewUrl(null);
     setPptxPreviewLoading(false);
     setPptxPreviewError(null);
@@ -448,6 +568,25 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
         pdfDocRef.current = pdf;
         setPdfPages(pdf.numPages);
         setPdfPage(1);
+        setPdfOutlineLoading(true);
+        setPdfOutlineError(null);
+        setPdfOutline([]);
+        try {
+          const outline = await pdf.getOutline();
+          if (!isActive) return;
+          if (outline && outline.length > 0) {
+            const tree = await buildPdfOutlineTree(pdf, outline);
+            if (!isActive) return;
+            setPdfOutline(tree);
+          }
+        } catch (outlineError) {
+          if (!isActive) return;
+          setPdfOutlineError(outlineError instanceof Error ? outlineError.message : "目录解析失败");
+        } finally {
+          if (isActive) {
+            setPdfOutlineLoading(false);
+          }
+        }
         // 触发重新渲染
         setPdfRenderKey((k) => k + 1);
       } catch (err) {
@@ -579,6 +718,21 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
     if (!isMarkdown) return;
     setEditedMarkdownContent(textContent);
   }, [textContent, isMarkdown]);
+
+  useEffect(() => {
+    if (!pdfOutlineOpen) return;
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (!target) return;
+      const panel = pdfOutlinePanelRef.current;
+      const toggle = pdfOutlineToggleRef.current;
+      if (panel?.contains(target)) return;
+      if (toggle?.contains(target)) return;
+      setPdfOutlineOpen(false);
+    };
+    window.addEventListener("mousedown", onPointerDown);
+    return () => window.removeEventListener("mousedown", onPointerDown);
+  }, [pdfOutlineOpen]);
 
   // Markdown toolbar 位置调整
   if (!detail) {
@@ -855,14 +1009,136 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
 
   if (mime.startsWith("image/")) {
     return blobUrl ? (
-      <div>
-        {toolbar}
-        <img
-          src={blobUrl}
-          alt={detail.filename}
-          className="max-h-[360px] object-contain"
-          style={{ transform: `scale(${zoom})`, transformOrigin: "top left" }}
-        />
+      <div className="relative h-full">
+        <div className="h-full overflow-auto scrollbar-default p-sm">
+          <div className="flex min-h-full min-w-full items-center justify-center">
+            <img
+              src={blobUrl}
+              alt={detail.filename}
+              className="max-h-[82vh] max-w-full object-contain"
+              style={{
+                transform: `scale(${imageZoom}) rotate(${imageRotation}deg)`,
+                transformOrigin: "center center",
+              }}
+            />
+          </div>
+        </div>
+
+        <div className="absolute bottom-[20px] left-1/2 -translate-x-1/2 flex max-w-[calc(100%-24px)] items-center gap-1 whitespace-nowrap rounded-md border border-primary/25 bg-background/95 p-1 text-text-primary shadow-sm backdrop-blur">
+          <TooltipProvider delayDuration={200}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="flex h-7 w-7 items-center justify-center rounded text-text-secondary hover:bg-gray-100"
+                  onClick={() => setImageZoom((z) => Math.max(0.25, z - 0.25))}
+                  disabled={imageZoom <= 0.25}
+                >
+                  <svg
+                    className="h-4 w-4"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">缩小</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="flex h-7 w-7 items-center justify-center rounded text-text-secondary hover:bg-gray-100"
+                  onClick={() => setImageZoom((z) => Math.min(5, z + 0.25))}
+                  disabled={imageZoom >= 5}
+                >
+                  <svg
+                    className="h-4 w-4"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                  >
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">放大</TooltipContent>
+            </Tooltip>
+            <span className="min-w-[52px] text-center text-xs text-text-tertiary">
+              {Math.round(imageZoom * 100)}%
+            </span>
+            <div className="mx-1 h-5 w-px bg-border-light" />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="flex h-7 w-7 items-center justify-center rounded text-text-secondary hover:bg-gray-100"
+                  onClick={() => setImageRotation((deg) => deg - 90)}
+                >
+                  <RotateCcw className="h-4 w-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">逆时针旋转</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="flex h-7 w-7 items-center justify-center rounded text-text-secondary hover:bg-gray-100"
+                  onClick={() => setImageRotation((deg) => deg + 90)}
+                >
+                  <RotateCcw className="h-4 w-4 -scale-x-100" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">顺时针旋转</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="flex h-7 w-7 items-center justify-center rounded text-text-secondary hover:bg-gray-100"
+                  onClick={() => {
+                    setImageZoom(1);
+                    setImageRotation(0);
+                  }}
+                >
+                  <RefreshCw className="h-4 w-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">恢复默认视图</TooltipContent>
+            </Tooltip>
+            <div className="mx-1 h-5 w-px bg-border-light" />
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="flex h-7 w-7 items-center justify-center rounded text-text-secondary hover:bg-gray-100"
+                  onClick={() => window.open(blobUrl, "_blank", "noopener")}
+                >
+                  <ExternalLink className="h-4 w-4" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">打开</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <a
+                  href={blobUrl}
+                  download={detail.filename}
+                  className="flex h-7 w-7 items-center justify-center rounded text-text-secondary hover:bg-gray-100"
+                >
+                  <Download className="h-4 w-4" />
+                </a>
+              </TooltipTrigger>
+              <TooltipContent side="top">下载</TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </div>
       </div>
     ) : (
       <div className="text-sm text-text-tertiary">加载图片中...</div>
@@ -892,39 +1168,88 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
   }
 
   if (mime === "application/pdf") {
+    const renderOutlineNodes = (nodes: PdfOutlineNode[], depth = 0) => {
+      return nodes.map((node) => (
+        <div key={node.id}>
+          <button
+            type="button"
+            onClick={() => {
+              if (node.pageNumber) {
+                setPdfPage(node.pageNumber);
+              }
+            }}
+            className="flex w-full items-start gap-xs rounded px-xs py-[4px] text-left text-xs text-text-secondary hover:bg-background-secondary hover:text-text-primary"
+            style={{ paddingLeft: `${depth * 14 + 8}px` }}
+            title={node.title}
+          >
+            <span className="min-w-0 flex-1 truncate">{node.title}</span>
+            <span className="shrink-0 text-[10px] text-text-tertiary">
+              {node.pageNumber ? `P${node.pageNumber}` : "-"}
+            </span>
+          </button>
+          {node.children.length > 0 ? renderOutlineNodes(node.children, depth + 1) : null}
+        </div>
+      ));
+    };
+
     return blobUrl ? (
       <div key={pdfRenderKey} className="relative h-full">
         {/* PDF 画布区域 */}
-        <div className="h-full overflow-auto p-sm">
-          {pdfLoading ? (
-            <div className="flex h-full items-center justify-center text-sm text-text-tertiary">
-              加载 PDF 中...
-            </div>
-          ) : (
-            <canvas
-              key={pdfRenderKey}
-              ref={pdfCanvasRef}
-              className="mx-auto block max-w-full bg-white"
-            />
+        <div className="relative h-full p-sm">
+          <div className="h-full overflow-auto scrollbar-default rounded border border-border-light bg-background-secondary p-sm">
+            {pdfLoading ? (
+              <div className="flex h-full items-center justify-center text-sm text-text-tertiary">
+                加载 PDF 中...
+              </div>
+            ) : pdfError ? (
+              <div className="flex h-full items-center justify-center text-sm text-error">
+                {pdfError}
+              </div>
+            ) : (
+              <canvas key={pdfRenderKey} ref={pdfCanvasRef} className="mx-auto block bg-white" />
+            )}
+          </div>
+
+          {/* 目录悬浮层：不参与正文布局，避免把内容挤窄 */}
+          {pdfOutlineOpen && (
+            <aside
+              ref={pdfOutlinePanelRef}
+              className="absolute top-2 left-2 bottom-2 z-40 w-[280px] overflow-auto scrollbar-default rounded border border-border-light bg-background/95 p-xs shadow-md backdrop-blur"
+            >
+              <div className="mb-xs px-xs py-[4px] text-xs font-medium text-text-secondary">
+                文档目录
+              </div>
+              {pdfOutlineLoading ? (
+                <div className="px-xs py-sm text-xs text-text-tertiary">目录加载中...</div>
+              ) : pdfOutlineError ? (
+                <div className="px-xs py-sm text-xs text-error">{pdfOutlineError}</div>
+              ) : pdfOutline.length === 0 ? (
+                <div className="px-xs py-sm text-xs text-text-tertiary">当前 PDF 无书签目录</div>
+              ) : (
+                <div className="space-y-[2px]">{renderOutlineNodes(pdfOutline)}</div>
+              )}
+            </aside>
           )}
         </div>
-
-        {/* PDF 悬浮工具栏 - 距底部30px居中 */}
-        <div className="absolute bottom-[30px] left-1/2 -translate-x-1/2 flex select-none items-center gap-1 rounded-md border border-primary/25 bg-background/95 p-1 text-text-primary shadow-sm backdrop-blur">
-          <TooltipProvider delayDuration={200}>
-            {/* 拖拽按钮 */}
-            <button
-              data-pdf-drag
-              type="button"
-              className="flex h-7 w-7 cursor-move items-center justify-center rounded-md bg-background/80 text-text-secondary transition-colors hover:bg-primary/15 hover:text-primary"
-            >
-              <GripHorizontal className="h-3.5 w-3.5" />
-            </button>
-          </TooltipProvider>
-        </div>
         {/* PDF 底部工具栏 */}
-        <div className="absolute bottom-[30px] left-1/2 -translate-x-1/2 flex items-center gap-1 rounded-md border border-primary/25 bg-background/95 p-1 text-text-primary shadow-sm backdrop-blur">
+        <div className="absolute bottom-[20px] left-1/2 z-30 -translate-x-1/2 flex max-w-[calc(100%-24px)] items-center gap-1 whitespace-nowrap rounded-md border border-primary/25 bg-background/95 p-1 text-text-primary shadow-sm backdrop-blur">
           <TooltipProvider delayDuration={200}>
+            {/* 目录开关 */}
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  ref={pdfOutlineToggleRef}
+                  type="button"
+                  className="flex items-center gap-1 whitespace-nowrap rounded px-2 py-1 text-xs text-text-secondary hover:bg-gray-100"
+                  onClick={() => setPdfOutlineOpen((open) => !open)}
+                >
+                  <GripHorizontal className="h-4 w-4" />
+                  {pdfOutlineOpen ? "隐藏目录" : "显示目录"}
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">切换目录面板</TooltipContent>
+            </Tooltip>
+            <div className="mx-1 h-5 w-px bg-border-light" />
             {/* 缩小按钮 */}
             <Tooltip>
               <TooltipTrigger asChild>
@@ -968,6 +1293,10 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
               </TooltipTrigger>
               <TooltipContent side="top">放大</TooltipContent>
             </Tooltip>
+            {/* 缩放百分比 */}
+            <span className="min-w-[52px] text-center text-xs text-text-tertiary">
+              {Math.round(zoom * 100)}%
+            </span>
             {/* 分隔线 */}
             <div className="mx-1 h-5 w-px bg-border-light" />
             {/* 上一页 */}
@@ -975,7 +1304,7 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  className="flex items-center gap-1 rounded px-2 py-1 text-xs text-text-secondary hover:bg-gray-100 disabled:opacity-40"
+                  className="flex items-center gap-1 whitespace-nowrap rounded px-2 py-1 text-xs text-text-secondary hover:bg-gray-100 disabled:opacity-40"
                   disabled={pdfPage <= 1 || pdfLoading}
                   onClick={() => setPdfPage((prev) => Math.max(1, prev - 1))}
                 >
@@ -994,7 +1323,7 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
               <TooltipTrigger asChild>
                 <button
                   type="button"
-                  className="flex items-center gap-1 rounded px-2 py-1 text-xs text-text-secondary hover:bg-gray-100 disabled:opacity-40"
+                  className="flex items-center gap-1 whitespace-nowrap rounded px-2 py-1 text-xs text-text-secondary hover:bg-gray-100 disabled:opacity-40"
                   disabled={pdfPages === 0 || pdfPage >= pdfPages || pdfLoading}
                   onClick={() => setPdfPage((prev) => Math.min(pdfPages, prev + 1))}
                 >
@@ -1374,7 +1703,7 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
             />
           ) : (
             // 阅读模式 - ReactMarkdown 渲染
-            <div className="h-full overflow-auto bg-background p-md scrollbar-narrow">
+            <div className="h-full overflow-auto scrollbar-default bg-background p-md">
               <div className="prose prose-sm max-w-none text-text-secondary">
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}

@@ -1,11 +1,22 @@
 "use client";
 
-import { Menu, MessageSquare, Plus, Search } from "lucide-react";
+import {
+  Briefcase,
+  FileText,
+  BarChart3,
+  Menu,
+  MessageSquare,
+  Plus,
+  Search,
+  Users,
+  type LucideIcon,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentManageDialog } from "@/components/agent-manage/AgentManageDialog";
 import { ComputerPanelWrapper } from "@/components/agent/ComputerPanelWrapper";
+import { ChannelCenterPage } from "@/components/channel/ChannelCenterPage";
 import { EnhancedChatInput } from "@/components/chat/EnhancedChatInput";
-import { MessageList, Message } from "@/components/chat/MessageList";
+import { MessageList, Message, SessionAttachmentMeta } from "@/components/chat/MessageList";
 import { SessionDocuments } from "@/components/chat/SessionDocuments";
 import { SessionPreviewPanel } from "@/components/chat/SessionPreviewPanel";
 import { CronJobsDialog } from "@/components/cron/CronJobsDialog";
@@ -17,6 +28,7 @@ import { KnowledgeBasePage } from "@/components/knowledge/KnowledgeBasePage";
 import MainLayout from "@/components/layout/MainLayout";
 import { MobileSessionDrawer } from "@/components/layout/MobileSessionDrawer";
 import { MyPage } from "@/components/my/MyPage";
+import { TaskSearchDialog } from "@/components/search/TaskSearchDialog";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { Button } from "@/components/ui/button";
 import {
@@ -35,7 +47,11 @@ import type { AgentInfo } from "@/features/persona/types/persona";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useResponsive } from "@/hooks/useResponsive";
 import { isSubagentLifecycleEvent } from "@/lib/agent-stream-events";
-import { isPageIndexSupported } from "@/services/pageindexApi";
+import {
+  bindSessionDocuments,
+  isPageIndexSupported,
+  listSessionDocuments,
+} from "@/services/pageindexApi";
 import { useAgentStore } from "@/stores/agentStore";
 import { useAvatarStateStore } from "@/stores/avatarStateStore";
 import { useConnectionStore } from "@/stores/connectionStore";
@@ -52,9 +68,74 @@ type ConnectorItem = {
   status?: "connected" | "disconnected" | "error" | "draft";
 };
 
+const HOME_QUICK_CARDS: Array<{
+  title: string;
+  description: string;
+  prompt: string;
+  icon: LucideIcon;
+}> = [
+  {
+    title: "查询公司资质",
+    description: "快速梳理公司证照与到期风险",
+    prompt:
+      "帮我整理一下公司都有哪些资质证书，包括营业执照、各类行业许可证、ISO认证等，最好能标注一下哪些即将过期需要续期",
+    icon: Briefcase,
+  },
+  {
+    title: "分析本月销售数据",
+    description: "生成月度销售趋势与异常点总结",
+    prompt:
+      "这个月销售数据出来了，帮我分析一下销售额、订单量、客户增长这些指标，跟上个月和去年同期对比怎么样，有没有异常波动",
+    icon: BarChart3,
+  },
+  {
+    title: "投标文件生成器",
+    description: "基于招标要求生成投标文档",
+    prompt: "/投标文件生成器\n我需要制作投标文件，请帮我分析招标文件并生成完整的技术标和商务标",
+    icon: FileText,
+  },
+  {
+    title: "查看今日考勤情况",
+    description: "汇总出勤、迟到、请假与加班信息",
+    prompt: "帮忙查一下今天公司员工的考勤情况，有多少人正常出勤，谁迟到了，谁请假了，还有谁在加班",
+    icon: Users,
+  },
+  {
+    title: "撰写客户跟进邮件",
+    description: "按客户阶段生成专业跟进话术",
+    prompt:
+      "帮我写一封客户跟进邮件，客户是制造业企业，之前已沟通过预算和交付周期，这次希望推进到合同确认阶段",
+    icon: MessageSquare,
+  },
+  {
+    title: "生成会议纪要",
+    description: "整理重点结论、待办和负责人",
+    prompt:
+      "请根据今天项目例会内容生成一份会议纪要，包含关键决策、未决问题、待办事项和责任人，最后附上下次会议建议议程",
+    icon: FileText,
+  },
+  {
+    title: "制定招聘计划",
+    description: "输出岗位优先级与招聘节奏",
+    prompt:
+      "帮我做一个季度招聘计划，按部门梳理岗位优先级、人数、预算和招聘节奏，并给出每个岗位的JD关键能力点",
+    icon: Users,
+  },
+  {
+    title: "本周运营复盘",
+    description: "总结核心指标变化与下周策略",
+    prompt:
+      "请帮我做一份本周运营复盘，包含流量、转化、留存、客单价等核心指标变化，分析原因并提出下周优化动作",
+    icon: BarChart3,
+  },
+];
+
+const HOME_PRIMARY_CARDS = HOME_QUICK_CARDS.slice(0, 2);
+
 // 内部组件，使用StreamingReplayContext
 function HomeContent() {
   const {
+    sessions,
     activeSessionKey,
     fetchSessions,
     selectSession,
@@ -64,9 +145,7 @@ function HomeContent() {
     getSessionByKey,
     getUnreadMap,
     isLoading: isSessionsLoading,
-    searchQuery,
     filterKind,
-    setSearchQuery,
     setFilterKind,
     unreadOnly,
     setUnreadOnly,
@@ -87,9 +166,9 @@ function HomeContent() {
   const { openSettings, config, loadConfig } = useSettingsStore();
   const { isMobile } = useResponsive();
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
-  const [activeMainView, setActiveMainView] = useState<"chat" | "knowledge" | "persona" | "my">(
-    "chat",
-  );
+  const [activeMainView, setActiveMainView] = useState<
+    "chat" | "channel" | "knowledge" | "persona" | "my"
+  >("chat");
 
   // Get user name from config
   const userName = config?.ui?.assistant?.name || "张三";
@@ -98,6 +177,8 @@ function HomeContent() {
   const [cronJobsOpen, setCronJobsOpen] = useState(false);
   const [agentManageOpen, setAgentManageOpen] = useState(false);
   const [sessionDrawerOpen, setSessionDrawerOpen] = useState(false);
+  const [taskSearchOpen, setTaskSearchOpen] = useState(false);
+  const [homeTemplatesOpen, setHomeTemplatesOpen] = useState(false);
   const { isStreaming, startStreaming, stopStreaming } = useStreamingReplay();
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [detailSessionKey, setDetailSessionKey] = useState<string | null>(null);
@@ -128,11 +209,9 @@ function HomeContent() {
   >({});
   const [toolStartTimes, setToolStartTimes] = useState<Record<string, number>>({});
   const usageAppliedByRunKeyRef = useRef<Record<string, boolean>>({});
-  const [highlightMessageId, setHighlightMessageId] = useState<string | null>(null);
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
   const [draftMessage, setDraftMessage] = useState("");
   const [draftAttachments, setDraftAttachments] = useState<File[]>([]);
-  const [highlightDraft, setHighlightDraft] = useState(false);
   const [isCreatingSession, setIsCreatingSession] = useState(false);
   const [availableConnectors, setAvailableConnectors] = useState<ConnectorItem[]>([]);
   const [sessionConnectorIds, setSessionConnectorIds] = useState<Record<string, string[]>>({});
@@ -140,6 +219,10 @@ function HomeContent() {
 
   // 当前正在进行的 runId（用于取消）
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const pendingUploadSessionKeyRef = useRef(
+    `__preview_upload__:${typeof crypto?.randomUUID === "function" ? crypto.randomUUID() : Date.now().toString(36)}`,
+  );
+  const pendingUploadSessionKey = pendingUploadSessionKeyRef.current;
 
   // Dialog states
   type DialogType = "rename" | "delete" | "batchDelete" | null;
@@ -177,17 +260,6 @@ function HomeContent() {
   }, [status, fetchSessions]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void fetchSessions();
-    }, 300);
-    return () => window.clearTimeout(timer);
-  }, [searchQuery, fetchSessions]);
-
-  useEffect(() => {
-    void fetchSessions();
-  }, [filterKind, fetchSessions]);
-
-  useEffect(() => {
     if (activeSessionKey) {
       setCurrentConversationId(activeSessionKey);
     }
@@ -210,6 +282,10 @@ function HomeContent() {
       setCurrentConversationId(null);
       setActiveMainView("knowledge");
     };
+    const handleOpenChannel = () => {
+      setCurrentConversationId(null);
+      setActiveMainView("channel");
+    };
     const handleOpenMy = () => {
       setCurrentConversationId(null);
       setActiveMainView("my");
@@ -221,6 +297,7 @@ function HomeContent() {
     window.addEventListener("mobile:open-cron-jobs", handleOpenCronJobs);
     window.addEventListener("mobile:open-agent-manage", handleOpenAgentManage);
     window.addEventListener("mobile:open-knowledge", handleOpenKnowledge);
+    window.addEventListener("mobile:open-channel", handleOpenChannel);
     window.addEventListener("mobile:open-my", handleOpenMy);
 
     return () => {
@@ -230,6 +307,7 @@ function HomeContent() {
       window.removeEventListener("mobile:open-cron-jobs", handleOpenCronJobs);
       window.removeEventListener("mobile:open-agent-manage", handleOpenAgentManage);
       window.removeEventListener("mobile:open-knowledge", handleOpenKnowledge);
+      window.removeEventListener("mobile:open-channel", handleOpenChannel);
       window.removeEventListener("mobile:open-my", handleOpenMy);
     };
   }, [openSettings]);
@@ -237,11 +315,45 @@ function HomeContent() {
   // 注册快捷键
   const shortcuts = useMemo(() => {
     const s = shortcutStore.shortcuts;
+    const resolve = (
+      id: string,
+      fallback: { key: string; ctrl: boolean; shift: boolean; alt: boolean; meta: boolean },
+    ) => {
+      const match = s.find((entry) => entry.id === id);
+      return {
+        key: match?.key || fallback.key,
+        ctrl: match?.ctrl ?? fallback.ctrl,
+        shift: match?.shift ?? fallback.shift,
+        alt: match?.alt ?? fallback.alt,
+        meta: match?.meta ?? fallback.meta,
+      };
+    };
     return [
       {
-        key: s.find((x) => x.id === "persona")?.key || "z",
-        ctrl: s.find((x) => x.id === "persona")?.ctrl ?? true,
-        shift: s.find((x) => x.id === "persona")?.shift ?? true,
+        ...resolve("newSession", { key: "n", ctrl: true, shift: false, alt: false, meta: true }),
+        action: "newSession",
+        handler: () => {
+          if (isStreaming) stopStreaming();
+          setActiveMainView("chat");
+          setCurrentConversationId(null);
+          setDraftMessage("");
+          setDraftAttachments([]);
+          window.setTimeout(() => {
+            const input = document.querySelector("textarea");
+            if (input) {
+              input.scrollIntoView({ behavior: "smooth", block: "center" });
+              (input as HTMLTextAreaElement).focus();
+            }
+          }, 0);
+        },
+      },
+      {
+        ...resolve("search", { key: "k", ctrl: true, shift: false, alt: false, meta: true }),
+        action: "openTaskSearch",
+        handler: () => setTaskSearchOpen(true),
+      },
+      {
+        ...resolve("persona", { key: "z", ctrl: true, shift: true, alt: false, meta: false }),
         action: "openPersona",
         handler: () => {
           setCurrentConversationId(null);
@@ -249,37 +361,67 @@ function HomeContent() {
         },
       },
       {
-        key: s.find((x) => x.id === "cron")?.key || "x",
-        ctrl: s.find((x) => x.id === "cron")?.ctrl ?? true,
-        shift: s.find((x) => x.id === "cron")?.shift ?? true,
+        ...resolve("cron", { key: "x", ctrl: true, shift: true, alt: false, meta: false }),
         action: "openCron",
         handler: () => setCronJobsOpen(true),
       },
       {
-        key: s.find((x) => x.id === "agent")?.key || "c",
-        ctrl: s.find((x) => x.id === "agent")?.ctrl ?? true,
-        shift: s.find((x) => x.id === "agent")?.shift ?? true,
+        ...resolve("agent", { key: "c", ctrl: true, shift: true, alt: false, meta: false }),
         action: "openAgent",
         handler: () => setAgentManageOpen(true),
       },
       {
-        key: s.find((x) => x.id === "settings")?.key || "v",
-        ctrl: s.find((x) => x.id === "settings")?.ctrl ?? true,
-        shift: s.find((x) => x.id === "settings")?.shift ?? true,
+        ...resolve("settings", { key: "v", ctrl: true, shift: true, alt: false, meta: false }),
         action: "openSettings",
         handler: () => openSettings(),
       },
       {
-        key: s.find((x) => x.id === "home")?.key || "h",
-        ctrl: s.find((x) => x.id === "home")?.ctrl ?? true,
-        shift: s.find((x) => x.id === "home")?.shift ?? true,
+        ...resolve("home", { key: "h", ctrl: true, shift: true, alt: false, meta: false }),
         action: "goHome",
         handler: () => setActiveMainView("chat"),
       },
     ];
-  }, [shortcutStore.shortcuts, openSettings]);
+  }, [shortcutStore.shortcuts, openSettings, isStreaming, stopStreaming]);
 
-  useKeyboardShortcuts({ shortcuts });
+  useKeyboardShortcuts({ shortcuts, enabled: !taskSearchOpen });
+
+  const shortcutLabels = useMemo(() => {
+    const resolveLabel = (
+      id: string,
+      fallback: { key: string; ctrl: boolean; shift: boolean; alt: boolean; meta: boolean },
+    ) => {
+      const shortcut = shortcutStore.shortcuts.find((item) => item.id === id);
+      const key = (shortcut?.key || fallback.key).toUpperCase();
+      const ctrl = shortcut?.ctrl ?? fallback.ctrl;
+      const shift = shortcut?.shift ?? fallback.shift;
+      const alt = shortcut?.alt ?? fallback.alt;
+      const meta = shortcut?.meta ?? fallback.meta;
+      const parts: string[] = [];
+      if (ctrl) parts.push("Ctrl");
+      if (meta) parts.push("Cmd");
+      if (shift) parts.push("Shift");
+      if (alt) parts.push("Alt");
+      if (key) parts.push(key);
+      return parts.join("+");
+    };
+
+    return {
+      search: resolveLabel("search", {
+        key: "k",
+        ctrl: true,
+        shift: false,
+        alt: false,
+        meta: true,
+      }),
+      newSession: resolveLabel("newSession", {
+        key: "n",
+        ctrl: true,
+        shift: false,
+        alt: false,
+        meta: true,
+      }),
+    };
+  }, [shortcutStore.shortcuts]);
 
   const loadConnectors = useCallback(async () => {
     if (!wsClient) return;
@@ -666,6 +808,119 @@ function HomeContent() {
     [extractMessageText, normalizeUsage],
   );
 
+  const extractAttachmentNamesFromText = useCallback((text: string): string[] => {
+    if (!text) return [];
+    const matches: string[] = [];
+    const pattern = /^\[Attachment\s+\d+\]\s+(.+?)(?:\s+\([^)]*\))?\s*$/gm;
+    let match: RegExpExecArray | null = pattern.exec(text);
+    while (match) {
+      const filename = match[1]?.trim();
+      if (filename) {
+        matches.push(filename);
+      }
+      match = pattern.exec(text);
+    }
+    return matches;
+  }, []);
+
+  const attachSessionDocumentsToMessages = useCallback(
+    (
+      messages: Message[],
+      documents: Array<{
+        id: string;
+        knowledgeDocumentId?: string;
+        kbId?: string;
+        filename: string;
+        mimeType: string;
+        uploadedAt: string;
+      }>,
+    ): Message[] => {
+      if (messages.length === 0 || documents.length === 0) {
+        return messages;
+      }
+      const userIndexes = messages
+        .map((message, index) => (message.role === "user" ? index : -1))
+        .filter((index): index is number => index >= 0);
+      if (userIndexes.length === 0) {
+        return messages;
+      }
+
+      const nextMessages = messages.map((message) => ({ ...message }));
+      const docEntries = documents.map((doc) => ({
+        doc,
+        uploadedAtMs: Number.isFinite(new Date(doc.uploadedAt).getTime())
+          ? new Date(doc.uploadedAt).getTime()
+          : 0,
+      }));
+      const assignedDocIds = new Set<string>();
+      const attachmentsByMessage = new Map<number, SessionAttachmentMeta[]>();
+      const ensureSlot = (messageIndex: number) => {
+        if (!attachmentsByMessage.has(messageIndex)) {
+          attachmentsByMessage.set(messageIndex, []);
+        }
+        return attachmentsByMessage.get(messageIndex)!;
+      };
+      const assignDoc = (messageIndex: number, doc: (typeof docEntries)[number]["doc"]) => {
+        if (assignedDocIds.has(doc.id)) return;
+        assignedDocIds.add(doc.id);
+        ensureSlot(messageIndex).push({
+          documentId: doc.id,
+          knowledgeDocumentId: doc.knowledgeDocumentId,
+          kbId: doc.kbId,
+          name: doc.filename,
+          mimeType: doc.mimeType,
+          uploadedAt: doc.uploadedAt,
+        });
+      };
+
+      for (const messageIndex of userIndexes) {
+        const message = nextMessages[messageIndex];
+        const names = extractAttachmentNamesFromText(message.content);
+        if (names.length === 0) continue;
+        const messageTime = message.timestamp.getTime();
+        for (const name of names) {
+          const candidate = docEntries
+            .filter((entry) => !assignedDocIds.has(entry.doc.id) && entry.doc.filename === name)
+            .sort(
+              (a, b) =>
+                Math.abs(a.uploadedAtMs - messageTime) - Math.abs(b.uploadedAtMs - messageTime),
+            )[0];
+          if (candidate) {
+            assignDoc(messageIndex, candidate.doc);
+          }
+        }
+      }
+
+      for (const entry of docEntries) {
+        if (assignedDocIds.has(entry.doc.id)) continue;
+        let bestIndex = -1;
+        let bestDelta = Number.POSITIVE_INFINITY;
+        for (const messageIndex of userIndexes) {
+          const delta = Math.abs(
+            nextMessages[messageIndex].timestamp.getTime() - entry.uploadedAtMs,
+          );
+          if (delta < bestDelta) {
+            bestDelta = delta;
+            bestIndex = messageIndex;
+          }
+        }
+        if (bestIndex >= 0) {
+          assignDoc(bestIndex, entry.doc);
+        }
+      }
+
+      attachmentsByMessage.forEach((attachments, messageIndex) => {
+        const dedup = new Map<string, SessionAttachmentMeta>();
+        for (const item of attachments) {
+          dedup.set(item.documentId, item);
+        }
+        nextMessages[messageIndex].sessionAttachments = Array.from(dedup.values());
+      });
+      return nextMessages;
+    },
+    [extractAttachmentNamesFromText],
+  );
+
   const fetchHistory = useCallback(
     async (sessionKey: string, force = false, limitOverride?: number) => {
       if (!wsClient) return;
@@ -692,7 +947,11 @@ function HomeContent() {
           sessionKey,
           limit: totalToLoad,
         });
-        const history = normalizeHistoryMessages(result?.messages ?? []);
+        let history = normalizeHistoryMessages(result?.messages ?? []);
+        try {
+          const docsResult = await listSessionDocuments(sessionKey);
+          history = attachSessionDocumentsToMessages(history, docsResult.documents ?? []);
+        } catch {}
         setConversationMessages((prev) => {
           const existing = prev[sessionKey];
           if (!force && existing && existing.length > 0) {
@@ -721,7 +980,14 @@ function HomeContent() {
         setHistoryLoadingKey((current) => (current === sessionKey ? null : current));
       }
     },
-    [addToast, conversationMessages, historyDefaultLimit, normalizeHistoryMessages, wsClient],
+    [
+      addToast,
+      attachSessionDocumentsToMessages,
+      conversationMessages,
+      historyDefaultLimit,
+      normalizeHistoryMessages,
+      wsClient,
+    ],
   );
 
   useEffect(() => {
@@ -1157,10 +1423,6 @@ function HomeContent() {
     setCurrentConversationId(null);
     setDraftMessage("");
     setDraftAttachments([]);
-    setHighlightDraft(true);
-    window.setTimeout(() => {
-      setHighlightDraft(false);
-    }, 2000);
     window.setTimeout(() => {
       const input = document.querySelector("textarea");
       if (input) {
@@ -1183,10 +1445,6 @@ function HomeContent() {
     setActiveMainView("chat");
     setDraftMessage(prompt);
     setDraftAttachments([]);
-    setHighlightDraft(true);
-    window.setTimeout(() => {
-      setHighlightDraft(false);
-    }, 2000);
     window.setTimeout(() => {
       const input = document.querySelector("textarea");
       if (input) {
@@ -1224,6 +1482,7 @@ function HomeContent() {
       id: messageId,
       role: "user",
       content: message,
+      attachments: attachments ?? [],
       timestamp: new Date(),
       status: "sending",
       retryPayload: { message, attachments },
@@ -1263,6 +1522,15 @@ function HomeContent() {
         return messages;
       });
 
+      try {
+        await bindSessionDocuments({
+          sourceSessionKey: pendingUploadSessionKey,
+          targetSessionKey: sessionKey,
+        });
+        const { loadDocuments } = useSessionDocumentStore.getState();
+        await loadDocuments(sessionKey);
+      } catch {}
+
       if (selectedConnectors.length > 0) {
         await saveSessionConnectors(sessionKey, selectedConnectors);
         setDraftConnectorIds([]);
@@ -1284,7 +1552,7 @@ function HomeContent() {
     if (attachments && attachments.length > 0 && sessionKey) {
       const { uploadDocument } = useSessionDocumentStore.getState();
       for (const file of attachments) {
-        if (isPageIndexSupported(file.name)) {
+        if (file.type.startsWith("image/") || isPageIndexSupported(file.name)) {
           // 后台上传，不阻塞消息发送
           uploadDocument(sessionKey, file).catch((err) => {});
         }
@@ -1489,10 +1757,6 @@ function HomeContent() {
         status: undefined,
         retryPayload: undefined,
       }));
-      setHighlightMessageId(message.id);
-      window.setTimeout(() => {
-        setHighlightMessageId((current) => (current === message.id ? null : current));
-      }, 2000);
       return;
     }
     addToast({
@@ -1510,10 +1774,6 @@ function HomeContent() {
     if (!message.retryPayload) return;
     setDraftMessage(message.retryPayload.message);
     setDraftAttachments(message.retryPayload.attachments ?? []);
-    setHighlightDraft(true);
-    window.setTimeout(() => {
-      setHighlightDraft(false);
-    }, 2000);
     window.setTimeout(() => {
       const input = document.querySelector("textarea");
       if (input) {
@@ -1536,10 +1796,6 @@ function HomeContent() {
     if (!message.retryPayload?.message) return;
     setDraftMessage(message.retryPayload.message);
     setDraftAttachments(message.retryPayload.attachments ?? []);
-    setHighlightDraft(true);
-    window.setTimeout(() => {
-      setHighlightDraft(false);
-    }, 2000);
     window.setTimeout(() => {
       const input = document.querySelector("textarea");
       if (input) {
@@ -1617,16 +1873,14 @@ function HomeContent() {
         isLoading={isSessionsLoading}
         unreadMap={getUnreadMap()}
         currentSessionKey={currentConversationId}
-        conversationTitle={activeMainView === "knowledge" ? undefined : conversationTitle}
+        conversationTitle={activeMainView === "chat" ? conversationTitle : undefined}
         onSelectSession={handleSelectConversation}
         onNewSession={handleNewConversation}
-        onSearchChange={setSearchQuery}
         onFilterChange={(kind) => setFilterKind(kind ?? "all")}
         unreadOnly={unreadOnly}
         onUnreadToggle={setUnreadOnly}
         sortMode={sortMode}
         onSortChange={(mode) => setSortMode(mode ?? "recent")}
-        searchQuery={searchQuery}
         filterKind={filterKind}
         selectionMode={selectionMode}
         selectedKeys={selectedKeys}
@@ -1651,6 +1905,10 @@ function HomeContent() {
           setCurrentConversationId(null);
           setActiveMainView("knowledge");
         }}
+        onOpenChannel={() => {
+          setCurrentConversationId(null);
+          setActiveMainView("channel");
+        }}
         onOpenPersonaSettings={() => {
           setCurrentConversationId(null);
           setActiveMainView("persona");
@@ -1658,12 +1916,15 @@ function HomeContent() {
         }}
         onOpenCronJobs={() => setCronJobsOpen(true)}
         onOpenAgentManage={() => setAgentManageOpen(true)}
+        onOpenTaskSearch={() => setTaskSearchOpen(true)}
         onGoHome={() => setActiveMainView("chat")}
         assistantVisible={activeMainView !== "persona" && assistantVisible}
         onToggleAssistantVisible={() => setAssistantVisible(!assistantVisible)}
         showTopBar={activeMainView !== "persona" && activeMainView !== "my"}
         showSidebar={activeMainView !== "persona" && activeMainView !== "my"}
         activeView={activeMainView}
+        searchShortcutLabel={shortcutLabels.search}
+        newSessionShortcutLabel={shortcutLabels.newSession}
         onDeleteSession={(key) => {
           setDialogSessionKey(key);
           setActiveDialog("delete");
@@ -1697,6 +1958,10 @@ function HomeContent() {
               <div className="flex-1 overflow-hidden bg-background-tertiary">
                 <KnowledgeBasePage />
               </div>
+            ) : activeMainView === "channel" ? (
+              <div className="flex-1 overflow-hidden bg-background-tertiary">
+                <ChannelCenterPage />
+              </div>
             ) : activeMainView === "my" ? (
               <div className="flex-1 overflow-hidden">
                 <MyPage userName={userName} onClose={() => setActiveMainView("chat")} />
@@ -1707,6 +1972,7 @@ function HomeContent() {
                 {/* 消息列表 */}
                 <MessageList
                   messages={currentMessages}
+                  sessionKey={currentConversationId}
                   isLoading={historyLoadingKey === currentConversationId}
                   autoScrollToBottom={!(historyLoadingKey === currentConversationId)}
                   emptyState={{
@@ -1732,7 +1998,6 @@ function HomeContent() {
                   onCancelEdit={handleCancelEdit}
                   onCopy={handleCopyContent}
                   editingMessageId={editingMessageId}
-                  highlightMessageId={highlightMessageId}
                 />
 
                 {/* 输入框 - 底部 */}
@@ -1753,72 +2018,102 @@ function HomeContent() {
                     onDraftChange={setDraftMessage}
                     draftAttachments={draftAttachments}
                     onDraftAttachmentsChange={setDraftAttachments}
-                    highlight={highlightDraft}
                     onWorkspaceClick={() => setWorkspaceOpen((prev) => !prev)}
                     hasGeneratedFiles={generatedFiles.length > 0}
                     workspaceOpen={workspaceOpen}
                     connectors={availableConnectors}
                     activeConnectorIds={activeConnectorIds}
                     onToggleConnector={handleToggleConnector}
+                    sessionKey={currentConversationId}
+                    pendingUploadSessionKey={pendingUploadSessionKey}
                   />
                 </div>
               </div>
             ) : (
-              // 欢迎页面 - 标题和输入框居中，快捷方式在下方
-              <div className="flex-1 flex flex-col items-center px-2xl overflow-hidden">
-                <div className="w-full max-w-[900px] flex flex-col items-center flex-1 overflow-hidden">
-                  {/* 标题 - 居中 */}
-                  <div className="text-center flex-shrink-0 mt-xl">
-                    <h1 className="text-4xl font-bold text-text-primary mb-sm flex items-center justify-center gap-md">
-                      <span className="inline-block bg-transparent">
-                        <img
-                          src="/img/logo.png"
-                          alt="Hovi"
-                          className="w-10 h-10 object-contain"
-                          style={{ backgroundColor: "transparent" }}
-                        />
-                      </span>
-                      <span>Hovi</span>
-                    </h1>
-                    <p className="text-sm text-text-tertiary">
-                      选择一个模板快速开始，或直接输入您的需求
-                    </p>
+              <div className="flex-1 px-2xl overflow-hidden">
+                <div className="mx-auto h-full w-full max-w-[1080px] flex flex-col">
+                  <div className="flex-1 min-h-0 flex items-center justify-center py-lg">
+                    <div className="mx-auto w-full max-w-[980px] max-h-full overflow-y-auto scrollbar-default pr-1">
+                      <div className="text-center">
+                        <div className="mx-auto mb-sm flex h-14 w-14 items-center justify-center rounded-2xl border border-border-light bg-white/90 shadow-sm">
+                          <img
+                            src="/img/logo.png"
+                            alt="Hovi"
+                            className="w-9 h-9 object-contain"
+                            style={{ backgroundColor: "transparent" }}
+                          />
+                        </div>
+                        <h1 className="text-4xl font-bold tracking-tight text-text-primary">
+                          Hovi
+                        </h1>
+                        <p className="text-sm text-text-tertiary">
+                          描述你的目标，Hovi 会一步步帮你完成。
+                        </p>
+                      </div>
+                      <div className="mt-lg mb-md text-center">
+                        <p className="text-sm font-medium text-text-secondary">快捷开始</p>
+                      </div>
+                      <div className="mx-auto grid w-full max-w-[860px] grid-cols-1 md:grid-cols-2 gap-md">
+                        {HOME_PRIMARY_CARDS.map((card) => (
+                          <button
+                            key={card.title}
+                            type="button"
+                            onClick={() => handleSelectAssistant(card.prompt)}
+                            className="group text-left rounded-2xl border border-border-light bg-gradient-to-br from-white to-surface-tertiary/50 p-lg shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/35 hover:shadow-md"
+                          >
+                            <div className="flex items-start gap-sm">
+                              <div className="h-10 w-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center mt-0.5 transition-colors group-hover:bg-primary/15">
+                                <card.icon className="h-[18px] w-[18px]" />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="text-base font-semibold text-text-primary truncate">
+                                  {card.title}
+                                </div>
+                                <p className="text-sm text-text-tertiary mt-1.5 line-clamp-2">
+                                  {card.description}
+                                </p>
+                              </div>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                      <div className="mt-md flex justify-center pb-xs">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="px-md"
+                          onClick={() => setHomeTemplatesOpen(true)}
+                        >
+                          更多模板
+                        </Button>
+                      </div>
+                    </div>
                   </div>
 
-                  {/* 输入框 - 居中显示 */}
-                  <div className="flex-shrink-0 w-full mt-lg">
-                    {/* 触发按钮横条 - 在有文件时显示 */}
+                  <div className="flex-shrink-0">
                     <ComputerPanelWrapper
                       files={generatedFiles}
                       isOpen={workspaceOpen}
                       onToggle={() => setWorkspaceOpen((prev) => !prev)}
-                      compact={false}
+                      compact={true}
                     />
 
                     <EnhancedChatInput
                       onSend={handleSendMessage}
-                      placeholder="输入您的需求..."
-                      compact={false}
+                      placeholder="输入消息... (支持 @ 提及和 / 命令)"
+                      compact={true}
                       draftValue={draftMessage}
                       onDraftChange={setDraftMessage}
                       draftAttachments={draftAttachments}
                       onDraftAttachmentsChange={setDraftAttachments}
-                      highlight={highlightDraft}
                       onWorkspaceClick={() => setWorkspaceOpen((prev) => !prev)}
                       hasGeneratedFiles={generatedFiles.length > 0}
                       workspaceOpen={workspaceOpen}
                       connectors={availableConnectors}
                       activeConnectorIds={activeConnectorIds}
                       onToggleConnector={handleToggleConnector}
-                    />
-                  </div>
-
-                  {/* 快捷方式 - 在输入框下方，可滚动 */}
-                  <div className="flex-1 overflow-y-auto w-full mt-lg pb-md px-md scrollbar-thin">
-                    <WelcomePage
-                      onSelectPrompt={handleSelectAssistant}
-                      compact={true}
-                      variant="cards"
+                      sessionKey={currentConversationId}
+                      pendingUploadSessionKey={pendingUploadSessionKey}
                     />
                   </div>
                 </div>
@@ -1826,6 +2121,24 @@ function HomeContent() {
             )}
           </div>
         </div>
+        <Dialog open={homeTemplatesOpen} onOpenChange={setHomeTemplatesOpen}>
+          <DialogContent className="max-w-[980px] h-[78vh] flex flex-col">
+            <DialogHeader>
+              <DialogTitle className="text-lg font-semibold">更多模板</DialogTitle>
+              <DialogDescription>选择一个模板即可自动填充到输入框并立即开始。</DialogDescription>
+            </DialogHeader>
+            <div className="flex-1 min-h-0 overflow-y-auto scrollbar-default px-sm">
+              <WelcomePage
+                onSelectPrompt={(prompt) => {
+                  handleSelectAssistant(prompt);
+                  setHomeTemplatesOpen(false);
+                }}
+                compact={true}
+                variant="cards"
+              />
+            </div>
+          </DialogContent>
+        </Dialog>
         {/* 会话详情对话框 */}
         <Dialog open={Boolean(detailSessionKey)} onOpenChange={() => setDetailSessionKey(null)}>
           <DialogContent className="max-w-[28rem]">
@@ -1985,10 +2298,20 @@ function HomeContent() {
           onSelectSession={handleSelectConversation}
           onNewSession={handleNewConversation}
           onDeleteSession={deleteSession}
+          onOpenTaskSearch={() => setTaskSearchOpen(true)}
           open={sessionDrawerOpen}
           onOpenChange={setSessionDrawerOpen}
         />
       )}
+
+      <TaskSearchDialog
+        open={taskSearchOpen}
+        sessions={sessions}
+        currentSessionKey={currentConversationId}
+        onSelectSession={handleSelectConversation}
+        onOpenChange={setTaskSearchOpen}
+        mobile={isMobile}
+      />
 
       {/* Session 文档预览面板 */}
       {currentConversationId && <SessionPreviewPanelWrapper sessionKey={currentConversationId} />}

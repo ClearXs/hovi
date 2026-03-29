@@ -10,8 +10,8 @@ export interface ShortcutItem {
 }
 
 const SHORTCUTS: ShortcutItem[] = [
-  { key: "⌘N", action: "新建任务", category: "导航" },
-  { key: "⌘K", action: "搜索", category: "导航" },
+  { key: "Ctrl+⌘N", action: "新建任务", category: "导航" },
+  { key: "Ctrl+⌘K", action: "搜索任务", category: "导航" },
   { key: "⌘/", action: "切换侧边栏", category: "导航" },
   { key: "⌘⇧S", action: "分享对话", category: "对话" },
   { key: "⌘E", action: "导出对话", category: "对话" },

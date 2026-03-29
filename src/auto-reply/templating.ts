@@ -19,6 +19,11 @@ export type MsgContext = {
    */
   BodyForAgent?: string;
   /**
+   * Readable text extracted from uploaded attachments for this turn.
+   * Intended for model-only context injection (not user-visible transcript text).
+   */
+  AttachmentTextContext?: string;
+  /**
    * Recent chat history for context (untrusted user content). Prefer passing this
    * as structured context blocks in the user prompt rather than rendering plaintext envelopes.
    */

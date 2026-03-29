@@ -100,7 +100,7 @@ export function KnowledgeTagSelector({
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="搜索或创建标签"
               />
-              <div className="max-h-52 space-y-1 overflow-auto pr-1">
+              <div className="max-h-52 space-y-1 overflow-auto scrollbar-default pr-1">
                 {isLoadingTags ? (
                   <div className="py-sm text-xs text-text-tertiary">标签加载中...</div>
                 ) : filteredTags.length === 0 ? (
@@ -219,7 +219,7 @@ export function KnowledgeTagSelector({
                 添加
               </Button>
             </div>
-            <div className="max-h-64 space-y-1 overflow-auto pr-1">
+            <div className="max-h-64 space-y-1 overflow-auto scrollbar-default pr-1">
               {availableTags.map((tag) => {
                 const selected = selectedTagNames.includes(tag.name);
                 return (

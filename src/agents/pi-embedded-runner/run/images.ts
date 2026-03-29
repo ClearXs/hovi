@@ -285,7 +285,7 @@ export function modelSupportsImages(model: { input?: string[] }): boolean {
 export async function detectAndLoadPromptImages(params: {
   prompt: string;
   workspaceDir: string;
-  model: { input?: string[] };
+  model: { input?: string[]; id?: string; provider?: string };
   existingImages?: ImageContent[];
   maxBytes?: number;
   maxDimensionPx?: number;
@@ -300,6 +300,13 @@ export async function detectAndLoadPromptImages(params: {
 }> {
   // If model doesn't support images, return empty results
   if (!modelSupportsImages(params.model)) {
+    const existingCount = params.existingImages?.length ?? 0;
+    if (existingCount > 0) {
+      const modelRef = [params.model.provider, params.model.id].filter(Boolean).join("/");
+      log.warn(
+        `Native image: dropped ${existingCount} explicit image attachment(s) because model does not advertise image input${modelRef ? ` (${modelRef})` : ""}.`,
+      );
+    }
     return {
       images: [],
       detectedRefs: [],

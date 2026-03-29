@@ -321,6 +321,17 @@
 - All generated docs must be stored under `dev-docs/` at the project root.
 - If `dev-docs/` does not exist, create it before writing.
 
+## UI Settings & Scrollbar Notes
+
+- Use visible UI labels (for example `搜索会话...`, `所有任务`, `助手身份`) to quickly locate source components with `rg`.
+- Keep settings ownership single-source: do not duplicate the same setting fields across `General` and `Appearance`.
+- Sidebar history list uses Radix `ScrollArea`; scrollbar width comes from `ui-agent/src/components/ui/scroll-area.tsx` (`w-2.5` by default).
+- Settings panels mostly use native `overflow` plus `.scrollbar-thin` / `.scrollbar-narrow` classes in `ui-agent/src/app/globals.css`.
+- If a scrollbar looks too wide, verify component width constants first before tuning colors.
+- Keep cross-browser parity by defining both WebKit (`::-webkit-scrollbar*`) and Firefox (`scrollbar-width`, `scrollbar-color`) styles.
+- Prefer shared scrollbar variants/tokens over per-page custom styles to avoid visual drift.
+- Validate UI-only changes with targeted diffs and scoped checks first; report unrelated pre-existing lint/type failures separately.
+
 ## Language + Title Format (AI Required)
 
 - Generated documents must be written in Chinese.

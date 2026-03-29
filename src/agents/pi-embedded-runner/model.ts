@@ -96,6 +96,16 @@ function resolveConfiguredProviderConfig(
   return findNormalizedProviderValue(configuredProviders, provider);
 }
 
+function normalizeModelInput(
+  input: unknown,
+  fallback: Array<"text" | "image"> = ["text"],
+): Array<"text" | "image"> {
+  const normalized = Array.isArray(input)
+    ? input.filter((item): item is "text" | "image" => item === "text" || item === "image")
+    : [];
+  return normalized.length > 0 ? normalized : fallback;
+}
+
 function applyConfiguredProviderOverrides(params: {
   discoveredModel: Model<Api>;
   providerConfig?: InlineProviderConfig;
@@ -125,11 +135,9 @@ function applyConfiguredProviderOverrides(params: {
       headers: discoveredHeaders,
     };
   }
-  const resolvedInput = configuredModel?.input ?? discoveredModel.input;
-  const normalizedInput =
-    Array.isArray(resolvedInput) && resolvedInput.length > 0
-      ? resolvedInput.filter((item) => item === "text" || item === "image")
-      : (["text"] as Array<"text" | "image">);
+  const normalizedInput = normalizeModelInput(configuredModel?.input ?? discoveredModel.input, [
+    "text",
+  ]);
 
   return {
     ...discoveredModel,
@@ -321,6 +329,7 @@ export function resolveModelWithRegistry(params: {
   }
 
   const configuredModel = providerConfig?.models?.find((candidate) => candidate.id === modelId);
+  const providerDefaultModel = providerConfig?.models?.[0];
   const providerHeaders = sanitizeModelHeaders(providerConfig?.headers, {
     stripSecretRefMarkers: true,
   });
@@ -339,16 +348,14 @@ export function resolveModelWithRegistry(params: {
         provider,
         baseUrl: providerConfig?.baseUrl,
         reasoning: configuredModel?.reasoning ?? false,
-        input: ["text"],
+        input: normalizeModelInput(configuredModel?.input ?? providerDefaultModel?.input, ["text"]),
         cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         contextWindow:
           configuredModel?.contextWindow ??
-          providerConfig?.models?.[0]?.contextWindow ??
+          providerDefaultModel?.contextWindow ??
           DEFAULT_CONTEXT_TOKENS,
         maxTokens:
-          configuredModel?.maxTokens ??
-          providerConfig?.models?.[0]?.maxTokens ??
-          DEFAULT_CONTEXT_TOKENS,
+          configuredModel?.maxTokens ?? providerDefaultModel?.maxTokens ?? DEFAULT_CONTEXT_TOKENS,
         headers:
           providerHeaders || modelHeaders ? { ...providerHeaders, ...modelHeaders } : undefined,
       } as Model<Api>,

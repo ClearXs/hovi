@@ -440,6 +440,40 @@ describe("KnowledgeManager", () => {
       expect(doc?.mimetype).toBe("image/jpeg");
     });
 
+    it("should support store-only uploads without text extraction", async () => {
+      const localManager = new KnowledgeManager({
+        cfg,
+        db,
+        baseDir: tempDir,
+        agentId: "agent-1",
+      });
+      const kbId = localManager.createBase({
+        agentId: "agent-1",
+        name: "Preview-store-only",
+        visibility: "private",
+      }).id;
+      const buffer = Buffer.from("   \n\t   ");
+
+      const result = await localManager.uploadDocument({
+        kbId,
+        filename: "blank.txt",
+        buffer,
+        mimetype: "text/plain",
+        sourceType: "chat_attachment",
+        agentId: "agent-1",
+        processingMode: "store_only",
+      });
+
+      expect(result.documentId).toBeTruthy();
+      expect(result.indexed).toBe(false);
+      const doc = localManager.getDocument({
+        documentId: result.documentId,
+        agentId: "agent-1",
+        kbId,
+      });
+      expect(doc?.filename).toBe("blank.txt");
+    });
+
     it("should reject disabled document formats", async () => {
       const disabledFormatCfg = {
         agents: {

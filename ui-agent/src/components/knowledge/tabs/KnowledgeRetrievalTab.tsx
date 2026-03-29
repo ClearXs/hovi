@@ -339,7 +339,7 @@ export function KnowledgeRetrievalTab({ onOpenDocument }: KnowledgeRetrievalTabP
       )}
 
       {/* 结果列表 - 可滚动 */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto scrollbar-default">
         {isLoading && (
           <div className="flex items-center justify-center py-12 text-sm text-text-tertiary">
             <Loader2 className="mr-2 h-5 w-5 animate-spin" />

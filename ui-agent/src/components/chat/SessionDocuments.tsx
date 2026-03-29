@@ -2,7 +2,6 @@
 
 import { FileText, Loader2, X } from "lucide-react";
 import { useEffect } from "react";
-import { isPageIndexSupported } from "@/services/pageindexApi";
 import { useSessionDocumentStore } from "@/stores/sessionDocumentStore";
 
 interface SessionDocumentsProps {
@@ -24,7 +23,7 @@ export function SessionDocuments({ sessionKey }: SessionDocumentsProps) {
   if (documents.length === 0 && !isLoadingDocuments) {
     return (
       <div className="text-xs text-text-tertiary py-2">
-        暂无上传的文档。拖拽文件到对话输入框即可上传。
+        暂无上传的附件。拖拽文件到对话输入框即可上传。
       </div>
     );
   }
@@ -33,7 +32,7 @@ export function SessionDocuments({ sessionKey }: SessionDocumentsProps) {
     <div className="border-b border-border-light bg-background p-2">
       <div className="flex items-center gap-2 mb-2">
         <FileText className="w-4 h-4 text-text-secondary" />
-        <span className="text-sm font-medium">本次会话文档</span>
+        <span className="text-sm font-medium">本次会话附件</span>
         {isLoadingDocuments && <Loader2 className="w-3 h-3 animate-spin" />}
       </div>
 

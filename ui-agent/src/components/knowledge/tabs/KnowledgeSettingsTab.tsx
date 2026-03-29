@@ -376,7 +376,7 @@ export function KnowledgeSettingsTab() {
   }
 
   return (
-    <div className="h-full min-h-0 space-y-lg overflow-auto pr-xs pb-md scrollbar-thin [overscroll-behavior:contain]">
+    <div className="h-full min-h-0 space-y-lg overflow-auto scrollbar-default pr-xs pb-md [overscroll-behavior:contain]">
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <DialogContent className="max-w-[28rem]">
           <DialogHeader>

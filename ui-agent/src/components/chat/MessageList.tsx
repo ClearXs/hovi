@@ -7,11 +7,22 @@ import { useStreamingReplay } from "@/contexts/StreamingReplayContext";
 import { AgentMessage, AgentMessageProps } from "../agent/AgentMessage";
 import { MemoizedMessageBubble } from "./MessageBubble";
 
+export interface SessionAttachmentMeta {
+  documentId: string;
+  knowledgeDocumentId?: string;
+  kbId?: string;
+  name: string;
+  mimeType?: string;
+  uploadedAt?: string;
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant" | "agent";
   content: string;
   timestamp: Date;
+  attachments?: File[];
+  sessionAttachments?: SessionAttachmentMeta[];
   usage?: {
     input?: number;
     output?: number;
@@ -43,6 +54,7 @@ export interface Message {
 
 interface MessageListProps {
   messages: Message[];
+  sessionKey?: string | null;
   isLoading?: boolean;
   autoScrollToBottom?: boolean;
   emptyState?: {
@@ -61,11 +73,11 @@ interface MessageListProps {
   onCancelEdit?: (message: Message) => void;
   onCopy?: (content: string) => void;
   editingMessageId?: string | null;
-  highlightMessageId?: string | null;
 }
 
 export function MessageList({
   messages,
+  sessionKey = null,
   isLoading = false,
   autoScrollToBottom = true,
   emptyState,
@@ -79,11 +91,9 @@ export function MessageList({
   onCancelEdit,
   onCopy,
   editingMessageId,
-  highlightMessageId,
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const messageRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const { shouldShowMessage } = useStreamingReplay();
   const prevMessageCount = useRef(0);
   const prevMessagesRef = useRef<Message[]>([]);
@@ -109,18 +119,10 @@ export function MessageList({
     prevMessagesRef.current = messages;
   }, [messages, autoScrollToBottom]);
 
-  useEffect(() => {
-    if (!highlightMessageId) return;
-    const node = messageRefs.current[highlightMessageId];
-    if (node) {
-      node.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
-  }, [highlightMessageId]);
-
   return (
     <div
       ref={containerRef}
-      className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-border-light scrollbar-track-transparent px-md md:px-xl lg:px-2xl py-lg flex flex-col items-center"
+      className="flex-1 overflow-y-auto scrollbar-default px-md md:px-xl lg:px-2xl py-lg flex flex-col items-center"
     >
       <div className="w-full min-w-[300px] md:max-w-[800px] lg:max-w-[1000px]">
         {messages.length === 0 && !isLoading && emptyState && (
@@ -150,23 +152,20 @@ export function MessageList({
           }
 
           return (
-            <div
-              key={message.id}
-              ref={(node) => {
-                messageRefs.current[message.id] = node;
-              }}
-            >
+            <div key={message.id}>
               <MemoizedMessageBubble
                 role={message.role as "user" | "assistant"}
                 content={message.content}
                 timestamp={message.timestamp}
+                sessionKey={sessionKey}
+                attachments={message.attachments}
+                sessionAttachments={message.sessionAttachments}
                 files={message.files}
                 usage={message.usage}
                 toolCalls={message.toolCalls}
                 toolResults={message.toolResults}
                 citations={message.citations}
                 status={message.status}
-                isHighlighted={message.id === highlightMessageId}
                 onRetry={onRetryMessage ? () => onRetryMessage(message) : undefined}
                 onEditRetry={onEditMessage ? () => onEditMessage(message) : undefined}
                 onCopyRetry={onCopyMessage ? () => onCopyMessage(message) : undefined}

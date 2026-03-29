@@ -88,7 +88,7 @@ describe("parseMessageWithAttachments", () => {
     ]);
     expect(parsed.images).toHaveLength(0);
     expect(logs).toHaveLength(1);
-    expect(logs[0]).toMatch(/non-image/i);
+    expect(logs[0]).toMatch(/failed to extract readable text/i);
   });
 
   it("prefers sniffed mime type and logs mismatch", async () => {
@@ -113,7 +113,7 @@ describe("parseMessageWithAttachments", () => {
     ]);
     expect(parsed.images).toHaveLength(0);
     expect(logs).toHaveLength(1);
-    expect(logs[0]).toMatch(/unable to detect image mime type/i);
+    expect(logs[0]).toMatch(/no supported text extractor/i);
   });
 
   it("keeps valid images and drops invalid ones", async () => {
@@ -135,7 +135,27 @@ describe("parseMessageWithAttachments", () => {
     expect(parsed.images).toHaveLength(1);
     expect(parsed.images[0]?.mimeType).toBe("image/png");
     expect(parsed.images[0]?.data).toBe(PNG_1x1);
-    expect(logs.some((l) => /non-image/i.test(l))).toBe(true);
+    expect(logs.some((l) => /ignoring/i.test(l))).toBe(true);
+  });
+
+  it("injects text attachments into message context for model reading", async () => {
+    const textBase64 = Buffer.from("第一行\n第二行").toString("base64");
+    const parsed = await parseMessageWithAttachments(
+      "请总结附件",
+      [
+        {
+          type: "file",
+          mimeType: "text/plain",
+          fileName: "notes.txt",
+          content: textBase64,
+        },
+      ],
+      { log: { warn: () => {} } },
+    );
+    expect(parsed.images).toHaveLength(0);
+    expect(parsed.message).toContain("请总结附件");
+    expect(parsed.message).toContain("notes.txt");
+    expect(parsed.message).toContain("第一行");
   });
 });
 

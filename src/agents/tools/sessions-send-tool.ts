@@ -65,6 +65,7 @@ async function startAgentRun(params: {
 export function createSessionsSendTool(opts?: {
   agentSessionKey?: string;
   agentChannel?: GatewayMessageChannel;
+  turnId?: string;
   sandboxed?: boolean;
   config?: OpenClawConfig;
 }): AnyAgentTool {

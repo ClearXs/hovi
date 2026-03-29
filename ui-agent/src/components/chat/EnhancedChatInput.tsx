@@ -4,6 +4,10 @@ import {
   Send,
   Paperclip,
   Image as ImageIcon,
+  Download,
+  FileCode2,
+  FileJson2,
+  FileSpreadsheet,
   Mic,
   AtSign,
   Sparkles,
@@ -20,16 +24,60 @@ import {
   FileText,
   X,
   File,
-  Image as ImagePreviewIcon,
 } from "lucide-react";
+import dynamic from "next/dynamic";
 import { useCallback, useMemo, useRef, useState, useEffect, KeyboardEvent, DragEvent } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatFileSize } from "@/lib/fileUtils";
+import type { KnowledgeDetail } from "@/services/knowledgeApi";
+import { getKnowledge } from "@/services/knowledgeApi";
+import { resolveSessionKnowledgeDocumentRef, uploadSessionDocument } from "@/services/pageindexApi";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSettingsStore } from "@/stores/settingsStore";
 import { useToastStore } from "@/stores/toastStore";
+
+const LazyDocPreview = dynamic(
+  () => import("@/components/knowledge/preview/DocPreview").then((mod) => mod.DocPreview),
+  {
+    ssr: false,
+  },
+);
+
+interface PdfJsLib {
+  GlobalWorkerOptions: { workerSrc: string };
+  getDocument: (src: string) => {
+    promise: Promise<{
+      numPages: number;
+      getPage: (pageNumber: number) => Promise<{
+        getViewport: (options: { scale: number }) => { width: number; height: number };
+        render: (options: {
+          canvas: HTMLCanvasElement;
+          canvasContext: CanvasRenderingContext2D;
+          viewport: { width: number; height: number };
+        }) => { promise: Promise<void> };
+      }>;
+      getOutline: () => Promise<Array<{
+        title?: string;
+        dest?: string | unknown[] | null;
+        items?: Array<{
+          title?: string;
+          dest?: string | unknown[] | null;
+          items?: unknown[];
+        }>;
+      }> | null>;
+      getDestination: (destinationId: string) => Promise<unknown[] | null>;
+      getPageIndex: (ref: { num: number; gen: number }) => Promise<number>;
+    }>;
+  };
+}
+
+declare global {
+  interface Window {
+    pdfjsLib?: PdfJsLib;
+  }
+}
 
 // Map of built-in connector IDs to their icons
 const CONNECTOR_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
@@ -99,6 +147,8 @@ interface EnhancedChatInputProps {
   activeConnectorIds?: string[];
   onToggleConnector?: (id: string, enabled: boolean) => void;
   resetKey?: number; // 用于重置输入框
+  sessionKey?: string | null;
+  pendingUploadSessionKey?: string | null;
 }
 
 interface SkillStatusEntry {
@@ -113,9 +163,124 @@ interface SkillStatusReport {
   skills: SkillStatusEntry[];
 }
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+export function resolveSlashPanelPlacement({
+  rawTop,
+  caretTop,
+  panelHeight,
+  hostHeight,
+  hostBottom,
+  viewportHeight,
+  minTop = 8,
+  gap = 8,
+}: {
+  rawTop: number;
+  caretTop: number;
+  panelHeight: number;
+  hostHeight: number;
+  hostBottom: number;
+  viewportHeight: number;
+  minTop?: number;
+  gap?: number;
+}): { top: number; direction: "up" | "down" } {
+  const clampedDownTop = Math.max(24, rawTop);
+  const spaceBelow = Math.max(0, viewportHeight - hostBottom + (hostHeight - clampedDownTop));
+  if (spaceBelow >= panelHeight) {
+    return { top: clampedDownTop, direction: "down" };
+  }
+
+  const upTop = Math.max(minTop, caretTop - panelHeight - gap);
+  return { top: upTop, direction: "up" };
 }
+
+function resolveSlashTriggerToken(
+  value: string,
+  caretPosition?: number | null,
+): { active: boolean; query: string; start: number; end: number } {
+  if (!value) {
+    return { active: false, query: "", start: -1, end: -1 };
+  }
+  const safeCaret = Math.max(0, Math.min(caretPosition ?? value.length, value.length));
+  let boundary = safeCaret - 1;
+  while (boundary >= 0) {
+    const char = value[boundary];
+    if (char === " " || char === "\n" || char === "\t") {
+      break;
+    }
+    boundary -= 1;
+  }
+  const tokenStart = boundary + 1;
+  const token = value.slice(tokenStart, safeCaret);
+  if (!token.startsWith("/") || token.startsWith("//")) {
+    return { active: false, query: "", start: -1, end: -1 };
+  }
+  const query = token.slice(1);
+  if (query && !/^[\p{L}\p{N}._-]+$/u.test(query)) {
+    return { active: false, query: "", start: -1, end: -1 };
+  }
+  return { active: true, query, start: tokenStart, end: safeCaret };
+}
+
+function resolveAttachmentIcon(file: File) {
+  const lower = file.name.toLowerCase();
+  if (file.type.startsWith("image/")) return ImageIcon;
+  if (file.type.includes("presentation") || lower.endsWith(".pptx") || lower.endsWith(".ppt")) {
+    return Presentation;
+  }
+  if (file.type.includes("spreadsheet") || lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+    return FileSpreadsheet;
+  }
+  if (file.type === "application/json" || lower.endsWith(".json")) {
+    return FileJson2;
+  }
+  if (
+    file.type.includes("wordprocessingml") ||
+    lower.endsWith(".docx") ||
+    lower.endsWith(".doc") ||
+    lower.endsWith(".md") ||
+    lower.endsWith(".markdown") ||
+    lower.endsWith(".txt")
+  ) {
+    return FileText;
+  }
+  return FileCode2;
+}
+
+function supportsTextPreview(file: File) {
+  const lower = file.name.toLowerCase();
+  return (
+    file.type.startsWith("text/") ||
+    file.type === "application/json" ||
+    lower.endsWith(".txt") ||
+    lower.endsWith(".md") ||
+    lower.endsWith(".markdown") ||
+    lower.endsWith(".csv") ||
+    lower.endsWith(".json")
+  );
+}
+
+function supportsKnowledgePreview(file: File) {
+  const lower = file.name.toLowerCase();
+  return (
+    lower.endsWith(".docx") ||
+    lower.endsWith(".xlsx") ||
+    lower.endsWith(".xls") ||
+    lower.endsWith(".csv")
+  );
+}
+
+function buildPreviewCacheKey(sessionKey: string | null | undefined, file: File): string {
+  return `${sessionKey ?? "no-session"}:${file.name}:${file.size}:${file.lastModified}`;
+}
+
+function buildAttachmentsSignature(files: File[]): string {
+  return files
+    .map((file) => `${file.name}:${file.size}:${file.lastModified}:${file.type}`)
+    .join("|");
+}
+
+const PREVIEW_UPLOAD_SESSION_KEY = "__preview_upload__";
+const MAX_UPLOAD_FILE_BYTES = 500_000_000; // 500M
+const MAX_UPLOAD_FILE_LABEL = "500MB";
 
 export function EnhancedChatInput({
   onSend,
@@ -134,6 +299,8 @@ export function EnhancedChatInput({
   activeConnectorIds = [],
   onToggleConnector,
   resetKey = 0,
+  sessionKey = null,
+  pendingUploadSessionKey = null,
 }: EnhancedChatInputProps) {
   const wsClient = useConnectionStore((s) => s.wsClient);
   const openSettings = useSettingsStore((s) => s.openSettings);
@@ -144,8 +311,24 @@ export function EnhancedChatInput({
   const [sendError, setSendError] = useState<string | null>(null);
   const [skills, setSkills] = useState<SkillStatusEntry[]>([]);
   const [skillsOpen, setSkillsOpen] = useState(false);
+  const [slashSuggestionsOpen, setSlashSuggestionsOpen] = useState(false);
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
   const [skillsQuery, setSkillsQuery] = useState("");
+  const [selectedSkillKeys, setSelectedSkillKeys] = useState<string[]>([]);
+  const [activeSlashRange, setActiveSlashRange] = useState<{ start: number; end: number } | null>(
+    null,
+  );
+  const [slashPanelPosition, setSlashPanelPosition] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    direction: "up" | "down";
+  }>({
+    top: 32,
+    left: 0,
+    width: 420,
+    direction: "down",
+  });
   const [isSkillsLoading, setIsSkillsLoading] = useState(false);
   const [skillsError, setSkillsError] = useState<string | null>(null);
   const [connectorsOpen, setConnectorsOpen] = useState(false);
@@ -153,14 +336,37 @@ export function EnhancedChatInput({
   const [isDragging, setIsDragging] = useState(false);
   const [previewFile, setPreviewFile] = useState<File | null>(null);
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
+  const [previewBlobUrl, setPreviewBlobUrl] = useState<string | null>(null);
   // 附件图片预览 URLs
   const [attachmentImageUrls, setAttachmentImageUrls] = useState<Map<number, string>>(new Map());
   const [previewTextContent, setPreviewTextContent] = useState<string | null>(null);
+  const [previewPdfPages, setPreviewPdfPages] = useState(0);
+  const [previewPdfPage, setPreviewPdfPage] = useState(1);
+  const [previewPdfLoading, setPreviewPdfLoading] = useState(false);
+  const [previewPdfError, setPreviewPdfError] = useState<string | null>(null);
+  const [previewPdfZoom, setPreviewPdfZoom] = useState(1);
+  const [previewPdfRenderKey, setPreviewPdfRenderKey] = useState(0);
+  const [previewKnowledgeDetail, setPreviewKnowledgeDetail] = useState<KnowledgeDetail | null>(
+    null,
+  );
+  const [previewKnowledgeLoading, setPreviewKnowledgeLoading] = useState(false);
+  const [previewKnowledgeError, setPreviewKnowledgeError] = useState<string | null>(null);
+  const previewKnowledgeRefs = useRef<Map<string, { documentId: string; kbId?: string }>>(
+    new Map(),
+  );
+  const previewRequestRef = useRef(0);
+  const previewPdfCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const previewPdfDocRef = useRef<any>(null);
+  const previewPdfRenderingRef = useRef(false);
+  const dragDepthRef = useRef(0);
+  const inputAreaRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
   const prevDraftValueRef = useRef<string>(draftValue ?? "");
   const isTypingRef = useRef(false);
+  const skillsAutoOpenRef = useRef(false);
 
   // 当 draftValue 改变时（会话切换），同步到内部状态
   useEffect(() => {
@@ -181,15 +387,16 @@ export function EnhancedChatInput({
     // 只有值真正改变时才更新内部状态
     if (newDraftValue !== input) {
       setInput(newDraftValue);
+      setSelectedSkillKeys([]);
     }
   }, [draftValue]);
 
   // 追踪 draftAttachments 的变化
-  const prevDraftAttachmentsRef = useRef<string>(JSON.stringify(draftAttachments ?? []));
+  const prevDraftAttachmentsRef = useRef<string>(buildAttachmentsSignature(draftAttachments ?? []));
 
   useEffect(() => {
     const newDraftAttachments = draftAttachments ?? [];
-    const newDraftAttachmentsKey = JSON.stringify(newDraftAttachments);
+    const newDraftAttachmentsKey = buildAttachmentsSignature(newDraftAttachments);
     if (newDraftAttachmentsKey !== prevDraftAttachmentsRef.current) {
       prevDraftAttachmentsRef.current = newDraftAttachmentsKey;
       // 只有 draftAttachments 真正改变时才更新内部状态
@@ -205,6 +412,7 @@ export function EnhancedChatInput({
       // 重置时清空输入框和附件
       setInput("");
       setAttachments([]);
+      setSelectedSkillKeys([]);
       // 如果有外部回调也调用一下
       if (onDraftChange) onDraftChange("");
       if (onDraftAttachmentsChange) onDraftAttachmentsChange([]);
@@ -213,7 +421,6 @@ export function EnhancedChatInput({
 
   const inputValue = input;
   const attachmentValue = attachments;
-  const skillKeySet = useMemo(() => new Set(skills.map((skill) => skill.skillKey)), [skills]);
   const availableConnectors = useMemo(() => {
     return [...connectors].sort((a, b) => {
       const aConnected = a.status === "connected";
@@ -234,16 +441,6 @@ export function EnhancedChatInput({
       );
     });
   }, [availableConnectors, connectorsQuery]);
-
-  const selectedSkillKeys = useMemo(() => {
-    const tokens = inputValue.match(/\/[A-Za-z0-9._-]+/g) ?? [];
-    const keys = tokens
-      .map((token) => token.slice(1))
-      .filter(
-        (skillKey, index, list) => list.indexOf(skillKey) === index && skillKeySet.has(skillKey),
-      );
-    return keys;
-  }, [inputValue, skillKeySet]);
 
   const filteredSkills = useMemo(() => {
     const query = skillsQuery.trim().toLowerCase();
@@ -288,6 +485,11 @@ export function EnhancedChatInput({
   }, [isSkillsLoading, wsClient]);
 
   const handleSkillsOpenChange = (open: boolean) => {
+    skillsAutoOpenRef.current = false;
+    if (open) {
+      setSlashSuggestionsOpen(false);
+      setActiveSlashRange(null);
+    }
     setSkillsOpen(open);
     if (open && (skills.length === 0 || skillsError)) {
       void loadSkills();
@@ -304,6 +506,95 @@ export function EnhancedChatInput({
     }
   };
 
+  const updateSlashSuggestionsPosition = (textareaEl?: HTMLTextAreaElement | null) => {
+    const textarea = textareaEl ?? textareaRef.current;
+    const host = inputAreaRef.current;
+    if (!textarea || !host) {
+      return;
+    }
+    const caret = textarea.selectionStart ?? textarea.value.length;
+
+    const mirror = document.createElement("div");
+    const computed = window.getComputedStyle(textarea);
+    const copiedStyleProps = [
+      "boxSizing",
+      "width",
+      "paddingTop",
+      "paddingRight",
+      "paddingBottom",
+      "paddingLeft",
+      "borderTopWidth",
+      "borderRightWidth",
+      "borderBottomWidth",
+      "borderLeftWidth",
+      "fontFamily",
+      "fontSize",
+      "fontWeight",
+      "fontStyle",
+      "lineHeight",
+      "letterSpacing",
+      "wordSpacing",
+      "textTransform",
+      "textIndent",
+      "textAlign",
+      "whiteSpace",
+      "overflowWrap",
+      "wordBreak",
+    ] as const;
+    copiedStyleProps.forEach((prop) => {
+      mirror.style[prop] = computed[prop];
+    });
+    mirror.style.position = "absolute";
+    mirror.style.visibility = "hidden";
+    mirror.style.pointerEvents = "none";
+    mirror.style.whiteSpace = "pre-wrap";
+    mirror.style.overflowWrap = "break-word";
+    mirror.style.wordBreak = "break-word";
+    mirror.style.left = "-9999px";
+    mirror.style.top = "0";
+    mirror.textContent = textarea.value.slice(0, caret);
+    const marker = document.createElement("span");
+    marker.textContent = textarea.value.slice(caret) || "\u200b";
+    mirror.appendChild(marker);
+    document.body.appendChild(mirror);
+    const mirrorRect = mirror.getBoundingClientRect();
+    const markerRect = marker.getBoundingClientRect();
+    document.body.removeChild(mirror);
+
+    const panelWidth = Math.min(360, Math.max(240, host.clientWidth - 220));
+    const parsedLineHeight = Number.parseFloat(computed.lineHeight || "");
+    const parsedFontSize = Number.parseFloat(computed.fontSize || "");
+    const lineHeightPx =
+      Number.isFinite(parsedLineHeight) && parsedLineHeight > 0
+        ? parsedLineHeight
+        : Number.isFinite(parsedFontSize) && parsedFontSize > 0
+          ? parsedFontSize * 1.4
+          : 20;
+    const caretTop = textarea.offsetTop + (markerRect.top - mirrorRect.top) - textarea.scrollTop;
+    const rawTop = caretTop + lineHeightPx + 4;
+    const rawLeft = textarea.offsetLeft + (markerRect.left - mirrorRect.left) - textarea.scrollLeft;
+    const clampedLeft = Math.min(
+      Math.max(0, rawLeft - 8),
+      Math.max(0, host.clientWidth - panelWidth),
+    );
+    const hostRect = host.getBoundingClientRect();
+    const placement = resolveSlashPanelPlacement({
+      rawTop,
+      caretTop,
+      panelHeight: 320,
+      hostHeight: host.clientHeight,
+      hostBottom: hostRect.bottom,
+      viewportHeight: window.innerHeight,
+    });
+
+    setSlashPanelPosition({
+      top: placement.top,
+      left: clampedLeft,
+      width: panelWidth,
+      direction: placement.direction,
+    });
+  };
+
   // 自动调整文本框高度
   const adjustTextareaHeight = () => {
     const textarea = textareaRef.current;
@@ -316,9 +607,43 @@ export function EnhancedChatInput({
   // 处理输入变化
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     isTypingRef.current = true;
-    updateInputValue(e.target.value);
+    const nextValue = e.target.value;
+    updateInputValue(nextValue);
     if (sendError) setSendError(null);
     adjustTextareaHeight();
+
+    const slashState = resolveSlashTriggerToken(nextValue, e.target.selectionStart);
+    if (slashState.active) {
+      skillsAutoOpenRef.current = true;
+      setActiveSlashRange({ start: slashState.start, end: slashState.end });
+      if (skillsOpen) {
+        setSkillsOpen(false);
+      }
+      if (!slashSuggestionsOpen) {
+        setSlashSuggestionsOpen(true);
+      }
+      if (skillsQuery !== slashState.query) {
+        setSkillsQuery(slashState.query);
+      }
+      if ((skills.length === 0 || skillsError) && !isSkillsLoading) {
+        void loadSkills();
+      }
+      updateSlashSuggestionsPosition(e.target);
+      return;
+    }
+
+    if (skillsAutoOpenRef.current) {
+      skillsAutoOpenRef.current = false;
+      setActiveSlashRange(null);
+      if (slashSuggestionsOpen) {
+        setSlashSuggestionsOpen(false);
+      }
+      if (skillsQuery) {
+        setSkillsQuery("");
+      }
+    } else if (activeSlashRange) {
+      setActiveSlashRange(null);
+    }
   };
 
   // 处理输入结束 - 当用户停止输入时重置标记
@@ -326,39 +651,176 @@ export function EnhancedChatInput({
     isTypingRef.current = false;
   };
 
-  const handleInsertSkill = (skillKey: string) => {
-    const token = `/${skillKey}`;
-    const exists = selectedSkillKeys.includes(skillKey);
-    if (exists) {
-      const pattern = new RegExp(`(^|\\s)${escapeRegExp(token)}(?=\\s|$)`, "g");
-      const next = inputValue.replace(pattern, " ").replace(/\s+/g, " ").trimStart();
-      updateInputValue(next);
+  useEffect(() => {
+    if (!slashSuggestionsOpen) {
       return;
     }
-    const next = inputValue.trim() ? `${token} ${inputValue}` : `${token} `;
-    updateInputValue(next);
+    const onResize = () => updateSlashSuggestionsPosition(textareaRef.current);
+    window.addEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+    };
+  }, [slashSuggestionsOpen]);
+
+  const handleInsertSkill = (skillKey: string) => {
+    const exists = selectedSkillKeys.includes(skillKey);
+    const nextSelectedSkillKeys = exists
+      ? selectedSkillKeys.filter((item) => item !== skillKey)
+      : [...selectedSkillKeys, skillKey];
+    setSelectedSkillKeys(nextSelectedSkillKeys);
+
+    if (slashSuggestionsOpen && activeSlashRange) {
+      const before = inputValue.slice(0, activeSlashRange.start);
+      const after = inputValue.slice(activeSlashRange.end).replace(/^\s+/, "");
+      const needsSpace = before.length > 0 && after.length > 0 && !/\s$/.test(before);
+      const next = `${before}${needsSpace ? " " : ""}${after}`;
+      updateInputValue(next);
+      skillsAutoOpenRef.current = false;
+      setActiveSlashRange(null);
+      setSlashSuggestionsOpen(false);
+      setSkillsQuery("");
+      requestAnimationFrame(() => {
+        const textarea = textareaRef.current;
+        if (!textarea) return;
+        const caret = Math.min(next.length, before.length + (needsSpace ? 1 : 0));
+        textarea.focus();
+        textarea.setSelectionRange(caret, caret);
+      });
+      return;
+    }
   };
 
   const handleInsertMentionOrCommand = (token: "@ " | "/ ") => {
-    if (inputValue.includes(token.trim())) {
+    if (token === "@ " && inputValue.includes(token.trim())) {
       return;
     }
-    updateInputValue(inputValue.trim() ? `${inputValue} ${token}` : token);
+    const nextValue = inputValue.trim() ? `${inputValue} ${token}` : token;
+    updateInputValue(nextValue);
+    if (token === "/ ") {
+      skillsAutoOpenRef.current = true;
+      const slashStart = nextValue.lastIndexOf("/");
+      setActiveSlashRange({
+        start: slashStart,
+        end: Math.min(nextValue.length, slashStart + 1),
+      });
+      if (skillsOpen) {
+        setSkillsOpen(false);
+      }
+      if (!slashSuggestionsOpen) {
+        setSlashSuggestionsOpen(true);
+      }
+      if (skillsQuery) {
+        setSkillsQuery("");
+      }
+      if ((skills.length === 0 || skillsError) && !isSkillsLoading) {
+        void loadSkills();
+      }
+      requestAnimationFrame(() => {
+        updateSlashSuggestionsPosition(textareaRef.current);
+      });
+    } else if (slashSuggestionsOpen) {
+      skillsAutoOpenRef.current = false;
+      setActiveSlashRange(null);
+      setSlashSuggestionsOpen(false);
+      if (skillsQuery) {
+        setSkillsQuery("");
+      }
+    }
     textareaRef.current?.focus();
   };
 
+  const handleRemoveSelectedSkill = (skillKey: string) => {
+    setSelectedSkillKeys((prev) => prev.filter((item) => item !== skillKey));
+  };
+
+  const renderSkillsPickerContent = () => (
+    <>
+      <div className="px-2 py-1.5">
+        <Input
+          value={skillsQuery}
+          onChange={(e) => setSkillsQuery(e.target.value)}
+          placeholder="筛选技能..."
+          className="h-7 text-xs"
+        />
+      </div>
+      <div className="px-2">
+        <div className="max-h-64 overflow-auto scrollbar-default space-y-1">
+          {isSkillsLoading ? (
+            <div className="flex items-center gap-2 px-2 py-2 text-xs text-text-tertiary">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              加载技能中...
+            </div>
+          ) : skillsError ? (
+            <div className="px-2 py-2 text-xs text-error">{skillsError}</div>
+          ) : filteredSkills.length === 0 ? (
+            <div className="px-2 py-2 text-xs text-text-tertiary">没有匹配的技能</div>
+          ) : (
+            filteredSkills.map((skill) => {
+              const checked = selectedSkillKeys.includes(skill.skillKey);
+              const unavailable = skill.disabled || !skill.eligible;
+              return (
+                <button
+                  key={skill.skillKey}
+                  type="button"
+                  disabled={disabled || unavailable}
+                  onClick={() => handleInsertSkill(skill.skillKey)}
+                  className={`w-full cursor-pointer flex items-start justify-between gap-2 rounded-md px-2 py-1.5 text-left transition-colors disabled:opacity-50 ${
+                    checked ? "bg-primary/12 ring-1 ring-primary/35" : "hover:bg-background"
+                  }`}
+                  title={`/${skill.skillKey}`}
+                >
+                  <div className="min-w-0">
+                    <div className="text-sm text-text-primary truncate">{skill.name}</div>
+                    <div className="text-[11px] text-text-tertiary truncate">/{skill.skillKey}</div>
+                    {skill.description && (
+                      <div className="text-[11px] text-text-tertiary/90 truncate mt-0.5">
+                        {skill.description}
+                      </div>
+                    )}
+                    {unavailable && (
+                      <div className="text-[10px] text-text-tertiary mt-0.5">当前不可用</div>
+                    )}
+                  </div>
+                  {checked && <Check className="w-4 h-4 text-primary shrink-0 mt-0.5" />}
+                </button>
+              );
+            })
+          )}
+        </div>
+      </div>
+      <div className="mt-2 pt-2 border-t border-border-light">
+        <button
+          type="button"
+          onClick={() => {
+            skillsAutoOpenRef.current = false;
+            setSkillsOpen(false);
+            setSlashSuggestionsOpen(false);
+            setSkillsQuery("");
+            openSettings("skills");
+          }}
+          className="w-full cursor-pointer rounded-md px-2 py-1.5 text-left text-xs text-primary hover:bg-primary/10"
+        >
+          管理 Skills
+        </button>
+      </div>
+    </>
+  );
+
   // 废弃参数保留为兼容字段,避免未来接入断裂
+  void highlight;
   void onWorkspaceClick;
   void hasGeneratedFiles;
   void workspaceOpen;
 
   // 处理发送
   const handleSend = async () => {
-    if (!inputValue.trim() && attachmentValue.length === 0) return;
+    if (!inputValue.trim()) return;
     if (disabled || isSending) return;
 
     // 先保存当前输入内容和附件
-    const messageToSend = inputValue;
+    const selectedSkillsToSend = [...selectedSkillKeys];
+    const skillPrefix = selectedSkillsToSend.map((skillKey) => `/${skillKey}`).join(" ");
+    const messageToSend = skillPrefix ? `${skillPrefix} ${inputValue}` : inputValue;
     const attachmentsToSend = attachmentValue.length > 0 ? [...attachmentValue] : undefined;
 
     // 立即清空输入框
@@ -366,6 +828,10 @@ export function EnhancedChatInput({
     setInput("");
     prevDraftValueRef.current = "";
     setAttachments([]);
+    setSelectedSkillKeys([]);
+    setSlashSuggestionsOpen(false);
+    setActiveSlashRange(null);
+    setSkillsQuery("");
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
@@ -377,11 +843,12 @@ export function EnhancedChatInput({
 
     if (!result.ok) {
       // 发送失败，恢复输入内容
-      setInput(messageToSend);
-      prevDraftValueRef.current = messageToSend;
+      setInput(inputValue);
+      prevDraftValueRef.current = inputValue;
       setAttachments(attachmentsToSend ?? []);
+      setSelectedSkillKeys(selectedSkillsToSend);
       if (onDraftChange) {
-        onDraftChange(messageToSend);
+        onDraftChange(inputValue);
       }
       setSendError(result.error ?? "发送失败，请重试");
     } else {
@@ -400,6 +867,11 @@ export function EnhancedChatInput({
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     // 在 IME 组合期间不处理任何键盘事件，避免干扰输入法
     if (e.nativeEvent?.isComposing) {
+      return;
+    }
+    if (e.key === "Backspace" && inputValue.length === 0 && selectedSkillKeys.length > 0) {
+      e.preventDefault();
+      setSelectedSkillKeys((prev) => prev.slice(0, -1));
       return;
     }
     if (e.key === "Enter" && e.shiftKey && e.metaKey) {
@@ -423,16 +895,34 @@ export function EnhancedChatInput({
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const existingAttachments = attachments;
     const files = Array.from(e.target.files || []);
-    const validFiles = files.filter((file) => isSupportedFile(file));
+    const supportedFiles = files.filter((file) => isSupportedFile(file));
+    const oversizedFiles = supportedFiles.filter((file) => file.size > MAX_UPLOAD_FILE_BYTES);
+    const validFiles = supportedFiles.filter((file) => file.size <= MAX_UPLOAD_FILE_BYTES);
 
-    if (validFiles.length < files.length) {
+    if (supportedFiles.length < files.length) {
       addToast({ title: "部分文件不支持，已自动过滤" });
+    }
+    if (oversizedFiles.length > 0) {
+      addToast({
+        title: `存在超过 ${MAX_UPLOAD_FILE_LABEL} 的文件，无法上传`,
+        description: oversizedFiles
+          .slice(0, 2)
+          .map((file) => file.name)
+          .join("、"),
+        variant: "error",
+      });
+    }
+
+    if (validFiles.length === 0) {
+      if (e.target) e.target.value = "";
+      return;
     }
 
     // 为图片生成预览 URL
     const newImageUrls = new Map(attachmentImageUrls);
-    const currentLength = attachmentValue.length;
+    const currentLength = existingAttachments.length;
     validFiles.forEach((file, index) => {
       const url = generateImageUrl(file);
       if (url) {
@@ -440,11 +930,11 @@ export function EnhancedChatInput({
       }
     });
     setAttachmentImageUrls(newImageUrls);
+    const nextAttachments = [...existingAttachments, ...validFiles];
+    setAttachments(nextAttachments);
 
     if (onDraftAttachmentsChange) {
-      onDraftAttachmentsChange([...(draftAttachments ?? attachments), ...validFiles]);
-    } else {
-      setAttachments((prev) => [...prev, ...validFiles]);
+      onDraftAttachmentsChange(nextAttachments);
     }
     if (e.target) e.target.value = "";
   };
@@ -468,55 +958,107 @@ export function EnhancedChatInput({
       setAttachmentImageUrls(reorderedUrls);
     }
 
+    const nextAttachments = attachments.filter((_, i) => i !== index);
+    setAttachments(nextAttachments);
     if (onDraftAttachmentsChange) {
-      onDraftAttachmentsChange((draftAttachments ?? attachments).filter((_, i) => i !== index));
-    } else {
-      setAttachments((prev) => prev.filter((_, i) => i !== index));
+      onDraftAttachmentsChange(nextAttachments);
     }
   };
 
   // 检查文件类型是否支持
   const isSupportedFile = (file: File): boolean => {
     const imageTypes = ["image/"];
-    const docTypes = [".pdf", ".doc", ".docx", ".xls", ".xlsx", ".txt", ".md", ".markdown"];
+    const docTypes = [
+      ".pdf",
+      ".doc",
+      ".docx",
+      ".xls",
+      ".xlsx",
+      ".csv",
+      ".txt",
+      ".md",
+      ".markdown",
+      ".json",
+    ];
     const isImage = imageTypes.some((type) => file.type.startsWith(type));
     const isDoc = docTypes.some((ext) => file.name.toLowerCase().endsWith(ext));
     return isImage || isDoc;
   };
 
   // 处理拖拽进入
+  const hasDraggedFiles = (e: DragEvent<HTMLDivElement>) => {
+    const types = Array.from(e.dataTransfer?.types ?? []).map((type) => type.toLowerCase());
+    if (types.includes("files")) return true;
+    return types.some((type) => type.includes("file"));
+  };
+
   const handleDragEnter = (e: DragEvent<HTMLDivElement>) => {
+    if (!hasDraggedFiles(e)) return;
     e.preventDefault();
     e.stopPropagation();
+    dragDepthRef.current += 1;
     setIsDragging(true);
   };
 
   // 处理拖拽离开
   const handleDragLeave = (e: DragEvent<HTMLDivElement>) => {
+    if (!isDragging) return;
     e.preventDefault();
     e.stopPropagation();
-    // 只有当离开整个容器时才重置状态
-    if (e.currentTarget === e.target) {
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) {
       setIsDragging(false);
     }
+  };
+
+  const handleDragOver = (e: DragEvent<HTMLDivElement>) => {
+    if (!hasDraggedFiles(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isDragging) {
+      setIsDragging(true);
+    }
+  };
+
+  const handleDragEnd = () => {
+    dragDepthRef.current = 0;
+    setIsDragging(false);
   };
 
   // 处理拖拽放下
   const handleDrop = (e: DragEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.stopPropagation();
+    dragDepthRef.current = 0;
     setIsDragging(false);
 
-    const files = Array.from(e.dataTransfer.files);
-    const validFiles = files.filter((file) => isSupportedFile(file));
+    if (!hasDraggedFiles(e)) {
+      return;
+    }
 
-    if (validFiles.length < files.length) {
+    const files = Array.from(e.dataTransfer.files);
+    const existingAttachments = attachments;
+    const supportedFiles = files.filter((file) => isSupportedFile(file));
+    const oversizedFiles = supportedFiles.filter((file) => file.size > MAX_UPLOAD_FILE_BYTES);
+    const validFiles = supportedFiles.filter((file) => file.size <= MAX_UPLOAD_FILE_BYTES);
+
+    if (supportedFiles.length < files.length) {
       addToast({ title: "部分文件不支持，已自动过滤" });
+    }
+    if (oversizedFiles.length > 0) {
+      addToast({
+        title: `存在超过 ${MAX_UPLOAD_FILE_LABEL} 的文件，无法上传`,
+        description: oversizedFiles
+          .slice(0, 2)
+          .map((file) => file.name)
+          .join("、"),
+        variant: "error",
+      });
     }
 
     // 为图片生成预览 URL
     const newImageUrls = new Map(attachmentImageUrls);
-    const currentLength = attachmentValue.length;
+    const currentLength = existingAttachments.length;
     validFiles.forEach((file, index) => {
       const url = generateImageUrl(file);
       if (url) {
@@ -526,63 +1068,224 @@ export function EnhancedChatInput({
     setAttachmentImageUrls(newImageUrls);
 
     if (validFiles.length > 0) {
+      const nextAttachments = [...existingAttachments, ...validFiles];
+      setAttachments(nextAttachments);
       if (onDraftAttachmentsChange) {
-        onDraftAttachmentsChange([...(draftAttachments ?? attachments), ...validFiles]);
-      } else {
-        setAttachments((prev) => [...prev, ...validFiles]);
+        onDraftAttachmentsChange(nextAttachments);
       }
     }
   };
 
   // 预览文件
+  const resetPreviewPdfState = () => {
+    setPreviewPdfPages(0);
+    setPreviewPdfPage(1);
+    setPreviewPdfLoading(false);
+    setPreviewPdfError(null);
+    setPreviewPdfZoom(1);
+    previewPdfDocRef.current = null;
+  };
+
+  const resetPreviewKnowledgeState = () => {
+    setPreviewKnowledgeDetail(null);
+    setPreviewKnowledgeLoading(false);
+    setPreviewKnowledgeError(null);
+  };
+
+  const resolveKnowledgePreviewRef = async (file: File) => {
+    const effectiveSessionKey = sessionKey ?? pendingUploadSessionKey ?? PREVIEW_UPLOAD_SESSION_KEY;
+
+    const cacheKey = buildPreviewCacheKey(effectiveSessionKey, file);
+    const cached = previewKnowledgeRefs.current.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
+    const uploadResult = await uploadSessionDocument({ sessionKey: effectiveSessionKey, file });
+
+    const resolved = await resolveSessionKnowledgeDocumentRef({
+      sessionKey: effectiveSessionKey,
+      documentId: uploadResult.documentId,
+      filename: file.name,
+      knowledgeDocumentId: uploadResult.knowledgeDocumentId,
+      kbId: uploadResult.kbId,
+    });
+
+    const ref = {
+      documentId: resolved.knowledgeDocumentId,
+      kbId: resolved.kbId,
+    };
+    previewKnowledgeRefs.current.set(cacheKey, ref);
+    return ref;
+  };
+
   const handlePreviewFile = async (file: File) => {
-    if (file.type.startsWith("image/")) {
-      // 创建图片预览 URL
-      const url = URL.createObjectURL(file);
-      setPreviewImageUrl(url);
-      setPreviewTextContent(null);
-    } else {
-      // 读取文本文件内容
+    const requestId = previewRequestRef.current + 1;
+    previewRequestRef.current = requestId;
+
+    if (previewImageUrl) {
+      URL.revokeObjectURL(previewImageUrl);
+    }
+    if (previewBlobUrl && previewBlobUrl !== previewImageUrl) {
+      URL.revokeObjectURL(previewBlobUrl);
+    }
+
+    const blobUrl = URL.createObjectURL(file);
+    setPreviewBlobUrl(blobUrl);
+    setPreviewImageUrl(file.type.startsWith("image/") ? blobUrl : null);
+    resetPreviewPdfState();
+    resetPreviewKnowledgeState();
+
+    const useKnowledgePreview = supportsKnowledgePreview(file);
+    if (!useKnowledgePreview && supportsTextPreview(file)) {
       try {
         const text = await file.text();
-        setPreviewTextContent(text);
-        setPreviewImageUrl(null);
+        if (previewRequestRef.current === requestId) {
+          setPreviewTextContent(text);
+        }
       } catch {
-        setPreviewTextContent(null);
+        if (previewRequestRef.current === requestId) {
+          setPreviewTextContent(null);
+        }
       }
+    } else {
+      setPreviewTextContent(null);
     }
     setPreviewFile(file);
+
+    if (!useKnowledgePreview) {
+      return;
+    }
+
+    setPreviewKnowledgeLoading(true);
+    setPreviewKnowledgeError(null);
+    try {
+      const ref = await resolveKnowledgePreviewRef(file);
+      const detail = await getKnowledge(ref.documentId, ref.kbId);
+      if (previewRequestRef.current !== requestId) {
+        return;
+      }
+      setPreviewKnowledgeDetail(detail);
+    } catch (error) {
+      if (previewRequestRef.current !== requestId) {
+        return;
+      }
+      setPreviewKnowledgeError(error instanceof Error ? error.message : "加载文档预览失败");
+    } finally {
+      if (previewRequestRef.current === requestId) {
+        setPreviewKnowledgeLoading(false);
+      }
+    }
   };
 
   // 关闭预览
   const closePreview = () => {
+    previewRequestRef.current += 1;
     if (previewImageUrl) {
       URL.revokeObjectURL(previewImageUrl);
     }
+    if (previewBlobUrl && previewBlobUrl !== previewImageUrl) {
+      URL.revokeObjectURL(previewBlobUrl);
+    }
+    resetPreviewPdfState();
+    resetPreviewKnowledgeState();
     setPreviewFile(null);
     setPreviewImageUrl(null);
+    setPreviewBlobUrl(null);
     setPreviewTextContent(null);
   };
 
-  return (
-    <div
-      onDragEnter={handleDragEnter}
-      onDragLeave={handleDragLeave}
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={handleDrop}
-      className={`relative ${isDragging ? "bg-primary/5" : ""}`}
-    >
-      {/* 拖拽提示覆盖层 */}
-      {isDragging && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-primary/10 border-2 border-dashed border-primary rounded-lg pointer-events-none">
-          <div className="flex flex-col items-center gap-2 text-primary">
-            <FolderOpen className="w-8 h-8" />
-            <span className="text-sm font-medium">松开鼠标上传文件</span>
-            <span className="text-xs text-text-tertiary">支持图片、PDF、Word、Excel 等文档</span>
-          </div>
-        </div>
-      )}
+  const previewFilename = previewFile?.name.toLowerCase() ?? "";
+  const previewIsPdf = previewFile?.type === "application/pdf" || previewFilename.endsWith(".pdf");
+  const previewIsOffice =
+    previewFilename.endsWith(".docx") ||
+    previewFilename.endsWith(".doc") ||
+    previewFilename.endsWith(".xlsx") ||
+    previewFilename.endsWith(".xls") ||
+    previewFilename.endsWith(".pptx") ||
+    previewFilename.endsWith(".ppt");
+  const previewUsesKnowledgePreview = previewFile ? supportsKnowledgePreview(previewFile) : false;
 
+  useEffect(() => {
+    let isActive = true;
+    if (!previewIsPdf || !previewBlobUrl) {
+      return;
+    }
+
+    const loadPdfJs = (): Promise<PdfJsLib> =>
+      new Promise((resolve, reject) => {
+        if (window.pdfjsLib) {
+          resolve(window.pdfjsLib);
+          return;
+        }
+        const script = document.createElement("script");
+        script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js";
+        script.onload = () => {
+          if (window.pdfjsLib) {
+            resolve(window.pdfjsLib);
+          } else {
+            reject(new Error("PDF.js 未正确加载"));
+          }
+        };
+        script.onerror = () => reject(new Error("PDF.js 加载失败"));
+        document.head.appendChild(script);
+      });
+
+    const initPdf = async () => {
+      setPreviewPdfLoading(true);
+      setPreviewPdfError(null);
+      try {
+        const pdfjs = await loadPdfJs();
+        if (!isActive) return;
+        pdfjs.GlobalWorkerOptions.workerSrc =
+          "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js";
+        const loadingTask = pdfjs.getDocument(previewBlobUrl);
+        const pdf = await loadingTask.promise;
+        if (!isActive) return;
+        previewPdfDocRef.current = pdf;
+        setPreviewPdfPages(pdf.numPages);
+        setPreviewPdfPage(1);
+        setPreviewPdfRenderKey((k) => k + 1);
+      } catch (error) {
+        setPreviewPdfError(error instanceof Error ? error.message : "PDF 加载失败");
+      } finally {
+        if (isActive) {
+          setPreviewPdfLoading(false);
+        }
+      }
+    };
+
+    void initPdf();
+
+    return () => {
+      isActive = false;
+    };
+  }, [previewIsPdf, previewBlobUrl]);
+
+  useEffect(() => {
+    const renderPdfPage = async () => {
+      if (!previewIsPdf || !previewPdfDocRef.current || !previewPdfCanvasRef.current) return;
+      if (previewPdfRenderingRef.current) return;
+      previewPdfRenderingRef.current = true;
+      try {
+        const page = await previewPdfDocRef.current.getPage(previewPdfPage);
+        const viewport = page.getViewport({ scale: 1.2 * previewPdfZoom });
+        const canvas = previewPdfCanvasRef.current;
+        const context = canvas.getContext("2d");
+        if (!canvas || !context) return;
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
+        await page.render({ canvas, canvasContext: context, viewport }).promise;
+      } finally {
+        previewPdfRenderingRef.current = false;
+      }
+    };
+
+    void renderPdfPage();
+  }, [previewIsPdf, previewPdfPage, previewPdfZoom, previewPdfRenderKey]);
+
+  return (
+    <div>
       {/* 文件预览弹窗 */}
       {previewFile && (
         <div
@@ -590,75 +1293,166 @@ export function EnhancedChatInput({
           onClick={closePreview}
         >
           <div
-            className="relative max-w-[90vw] max-h-[90vh] bg-background rounded-lg overflow-hidden flex flex-col"
+            className="relative flex max-h-[97vh] w-[min(1320px,97vw)] flex-col overflow-hidden rounded-lg border border-border-light bg-background"
             onClick={(e) => e.stopPropagation()}
           >
             <button
               onClick={closePreview}
-              className="absolute top-2 right-2 z-10 p-1 rounded-full bg-black/50 text-white hover:bg-black/70"
+              className="absolute top-2 right-2 z-10 cursor-pointer p-1 rounded-full bg-black/50 text-white hover:bg-black/70"
             >
               <X className="w-5 h-5" />
             </button>
-            {/* 头部 */}
-            <div className="flex items-center gap-2 px-4 py-2 border-b border-border-light">
-              <FileText className="w-5 h-5 text-text-tertiary" />
-              <span className="text-sm font-medium">{previewFile.name}</span>
-              <span className="text-xs text-text-tertiary">
-                ({formatFileSize(previewFile.size)})
-              </span>
+            {/* 工具栏（对齐知识库预览风格） */}
+            <div className="flex items-center justify-between gap-sm border-b border-border-light px-md py-sm pr-12">
+              <div className="flex min-w-0 items-center gap-xs">
+                <FileText className="h-4 w-4 text-text-tertiary" />
+                <span className="truncate text-sm font-medium text-text-primary">
+                  {previewFile.name}
+                </span>
+                <span className="text-xs text-text-tertiary">
+                  {formatFileSize(previewFile.size)}
+                </span>
+              </div>
+              <div className="flex items-center gap-sm">
+                {previewBlobUrl && (
+                  <a
+                    className="inline-flex items-center text-xs text-primary hover:underline"
+                    href={previewBlobUrl}
+                    download={previewFile.name}
+                  >
+                    <Download className="mr-xs h-3.5 w-3.5" />
+                    下载
+                  </a>
+                )}
+              </div>
             </div>
-            {/* 内容 */}
-            <div className="flex-1 overflow-auto p-4 scrollbar-thin scrollbar-thumb-border-light scrollbar-track-transparent">
+
+            {/* 内容区 */}
+            <div className="flex-1 overflow-auto scrollbar-default bg-background-secondary p-md">
               {previewImageUrl ? (
-                <img
-                  src={previewImageUrl}
-                  alt={previewFile.name}
-                  className="max-w-full max-h-full object-contain mx-auto"
-                />
-              ) : previewTextContent ? (
-                <pre className="text-sm text-text-primary whitespace-pre-wrap font-mono">
-                  {previewTextContent}
-                </pre>
-              ) : (
-                <div className="flex flex-col items-center justify-center h-full text-text-tertiary gap-2">
-                  <File className="w-16 h-16" />
-                  <div className="text-center">
-                    {previewFile.name.endsWith(".docx") ||
-                    previewFile.name.endsWith(".doc") ||
-                    previewFile.name.endsWith(".xlsx") ||
-                    previewFile.name.endsWith(".xls") ||
-                    previewFile.name.endsWith(".pptx") ||
-                    previewFile.name.endsWith(".ppt") ||
-                    previewFile.name.endsWith(".pdf") ? (
-                      <>
-                        <div>Office/PDF 文件需发送消息后预览</div>
-                        <div className="text-xs mt-1">发送消息将自动上传文件到知识库</div>
-                      </>
+                <div className="rounded-lg border border-border-light bg-background p-md">
+                  <img
+                    src={previewImageUrl}
+                    alt={previewFile.name}
+                    className="mx-auto max-h-[78vh] w-auto max-w-full object-contain"
+                  />
+                </div>
+              ) : previewIsPdf && previewBlobUrl ? (
+                <div
+                  key={previewPdfRenderKey}
+                  className="rounded-lg border border-border-light bg-background p-sm"
+                >
+                  <div className="mb-sm flex items-center justify-between gap-sm">
+                    <div className="flex items-center gap-xs">
+                      <button
+                        type="button"
+                        className="cursor-pointer rounded border border-border-light px-sm py-xs text-xs text-text-primary hover:bg-background-secondary disabled:opacity-40"
+                        disabled={previewPdfPage <= 1 || previewPdfLoading}
+                        onClick={() => setPreviewPdfPage((prev) => Math.max(1, prev - 1))}
+                      >
+                        上一页
+                      </button>
+                      <span className="min-w-[68px] text-center text-xs text-text-tertiary">
+                        {previewPdfPages ? `${previewPdfPage} / ${previewPdfPages}` : "加载中"}
+                      </span>
+                      <button
+                        type="button"
+                        className="cursor-pointer rounded border border-border-light px-sm py-xs text-xs text-text-primary hover:bg-background-secondary disabled:opacity-40"
+                        disabled={
+                          previewPdfPages === 0 ||
+                          previewPdfPage >= previewPdfPages ||
+                          previewPdfLoading
+                        }
+                        onClick={() =>
+                          setPreviewPdfPage((prev) => Math.min(previewPdfPages, prev + 1))
+                        }
+                      >
+                        下一页
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-xs">
+                      <button
+                        type="button"
+                        className="cursor-pointer rounded border border-border-light px-sm py-xs text-xs text-text-primary hover:bg-background-secondary"
+                        onClick={() => setPreviewPdfZoom((z) => Math.max(0.5, z - 0.25))}
+                      >
+                        缩小
+                      </button>
+                      <span className="min-w-[54px] text-center text-xs text-text-tertiary">
+                        {Math.round(previewPdfZoom * 100)}%
+                      </span>
+                      <button
+                        type="button"
+                        className="cursor-pointer rounded border border-border-light px-sm py-xs text-xs text-text-primary hover:bg-background-secondary"
+                        onClick={() => setPreviewPdfZoom((z) => Math.min(3, z + 0.25))}
+                      >
+                        放大
+                      </button>
+                    </div>
+                  </div>
+                  <div className="h-[76vh] overflow-auto scrollbar-default rounded border border-border-light bg-background-secondary p-sm">
+                    {previewPdfLoading ? (
+                      <div className="flex h-full items-center justify-center text-sm text-text-tertiary">
+                        加载 PDF 中...
+                      </div>
+                    ) : previewPdfError ? (
+                      <div className="flex h-full items-center justify-center text-sm text-error">
+                        {previewPdfError}
+                      </div>
                     ) : (
-                      <div>暂不支持此文件格式预览</div>
+                      <canvas
+                        key={previewPdfRenderKey}
+                        ref={previewPdfCanvasRef}
+                        className="mx-auto block bg-white"
+                      />
                     )}
                   </div>
+                </div>
+              ) : previewUsesKnowledgePreview ? (
+                <div className="rounded-lg border border-border-light bg-background p-sm">
+                  {previewKnowledgeLoading ? (
+                    <div className="flex h-[76vh] items-center justify-center text-sm text-text-tertiary">
+                      正在上传并转换文档预览...
+                    </div>
+                  ) : previewKnowledgeError ? (
+                    <div className="flex h-[76vh] items-center justify-center text-sm text-error">
+                      {previewKnowledgeError}
+                    </div>
+                  ) : previewKnowledgeDetail ? (
+                    <div className="h-[76vh] overflow-hidden rounded border border-border-light">
+                      <LazyDocPreview detail={previewKnowledgeDetail} />
+                    </div>
+                  ) : (
+                    <div className="flex h-[76vh] items-center justify-center text-sm text-text-tertiary">
+                      预览准备中...
+                    </div>
+                  )}
+                </div>
+              ) : previewTextContent ? (
+                <div className="rounded-lg border border-border-light bg-background p-md">
+                  <pre className="whitespace-pre-wrap text-sm font-mono text-text-primary">
+                    {previewTextContent}
+                  </pre>
+                </div>
+              ) : previewIsOffice ? (
+                <div className="flex min-h-[360px] flex-col items-center justify-center gap-md rounded-lg border border-border-light bg-background p-lg">
+                  <File className="h-12 w-12 text-text-tertiary" />
+                  <div className="space-y-xs text-center">
+                    <p className="text-base font-semibold text-text-primary">Office 文件</p>
+                    <p className="text-sm text-text-tertiary">
+                      当前环境不支持在线转换预览，请下载后使用本地软件打开。
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex min-h-[300px] items-center justify-center rounded-lg border border-border-light bg-background p-lg text-sm text-text-tertiary">
+                  当前格式暂不支持预览，可下载文件查看。
                 </div>
               )}
             </div>
           </div>
         </div>
       )}
-      {sendError && (
-        <div className="px-2xl pb-sm">
-          <div className="flex items-center justify-between gap-sm rounded-md border border-error/40 bg-error/10 px-md py-sm text-xs text-error">
-            <span>{sendError}</span>
-            <button
-              type="button"
-              onClick={handleSend}
-              className="rounded border border-error/40 px-sm py-xs text-error hover:bg-error/10"
-            >
-              重试发送
-            </button>
-          </div>
-        </div>
-      )}
-
       {/* 输入区域 - Manus风格 */}
       <div
         className={
@@ -667,65 +1461,92 @@ export function EnhancedChatInput({
       >
         <div className="w-full md:max-w-[800px] lg:max-w-[1000px] px-md md:px-xl lg:px-2xl">
           <div
-            className={`flex flex-col gap-sm border border-border transition-shadow min-w-0 ${
+            onDragEnter={handleDragEnter}
+            onDragLeave={handleDragLeave}
+            onDragOver={handleDragOver}
+            onDragEnd={handleDragEnd}
+            onDrop={handleDrop}
+            className={`relative flex flex-col gap-sm border border-border transition-shadow min-w-0 ${
               compact
                 ? "bg-background-secondary rounded-xl px-md py-md"
                 : "bg-background-secondary rounded-2xl px-lg py-lg shadow-sm"
-            } ${highlight ? "ring-2 ring-primary/40 shadow-[0_0_0_6px_rgba(99,102,241,0.15)] animate-attention" : ""}`}
+            }`}
           >
+            {/* 拖拽提示覆盖层（仅限输入框区域） */}
+            {isDragging && (
+              <div
+                className={`absolute inset-0 z-50 flex items-center justify-center border-2 border-dashed border-primary bg-primary/10 pointer-events-none ${
+                  compact ? "rounded-xl" : "rounded-2xl"
+                }`}
+              >
+                <div className="flex flex-col items-center gap-2 text-primary">
+                  <FolderOpen className="w-8 h-8" />
+                  <span className="text-sm font-medium">松开鼠标上传文件</span>
+                  <span className="text-xs text-text-tertiary">
+                    支持图片、PDF、Word、Excel 等文档，单文件最大 {MAX_UPLOAD_FILE_LABEL}
+                  </span>
+                </div>
+              </div>
+            )}
+
             {/* 附件预览 - 在输入框内部，文字上方 */}
             {attachmentValue.length > 0 && (
-              <div className="flex flex-wrap gap-sm pb-sm">
+              <div className="grid grid-cols-1 gap-sm pb-sm md:grid-cols-2">
                 {attachmentValue.map((file, index) => {
                   const imageUrl = attachmentImageUrls.get(index);
-                  const isImage = file.type.startsWith("image/");
+                  const IconComponent = resolveAttachmentIcon(file);
+                  const fileTypeLabel =
+                    file.type && file.type.trim().length > 0
+                      ? file.type
+                      : file.name.split(".").pop()?.toUpperCase() || "未知类型";
 
                   return (
-                    <div key={index} className="group relative">
-                      {isImage && imageUrl ? (
-                        // 图片直接显示大图预览
-                        <div className="relative">
-                          <div className="relative max-w-[80px] rounded-md overflow-hidden border border-border">
-                            <img
-                              src={imageUrl}
-                              alt={file.name}
-                              className="max-w-[80px] max-h-[60px] object-contain"
-                            />
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="absolute top-1 right-1 h-6 w-6 bg-background/80 rounded-full opacity-0 group-hover:opacity-100 transition-opacity p-0"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                removeAttachment(index);
-                              }}
-                            >
-                              <X className="w-4 h-4" />
-                            </Button>
-                          </div>
-                        </div>
-                      ) : (
-                        // 文档显示文件图标和名称
-                        <div
-                          className="flex items-center gap-xs px-sm py-xs bg-background rounded-md text-xs text-text-secondary hover:bg-background-secondary transition-colors cursor-pointer border border-border"
+                    <div
+                      key={index}
+                      className="group rounded-xl border border-border-light bg-white p-sm text-left transition-colors hover:border-primary/40 hover:bg-primary/5"
+                    >
+                      <div className="flex items-start justify-between gap-sm">
+                        <button
+                          type="button"
+                          className="flex cursor-pointer min-w-0 items-start gap-sm text-left"
                           onClick={() => handlePreviewFile(file)}
                           title="点击预览"
                         >
-                          <FileText className="w-4 h-4 text-text-tertiary" />
-                          <span className="max-w-[120px] truncate">{file.name}</span>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-4 w-4 p-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              removeAttachment(index);
-                            }}
-                          >
-                            <X className="w-3 h-3" />
-                          </Button>
-                        </div>
-                      )}
+                          <div className="h-9 w-9 shrink-0 overflow-hidden rounded-md bg-primary/10 p-2 text-primary">
+                            {imageUrl ? (
+                              <img
+                                src={imageUrl}
+                                alt={file.name}
+                                className="h-full w-full rounded-sm object-cover"
+                              />
+                            ) : (
+                              <IconComponent className="h-5 w-5" />
+                            )}
+                          </div>
+                          <div className="min-w-0">
+                            <div className="truncate text-sm font-medium text-text-primary">
+                              {file.name}
+                            </div>
+                            <div className="mt-1 truncate text-[11px] text-text-tertiary">
+                              {fileTypeLabel}
+                            </div>
+                            <div className="mt-1 text-[11px] text-text-tertiary">
+                              待发送 · {formatFileSize(file.size)}
+                            </div>
+                          </div>
+                        </button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 shrink-0 rounded-md text-text-tertiary opacity-0 transition-opacity hover:bg-background-secondary hover:text-text-primary group-hover:opacity-100"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeAttachment(index);
+                          }}
+                        >
+                          <X className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
                   );
                 })}
@@ -733,7 +1554,27 @@ export function EnhancedChatInput({
             )}
 
             {/* 文本输入框 */}
-            <div className="flex-1 min-w-[200px]">
+            <div ref={inputAreaRef} className="relative flex-1 min-w-[200px]">
+              {selectedSkillKeys.length > 0 && (
+                <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                  {selectedSkillKeys.map((skillKey) => (
+                    <span
+                      key={skillKey}
+                      className="inline-flex items-center gap-1 rounded-md border border-primary/35 bg-primary/12 px-2 py-0.5 text-[11px] font-medium text-primary"
+                    >
+                      /{skillKey}
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveSelectedSkill(skillKey)}
+                        className="inline-flex h-3.5 w-3.5 cursor-pointer items-center justify-center rounded-sm text-primary/80 hover:bg-primary/15 hover:text-primary"
+                        title={`移除技能 /${skillKey}`}
+                      >
+                        <X className="h-3 w-3" />
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
               <textarea
                 ref={textareaRef}
                 value={inputValue}
@@ -746,6 +1587,22 @@ export function EnhancedChatInput({
                 className="w-full resize-none border-none outline-none bg-transparent text-sm text-text-primary placeholder:text-text-tertiary disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{ maxHeight: "200px", minHeight: "72px" }}
               />
+              {slashSuggestionsOpen && (
+                <div
+                  data-testid="slash-skills-panel"
+                  className={`absolute z-30 rounded-xl border border-border-light bg-surface p-2 shadow-xl ${
+                    slashPanelPosition.direction === "up" ? "origin-bottom" : "origin-top"
+                  }`}
+                  style={{
+                    top: `${slashPanelPosition.top}px`,
+                    left: `${slashPanelPosition.left}px`,
+                    width: `${slashPanelPosition.width}px`,
+                    maxWidth: "calc(100% - 8px)",
+                  }}
+                >
+                  {renderSkillsPickerContent()}
+                </div>
+              )}
             </div>
 
             {/* 工具按钮 - 底部对齐 */}
@@ -756,7 +1613,7 @@ export function EnhancedChatInput({
                   <PopoverTrigger asChild>
                     <button
                       disabled={disabled}
-                      className="relative p-sm rounded-lg hover:bg-background text-text-tertiary hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="relative p-sm rounded-lg cursor-pointer hover:bg-background text-text-tertiary hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       title="快捷功能"
                     >
                       <Zap className="w-4 h-4" />
@@ -778,7 +1635,7 @@ export function EnhancedChatInput({
                         handleInsertSkill("powerpoint-pptx");
                         setQuickActionsOpen(false);
                       }}
-                      className="w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-text-primary hover:bg-background transition-colors"
+                      className="w-full cursor-pointer flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-text-primary hover:bg-background transition-colors"
                     >
                       <Presentation className="w-4 h-4" />
                       生成PPT
@@ -790,7 +1647,7 @@ export function EnhancedChatInput({
                         handleInsertSkill("markdown-converter");
                         setQuickActionsOpen(false);
                       }}
-                      className="w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-text-primary hover:bg-background transition-colors"
+                      className="w-full cursor-pointer flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-text-primary hover:bg-background transition-colors"
                     >
                       <FileText className="w-4 h-4" />
                       生成Markdown
@@ -802,7 +1659,7 @@ export function EnhancedChatInput({
                         handleInsertSkill("word-generator");
                         setQuickActionsOpen(false);
                       }}
-                      className="w-full flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-text-primary hover:bg-background transition-colors"
+                      className="w-full cursor-pointer flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-text-primary hover:bg-background transition-colors"
                     >
                       <FileText className="w-4 h-4" />
                       生成Word
@@ -814,7 +1671,7 @@ export function EnhancedChatInput({
                   <PopoverTrigger asChild>
                     <button
                       disabled={disabled}
-                      className="relative p-sm rounded-lg hover:bg-background text-text-tertiary hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="relative p-sm rounded-lg cursor-pointer hover:bg-background text-text-tertiary hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       title="选择 Skills"
                     >
                       <Sparkles className="w-4 h-4" />
@@ -831,75 +1688,7 @@ export function EnhancedChatInput({
                     sideOffset={8}
                     className="w-[340px] p-2 rounded-xl border-border-light bg-surface shadow-xl"
                   >
-                    <div className="px-2 py-1.5">
-                      <Input
-                        value={skillsQuery}
-                        onChange={(e) => setSkillsQuery(e.target.value)}
-                        placeholder="筛选技能..."
-                        className="h-7 text-xs"
-                      />
-                    </div>
-                    <div className="max-h-64 overflow-auto space-y-1 [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border">
-                      {isSkillsLoading ? (
-                        <div className="flex items-center gap-2 px-2 py-2 text-xs text-text-tertiary">
-                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          加载技能中...
-                        </div>
-                      ) : skillsError ? (
-                        <div className="px-2 py-2 text-xs text-error">{skillsError}</div>
-                      ) : filteredSkills.length === 0 ? (
-                        <div className="px-2 py-2 text-xs text-text-tertiary">没有匹配的技能</div>
-                      ) : (
-                        filteredSkills.map((skill) => {
-                          const checked = selectedSkillKeys.includes(skill.skillKey);
-                          const unavailable = skill.disabled || !skill.eligible;
-                          return (
-                            <button
-                              key={skill.skillKey}
-                              type="button"
-                              disabled={disabled || unavailable}
-                              onClick={() => handleInsertSkill(skill.skillKey)}
-                              className="w-full flex items-start justify-between gap-2 rounded-md px-2 py-1.5 text-left hover:bg-background transition-colors disabled:opacity-50"
-                              title={`/${skill.skillKey}`}
-                            >
-                              <div className="min-w-0">
-                                <div className="text-sm text-text-primary truncate">
-                                  {skill.name}
-                                </div>
-                                <div className="text-[11px] text-text-tertiary truncate">
-                                  /{skill.skillKey}
-                                </div>
-                                {skill.description && (
-                                  <div className="text-[11px] text-text-tertiary/90 truncate mt-0.5">
-                                    {skill.description}
-                                  </div>
-                                )}
-                                {unavailable && (
-                                  <div className="text-[10px] text-text-tertiary mt-0.5">
-                                    当前不可用
-                                  </div>
-                                )}
-                              </div>
-                              {checked && (
-                                <Check className="w-4 h-4 text-primary shrink-0 mt-0.5" />
-                              )}
-                            </button>
-                          );
-                        })
-                      )}
-                    </div>
-                    <div className="mt-2 pt-2 border-t border-border-light">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSkillsOpen(false);
-                          openSettings("skills");
-                        }}
-                        className="w-full rounded-md px-2 py-1.5 text-left text-xs text-primary hover:bg-primary/10"
-                      >
-                        管理 Skills
-                      </button>
-                    </div>
+                    {renderSkillsPickerContent()}
                   </PopoverContent>
                 </Popover>
 
@@ -907,7 +1696,7 @@ export function EnhancedChatInput({
                   <PopoverTrigger asChild>
                     <button
                       disabled={disabled}
-                      className="relative p-sm rounded-lg hover:bg-background text-text-tertiary hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="relative p-sm rounded-lg cursor-pointer hover:bg-background text-text-tertiary hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       title="选择连接器"
                     >
                       {activeConnectorIds.length > 0 ? (
@@ -954,7 +1743,7 @@ export function EnhancedChatInput({
                         />
                       </div>
                     </div>
-                    <div className="max-h-64 overflow-auto py-1 space-y-1 [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border">
+                    <div className="max-h-64 overflow-auto scrollbar-default py-1 space-y-1">
                       {filteredConnectors.length === 0 ? (
                         <div className="px-2 py-3 text-xs text-text-tertiary">
                           {availableConnectors.length === 0 ? "暂无可用连接器" : "无匹配连接器"}
@@ -1006,7 +1795,7 @@ export function EnhancedChatInput({
                           setConnectorsQuery("");
                           openSettings("connectors");
                         }}
-                        className="w-full rounded-md px-2 py-1.5 text-left text-xs text-primary hover:bg-primary/10"
+                        className="w-full cursor-pointer rounded-md px-2 py-1.5 text-left text-xs text-primary hover:bg-primary/10"
                       >
                         管理 Connectors
                       </button>
@@ -1021,7 +1810,7 @@ export function EnhancedChatInput({
                   <PopoverTrigger asChild>
                     <button
                       disabled={disabled}
-                      className="p-sm rounded-lg hover:bg-background text-text-tertiary hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="p-sm rounded-lg cursor-pointer hover:bg-background text-text-tertiary hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       title="@ 提及与 / 命令"
                     >
                       <AtSign className="w-4 h-4" />
@@ -1031,14 +1820,14 @@ export function EnhancedChatInput({
                     <button
                       type="button"
                       onClick={() => handleInsertMentionOrCommand("@ ")}
-                      className="w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-background"
+                      className="w-full cursor-pointer rounded-md px-2 py-1.5 text-left text-sm hover:bg-background"
                     >
                       插入 @ 提及
                     </button>
                     <button
                       type="button"
                       onClick={() => handleInsertMentionOrCommand("/ ")}
-                      className="w-full rounded-md px-2 py-1.5 text-left text-sm hover:bg-background"
+                      className="w-full cursor-pointer rounded-md px-2 py-1.5 text-left text-sm hover:bg-background"
                     >
                       插入 / 命令
                     </button>
@@ -1049,8 +1838,8 @@ export function EnhancedChatInput({
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   disabled={disabled}
-                  className="p-sm rounded-lg hover:bg-background text-text-tertiary hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="上传文件 (最大10MB)"
+                  className="p-sm rounded-lg cursor-pointer hover:bg-background text-text-tertiary hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  title={`上传文件 (最大${MAX_UPLOAD_FILE_LABEL})`}
                 >
                   <Paperclip className="w-4 h-4" />
                 </button>
@@ -1058,7 +1847,7 @@ export function EnhancedChatInput({
                   ref={fileInputRef}
                   type="file"
                   multiple
-                  accept=".pdf,.doc,.docx,.xls,.xlsx,.txt,.md,.markdown"
+                  accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.md,.markdown,.json"
                   onChange={handleFileSelect}
                   className="hidden"
                 />
@@ -1067,8 +1856,8 @@ export function EnhancedChatInput({
                 <button
                   onClick={() => imageInputRef.current?.click()}
                   disabled={disabled}
-                  className="p-sm rounded-lg hover:bg-background text-text-tertiary hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                  title="上传图片"
+                  className="p-sm rounded-lg cursor-pointer hover:bg-background text-text-tertiary hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  title={`上传图片 (最大${MAX_UPLOAD_FILE_LABEL})`}
                 >
                   <ImageIcon className="w-4 h-4" />
                 </button>
@@ -1093,10 +1882,8 @@ export function EnhancedChatInput({
                 {/* 发送按钮 */}
                 <button
                   onClick={handleSend}
-                  disabled={
-                    disabled || isSending || (!inputValue.trim() && attachmentValue.length === 0)
-                  }
-                  className="p-sm rounded-lg bg-primary hover:bg-primary-hover text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={disabled || isSending || !inputValue.trim()}
+                  className="p-sm rounded-lg cursor-pointer bg-primary hover:bg-primary-hover text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   title="发送 (Shift + Command + Enter)"
                 >
                   <Send className="w-4 h-4" />

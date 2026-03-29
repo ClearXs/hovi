@@ -672,6 +672,7 @@ function buildAnnounceQueueKey(sessionKey: string, origin?: DeliveryContext): st
 async function maybeQueueSubagentAnnounce(params: {
   requesterSessionKey: string;
   announceId?: string;
+  turnId?: string;
   triggerMessage: string;
   steerMessage: string;
   summaryLine?: string;
@@ -740,6 +741,7 @@ async function maybeQueueSubagentAnnounce(params: {
 
 async function sendSubagentAnnounceDirectly(params: {
   targetRequesterSessionKey: string;
+  turnId?: string;
   triggerMessage: string;
   internalEvents?: AgentInternalEvent[];
   expectsCompletionMessage: boolean;
@@ -822,6 +824,7 @@ async function sendSubagentAnnounceDirectly(params: {
               sourceTool: params.sourceTool ?? "subagent_announce",
             },
             idempotencyKey: params.directIdempotencyKey,
+            turnId: params.turnId,
           },
           expectFinal: true,
           timeoutMs: announceTimeoutMs,
@@ -844,6 +847,7 @@ async function sendSubagentAnnounceDirectly(params: {
 async function deliverSubagentAnnouncement(params: {
   requesterSessionKey: string;
   announceId?: string;
+  turnId?: string;
   triggerMessage: string;
   steerMessage: string;
   internalEvents?: AgentInternalEvent[];
@@ -868,6 +872,7 @@ async function deliverSubagentAnnouncement(params: {
       await maybeQueueSubagentAnnounce({
         requesterSessionKey: params.requesterSessionKey,
         announceId: params.announceId,
+        turnId: params.turnId,
         triggerMessage: params.triggerMessage,
         steerMessage: params.steerMessage,
         summaryLine: params.summaryLine,
@@ -881,6 +886,7 @@ async function deliverSubagentAnnouncement(params: {
     direct: async () =>
       await sendSubagentAnnounceDirectly({
         targetRequesterSessionKey: params.targetRequesterSessionKey,
+        turnId: params.turnId,
         triggerMessage: params.triggerMessage,
         internalEvents: params.internalEvents,
         directIdempotencyKey: params.directIdempotencyKey,
@@ -1436,6 +1442,7 @@ export async function runSubagentAnnounceFlow(params: {
     const delivery = await deliverSubagentAnnouncement({
       requesterSessionKey: targetRequesterSessionKey,
       announceId,
+      turnId: params.turnId,
       triggerMessage,
       steerMessage: triggerMessage,
       internalEvents,

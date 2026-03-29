@@ -51,6 +51,7 @@ export type UploadKnowledgeDocumentParams = {
   agentId: string;
   description?: string;
   tags?: string[];
+  processingMode?: "full" | "store_only";
 };
 
 export type UploadKnowledgeDocumentResult = {
@@ -710,6 +711,16 @@ export class KnowledgeManager {
     log.info(
       `knowledge: stored document ${params.filename} (${storeResult.documentId}) for agent ${params.agentId}`,
     );
+
+    // Preview-first uploads only need persistent document ID/path.
+    // Skip extraction/index/graph to avoid blocking interactive flows.
+    const processingMode = params.processingMode ?? "full";
+    if (processingMode === "store_only") {
+      return {
+        documentId: storeResult.documentId,
+        indexed: false,
+      };
+    }
 
     // Extract text from document (if supported)
     let extractedText = "";

@@ -32,9 +32,7 @@ interface MainLayoutProps {
   onRenameSession?: (key: string) => void;
   onDeleteSession?: (key: string) => void;
   onViewSession?: (key: string) => void;
-  searchQuery?: string;
   filterKind?: "all" | "direct" | "group" | "global" | "unknown";
-  onSearchChange?: (value: string) => void;
   onFilterChange?: (value: MainLayoutProps["filterKind"]) => void;
   unreadOnly?: boolean;
   onUnreadToggle?: (value: boolean) => void;
@@ -54,13 +52,17 @@ interface MainLayoutProps {
   showTopBar?: boolean;
   showSidebar?: boolean;
   onOpenKnowledge?: () => void;
+  onOpenChannel?: () => void;
   onOpenPersonaSettings?: () => void;
   onOpenCronJobs?: () => void;
   onOpenAgentManage?: () => void;
+  onOpenTaskSearch?: () => void;
   onGoHome?: () => void;
   assistantVisible?: boolean;
   onToggleAssistantVisible?: () => void;
-  activeView?: "chat" | "knowledge" | "persona" | "my";
+  activeView?: "chat" | "channel" | "knowledge" | "persona" | "my";
+  searchShortcutLabel?: string;
+  newSessionShortcutLabel?: string;
   onOpenChat?: () => void;
   onStartVoiceChat?: () => void;
   onOpenTasks?: () => void;
@@ -79,9 +81,7 @@ const MainLayout = ({
   onRenameSession = () => {},
   onDeleteSession = () => {},
   onViewSession = () => {},
-  searchQuery = "",
   filterKind = "all",
-  onSearchChange = () => {},
   onFilterChange = () => {},
   unreadOnly = false,
   onUnreadToggle = () => {},
@@ -101,13 +101,17 @@ const MainLayout = ({
   showTopBar = true,
   showSidebar = true,
   onOpenKnowledge = () => {},
+  onOpenChannel = () => {},
   onOpenPersonaSettings = () => {},
   onOpenCronJobs = () => {},
   onOpenAgentManage = () => {},
+  onOpenTaskSearch = () => {},
   onGoHome = () => {},
   assistantVisible = true,
   onToggleAssistantVisible = () => {},
   activeView = "chat",
+  searchShortcutLabel = "Ctrl+Cmd+K",
+  newSessionShortcutLabel = "Ctrl+Cmd+N",
   onOpenChat = () => {},
   onStartVoiceChat = () => {},
   onOpenTasks = () => {},
@@ -132,9 +136,7 @@ const MainLayout = ({
             onRenameSession={onRenameSession}
             onDeleteSession={onDeleteSession}
             onViewSession={onViewSession}
-            searchQuery={searchQuery}
             filterKind={filterKind}
-            onSearchChange={onSearchChange}
             onFilterChange={onFilterChange}
             unreadOnly={unreadOnly}
             onUnreadToggle={onUnreadToggle}
@@ -150,13 +152,17 @@ const MainLayout = ({
             isCollapsed={isSidebarCollapsed}
             onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
             onOpenKnowledge={onOpenKnowledge}
+            onOpenChannel={onOpenChannel}
             onOpenPersonaSettings={onOpenPersonaSettings}
             onOpenCronJobs={onOpenCronJobs}
             onOpenAgentManage={onOpenAgentManage}
+            onOpenTaskSearch={onOpenTaskSearch}
             onGoHome={onGoHome}
             assistantVisible={assistantVisible}
             onToggleAssistantVisible={onToggleAssistantVisible}
             activeView={activeView}
+            searchShortcutLabel={searchShortcutLabel}
+            newSessionShortcutLabel={newSessionShortcutLabel}
           />
         </TooltipProvider>
       )}
@@ -187,7 +193,7 @@ const MainLayout = ({
       {/* Mobile/Tablet: Bottom Tab Bar */}
       {!isDesktop && (
         <MobileTabBar
-          activeTab={activeView as "chat" | "personas" | "knowledge" | "my" | undefined}
+          activeTab={activeView as "chat" | "channel" | "personas" | "knowledge" | "my" | undefined}
         />
       )}
 

@@ -3,6 +3,7 @@
 // Simple event names for mobile tab bar actions
 export const MOBILE_EVENTS = {
   OPEN_CHAT: "mobile:open-chat",
+  OPEN_CHANNEL: "mobile:open-channel",
   OPEN_PERSONA: "mobile:open-persona",
   OPEN_SETTINGS: "mobile:open-settings",
   OPEN_CRON_JOBS: "mobile:open-cron-jobs",

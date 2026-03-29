@@ -906,7 +906,7 @@ export function KnowledgeGraphTab() {
               />
             </button>
             {!legendCollapsed && typeList.length > 0 && (
-              <div className="space-y-1 max-h-48 overflow-y-auto">
+              <div className="space-y-1 max-h-48 overflow-y-auto scrollbar-default">
                 {typeList.map(({ type, count }) => (
                   <button
                     key={type}
@@ -933,7 +933,7 @@ export function KnowledgeGraphTab() {
 
           {/* 关系词 */}
           {stats && stats.topKeywords.length > 0 && (
-            <div className="p-3 flex-1 overflow-y-auto">
+            <div className="p-3 flex-1 overflow-y-auto scrollbar-default">
               <h3 className="text-sm font-medium mb-2">高频关系词</h3>
               <div className="flex flex-wrap gap-1">
                 {stats.topKeywords.slice(0, 15).map((kw) => (
@@ -1008,7 +1008,7 @@ export function KnowledgeGraphTab() {
                   <X className="w-4 h-4" />
                 </button>
               </div>
-              <div className="p-3 space-y-2 overflow-y-auto">
+              <div className="p-3 space-y-2 overflow-y-auto scrollbar-default">
                 <div className="flex items-center gap-2">
                   <div
                     className="w-3 h-3 rounded-full"
@@ -1051,7 +1051,7 @@ export function KnowledgeGraphTab() {
                       <Loader2 className="w-4 h-4 animate-spin text-gray-400" />
                     </div>
                   ) : entityChunks.length > 0 ? (
-                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                    <div className="space-y-2 max-h-48 overflow-y-auto scrollbar-default">
                       {entityChunks.map((chunk, idx) => (
                         <div
                           key={chunk.id || idx}

@@ -1,12 +1,12 @@
 "use client";
 
-import { MessageSquare, Bot, BookOpen, User } from "lucide-react";
+import { MessageSquare, Bot, BookOpen, User, Radio } from "lucide-react";
 import { useRouter, usePathname } from "next/navigation";
 import { memo, useCallback } from "react";
 import { dispatchMobileEvent, MOBILE_EVENTS } from "@/lib/mobileEvents";
 import { cn } from "@/lib/utils";
 
-type TabId = "chat" | "personas" | "knowledge" | "my";
+type TabId = "chat" | "channel" | "personas" | "knowledge" | "my";
 
 interface TabItem {
   id: TabId;
@@ -19,6 +19,13 @@ interface TabItem {
 
 const TABS: TabItem[] = [
   { id: "chat", label: "对话", icon: MessageSquare, isEvent: true, event: MOBILE_EVENTS.OPEN_CHAT },
+  {
+    id: "channel",
+    label: "频道",
+    icon: Radio,
+    isEvent: true,
+    event: MOBILE_EVENTS.OPEN_CHANNEL,
+  },
   { id: "personas", label: "角色", icon: Bot, isEvent: true, event: MOBILE_EVENTS.OPEN_PERSONA },
   {
     id: "knowledge",

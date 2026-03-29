@@ -3,7 +3,6 @@
 import { MessageSquare, Plus, Trash2, Search, Filter, SortAsc, Mail } from "lucide-react";
 import { memo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { formatDate } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import type { GatewaySessionRow } from "@/types/clawdbot";
@@ -18,8 +17,7 @@ interface MobileSessionDrawerProps {
   onSelectSession: (key: string) => void;
   onNewSession: () => void;
   onDeleteSession: (key: string) => void;
-  searchQuery?: string;
-  onSearchChange?: (query: string) => void;
+  onOpenTaskSearch?: () => void;
   filterKind?: FilterKind;
   onFilterChange?: (kind: FilterKind) => void;
   unreadOnly?: boolean;
@@ -37,8 +35,7 @@ export const MobileSessionDrawer = memo(function MobileSessionDrawer({
   onSelectSession,
   onNewSession,
   onDeleteSession,
-  searchQuery: externalSearchQuery,
-  onSearchChange,
+  onOpenTaskSearch,
   filterKind: externalFilterKind = "all",
   onFilterChange,
   unreadOnly: externalUnreadOnly = false,
@@ -49,17 +46,9 @@ export const MobileSessionDrawer = memo(function MobileSessionDrawer({
   onOpenChange,
 }: MobileSessionDrawerProps) {
   const [internalOpen, setInternalOpen] = useState(false);
-  const [internalSearchQuery, setInternalSearchQuery] = useState("");
-
   const isControlled = controlledOpen !== undefined;
   const open = isControlled ? controlledOpen : internalOpen;
   const setOpen = isControlled ? (onOpenChange ?? setInternalOpen) : setInternalOpen;
-
-  const isSearchControlled = externalSearchQuery !== undefined;
-  const searchQuery = isSearchControlled ? externalSearchQuery : internalSearchQuery;
-  const setSearchQuery = isSearchControlled
-    ? (onSearchChange ?? setInternalSearchQuery)
-    : setInternalSearchQuery;
 
   const [showFilters, setShowFilters] = useState(false);
   const [localFilterKind, setLocalFilterKind] = useState<FilterKind>(externalFilterKind);
@@ -83,17 +72,11 @@ export const MobileSessionDrawer = memo(function MobileSessionDrawer({
 
   // Apply filters
   let filteredSessions = sessions.filter((session) => {
-    const matchesSearch =
-      !searchQuery ||
-      (session.derivedTitle || session.displayName || session.label || "")
-        .toLowerCase()
-        .includes(searchQuery.toLowerCase());
-
     const matchesUnread = !localUnreadOnly || unreadMap[session.key];
 
     const matchesFilter = localFilterKind === "all" || session.kind === localFilterKind;
 
-    return matchesSearch && matchesUnread && matchesFilter;
+    return matchesUnread && matchesFilter;
   });
 
   // Sort sessions
@@ -129,7 +112,7 @@ export const MobileSessionDrawer = memo(function MobileSessionDrawer({
           {/* Header */}
           <div className="px-4 py-3 border-b border-border-light bg-background">
             <div className="flex items-center justify-between">
-              <span className="text-base font-semibold">会话列表</span>
+              <span className="text-base font-semibold">任务列表</span>
               <div className="flex items-center gap-1">
                 <Button
                   size="sm"
@@ -139,22 +122,23 @@ export const MobileSessionDrawer = memo(function MobileSessionDrawer({
                 >
                   <Filter className="w-4 h-4" />
                 </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => {
+                    onOpenTaskSearch?.();
+                    setOpen(false);
+                  }}
+                  className="h-8 px-2"
+                >
+                  <Search className="w-4 h-4 mr-1" />
+                  搜索
+                </Button>
                 <Button size="sm" variant="ghost" onClick={onNewSession} className="h-8 px-2">
                   <Plus className="w-4 h-4 mr-1" />
                   新建
                 </Button>
               </div>
-            </div>
-
-            {/* Search */}
-            <div className="mt-3 relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-tertiary" />
-              <Input
-                placeholder="搜索会话..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-9 h-9"
-              />
             </div>
 
             {/* Filters - collapsible */}
@@ -237,14 +221,12 @@ export const MobileSessionDrawer = memo(function MobileSessionDrawer({
           </div>
 
           {/* Session list */}
-          <div className="flex-1 overflow-y-auto bg-background">
+          <div className="flex-1 overflow-y-auto scrollbar-default bg-background">
             {filteredSessions.length === 0 ? (
               <div className="text-center py-8">
                 <MessageSquare className="w-10 h-10 text-text-tertiary mx-auto mb-3" />
                 <p className="text-sm text-text-tertiary">
-                  {searchQuery || localFilterKind !== "all" || localUnreadOnly
-                    ? "未找到匹配的会话"
-                    : "暂无会话"}
+                  {localFilterKind !== "all" || localUnreadOnly ? "未找到匹配的任务" : "暂无任务"}
                 </p>
               </div>
             ) : (
@@ -265,7 +247,7 @@ export const MobileSessionDrawer = memo(function MobileSessionDrawer({
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium text-text-primary truncate">
-                          {session.derivedTitle || session.displayName || session.label || "新对话"}
+                          {session.derivedTitle || session.displayName || session.label || "新任务"}
                         </span>
                         {hasUnread && (
                           <span className="w-2 h-2 rounded-full bg-primary flex-shrink-0" />
@@ -278,7 +260,7 @@ export const MobileSessionDrawer = memo(function MobileSessionDrawer({
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (confirm("确定要删除这个会话吗？")) {
+                        if (confirm("确定要删除这个任务吗？")) {
                           onDeleteSession(session.key);
                         }
                       }}

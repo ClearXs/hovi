@@ -133,7 +133,7 @@ export const MarkdownContent = React.memo(({ content, className = "" }: Markdown
           // 表格渲染 - GitHub Flavored Markdown
           table({ node, children, ...props }) {
             return (
-              <div className="overflow-x-auto my-sm">
+              <div className="overflow-x-auto scrollbar-default my-sm">
                 <table className="min-w-full border border-border rounded-md text-xs" {...props}>
                   {children}
                 </table>

@@ -25,6 +25,7 @@ code {
 html,
 body {
   height: 100%;
+  overflow: hidden;
 }
 
 body {
@@ -38,7 +39,20 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* 交互元素统一手型光标 */
+button:not(:disabled),
+a[href],
+[role="button"]:not([aria-disabled="true"]),
+summary:not([aria-disabled="true"]) {
+  cursor: pointer;
+}
+
 /* ==================== 自定义滚动条样式 / Custom Scrollbar ==================== */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
 .scrollbar-thin::-webkit-scrollbar {
   width: 2px;
   height: 2px;
@@ -58,6 +72,11 @@ body {
 }
 
 /* 更窄的滚动条 */
+.scrollbar-narrow {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
 .scrollbar-narrow::-webkit-scrollbar {
   width: 2px;
   height: 2px;
@@ -73,6 +92,32 @@ body {
 }
 
 .scrollbar-narrow::-webkit-scrollbar-thumb:hover {
+  background-color: var(--border-dark);
+}
+
+/* 会话同款滚动条（统一样式） */
+.scrollbar-default {
+  scrollbar-width: auto;
+  scrollbar-color: var(--border) transparent;
+}
+
+.scrollbar-default::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.scrollbar-default::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-default::-webkit-scrollbar-thumb {
+  background-color: var(--border);
+  border-radius: 9999px;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+}
+
+.scrollbar-default::-webkit-scrollbar-thumb:hover {
   background-color: var(--border-dark);
 }
 
@@ -174,4 +219,80 @@ body {
 
 .animate-attention {
   animation: attention 0.6s ease-in-out;
+}
+
+/* ==================== Task Search Motion ==================== */
+@keyframes task-search-surface-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.975);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes task-search-item-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.994);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes task-search-chip-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes task-search-group-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.task-search-surface {
+  animation: task-search-surface-in var(--transition-base) var(--ease-out) both;
+}
+
+.task-search-item {
+  opacity: 0;
+  animation: task-search-item-in var(--transition-base) var(--ease-out) both;
+}
+
+.task-search-chip {
+  opacity: 0;
+  animation: task-search-chip-in var(--transition-fast) var(--ease-out) both;
+}
+
+.task-search-group {
+  opacity: 0;
+  animation: task-search-group-in var(--transition-fast) var(--ease-out) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task-search-surface,
+  .task-search-item,
+  .task-search-chip,
+  .task-search-group {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
 }

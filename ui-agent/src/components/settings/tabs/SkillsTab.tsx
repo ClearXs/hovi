@@ -293,7 +293,7 @@ function SkillCodePreviewDialog({
               )}
             </div>
           ) : (
-            <pre className="p-4 text-xs text-text-primary overflow-auto h-full whitespace-pre-wrap break-words font-mono leading-relaxed">
+            <pre className="p-4 text-xs text-text-primary overflow-auto scrollbar-default h-full whitespace-pre-wrap break-words font-mono leading-relaxed">
               {content}
             </pre>
           )}
@@ -775,7 +775,7 @@ function LocalUploadDialog({
               </div>
               <div>
                 <label className="text-xs text-text-secondary mb-1 block">SKILL.md 预览</label>
-                <pre className="p-3 bg-surface-subtle rounded-md text-xs text-text-primary max-h-[200px] overflow-auto whitespace-pre-wrap break-words font-mono">
+                <pre className="p-3 bg-surface-subtle rounded-md text-xs text-text-primary max-h-[200px] overflow-auto scrollbar-default whitespace-pre-wrap break-words font-mono">
                   {skillMdContent.slice(0, 2000)}
                   {skillMdContent.length > 2000 && "\n\n... (内容已截断)"}
                 </pre>
@@ -1067,7 +1067,7 @@ function ClawHubDialog({
             </a>
           </div>
 
-          <div className="flex-1 min-h-0 overflow-auto rounded-md border border-border-light bg-surface-subtle">
+          <div className="flex-1 min-h-0 overflow-auto scrollbar-default rounded-md border border-border-light bg-surface-subtle">
             {isLoading && items.length === 0 ? (
               <div className="h-full flex items-center justify-center">
                 <Loader2 className="w-6 h-6 text-text-tertiary animate-spin" />
@@ -1204,7 +1204,7 @@ function ClawHubDialog({
             </DialogDescription>
           </DialogHeader>
 
-          <div className="flex-1 min-h-0 overflow-auto rounded-md border border-border-light bg-surface-subtle p-3">
+          <div className="flex-1 min-h-0 overflow-auto scrollbar-default rounded-md border border-border-light bg-surface-subtle p-3">
             {detailLoading ? (
               <div className="h-full min-h-[220px] flex items-center justify-center">
                 <Loader2 className="w-6 h-6 text-text-tertiary animate-spin" />

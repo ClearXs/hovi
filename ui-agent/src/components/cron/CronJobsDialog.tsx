@@ -174,7 +174,7 @@ export function CronJobsDialog({ open, onOpenChange }: CronJobsDialogProps) {
               </TabsTrigger>
             </TabsList>
 
-            <div className="flex-1 overflow-y-auto px-6 py-4">
+            <div className="flex-1 overflow-y-auto scrollbar-default px-6 py-4">
               <TabsContent value="status" className="mt-0 h-full">
                 <div className="space-y-4">
                   <div className="flex items-center gap-2">
@@ -243,7 +243,7 @@ export function CronJobsDialog({ open, onOpenChange }: CronJobsDialogProps) {
       <Dialog open={formOpen} onOpenChange={handleFormClose}>
         <DialogContent
           mobileFullScreen={isMobile}
-          className="max-w-[48rem] max-h-[80vh] overflow-y-auto"
+          className="max-w-[48rem] max-h-[80vh] overflow-y-auto scrollbar-default"
         >
           <DialogHeader>
             <DialogTitle>{editingJob ? "编辑定时任务" : "新建定时任务"}</DialogTitle>

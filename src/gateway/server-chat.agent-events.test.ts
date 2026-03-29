@@ -174,6 +174,44 @@ describe("agent event handler", () => {
     nowSpy?.mockRestore();
   });
 
+  it("propagates turnId to chat delta and final payloads", () => {
+    const { broadcast, nodeSendToSession, chatRunState, handler, nowSpy } = createHarness({
+      now: 3_000,
+    });
+    chatRunState.registry.add("run-turn", {
+      sessionKey: "session-turn",
+      clientRunId: "client-turn",
+    });
+
+    handler({
+      runId: "run-turn",
+      turnId: "turn-123",
+      seq: 1,
+      stream: "assistant",
+      ts: Date.now(),
+      data: { text: "hello" },
+    });
+    handler({
+      runId: "run-turn",
+      turnId: "turn-123",
+      seq: 2,
+      stream: "lifecycle",
+      ts: Date.now(),
+      data: { phase: "end" },
+    });
+
+    const chatCalls = chatBroadcastCalls(broadcast);
+    expect(chatCalls).toHaveLength(2);
+    const deltaPayload = chatCalls[0]?.[1] as { state?: string; turnId?: string };
+    const finalPayload = chatCalls[1]?.[1] as { state?: string; turnId?: string };
+    expect(deltaPayload.state).toBe("delta");
+    expect(deltaPayload.turnId).toBe("turn-123");
+    expect(finalPayload.state).toBe("final");
+    expect(finalPayload.turnId).toBe("turn-123");
+    expect(sessionChatCalls(nodeSendToSession)).toHaveLength(2);
+    nowSpy?.mockRestore();
+  });
+
   it("strips inline directives from assistant chat events", () => {
     const { broadcast, nodeSendToSession, nowSpy } = emitRun1AssistantText(
       createHarness({ now: 1_000 }),

@@ -11,6 +11,8 @@ import type { ClawdbotWebSocketClient } from "./clawdbot-websocket";
 
 export interface PageIndexDocument {
   id: string;
+  knowledgeDocumentId?: string;
+  kbId?: string;
   filename: string;
   mimeType: string;
   uploadedAt: string;
@@ -29,6 +31,8 @@ export interface PageIndexSearchResult {
 export interface PageIndexUploadResponse {
   success: boolean;
   documentId: string;
+  knowledgeDocumentId?: string;
+  kbId?: string;
   indexed: boolean;
   pageIndexBuilt: boolean;
   message?: string;
@@ -41,6 +45,13 @@ export interface PageIndexSearchResponse {
 export interface PageIndexCheckResponse {
   pandocAvailable: boolean;
   openaiApiKey: boolean;
+}
+
+export interface PageIndexBindResponse {
+  success: boolean;
+  moved: number;
+  skipped: number;
+  totalSource: number;
 }
 
 // ========== WebSocket 客户端 ==========
@@ -100,6 +111,50 @@ export async function listSessionDocuments(
   });
 }
 
+export async function resolveSessionKnowledgeDocumentRef(params: {
+  sessionKey: string;
+  documentId?: string;
+  filename?: string;
+  knowledgeDocumentId?: string;
+  kbId?: string;
+  maxAttempts?: number;
+  intervalMs?: number;
+}): Promise<{ knowledgeDocumentId: string; kbId?: string }> {
+  if (params.knowledgeDocumentId) {
+    return {
+      knowledgeDocumentId: params.knowledgeDocumentId,
+      kbId: params.kbId,
+    };
+  }
+
+  const attempts = Math.max(1, params.maxAttempts ?? 12);
+  const intervalMs = Math.max(100, params.intervalMs ?? 400);
+
+  for (let i = 0; i < attempts; i += 1) {
+    const list = await listSessionDocuments(params.sessionKey);
+    const byDocumentId = params.documentId
+      ? list.documents.find((doc) => doc.id === params.documentId && doc.knowledgeDocumentId)
+      : undefined;
+    const byFilename = params.filename
+      ? list.documents
+          .filter((doc) => doc.filename === params.filename && doc.knowledgeDocumentId)
+          .sort((a, b) => new Date(b.uploadedAt).getTime() - new Date(a.uploadedAt).getTime())[0]
+      : undefined;
+    const resolved = byDocumentId ?? byFilename;
+    if (resolved?.knowledgeDocumentId) {
+      return {
+        knowledgeDocumentId: resolved.knowledgeDocumentId,
+        kbId: resolved.kbId ?? params.kbId,
+      };
+    }
+    if (i < attempts - 1) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+  }
+
+  throw new Error("文件上传成功，但可预览文档仍在处理中，请稍后重试。");
+}
+
 /**
  * 搜索 PageIndex
  */
@@ -115,6 +170,16 @@ export async function searchPageIndex(params: {
   });
 }
 
+export async function bindSessionDocuments(params: {
+  sourceSessionKey: string;
+  targetSessionKey: string;
+}): Promise<PageIndexBindResponse> {
+  return callPageIndexWs<PageIndexBindResponse>("pageindex.document.bind", {
+    sourceSessionKey: params.sourceSessionKey,
+    targetSessionKey: params.targetSessionKey,
+  });
+}
+
 /**
  * 检查 PageIndex 环境
  */
@@ -127,5 +192,16 @@ export async function checkPageIndex(): Promise<PageIndexCheckResponse> {
  */
 export function isPageIndexSupported(filename: string): boolean {
   const ext = filename.toLowerCase().split(".").pop();
-  return [".pdf", ".docx", ".doc", ".txt", ".md", ".markdown"].includes(`.${ext}`);
+  return [
+    ".pdf",
+    ".docx",
+    ".doc",
+    ".xlsx",
+    ".xls",
+    ".csv",
+    ".txt",
+    ".md",
+    ".markdown",
+    ".json",
+  ].includes(`.${ext}`);
 }

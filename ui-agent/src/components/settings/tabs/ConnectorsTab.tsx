@@ -821,7 +821,7 @@ export function ConnectorsTab() {
       </Tabs>
 
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-[36rem] max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-[36rem] max-h-[85vh] overflow-y-auto scrollbar-default">
           <DialogHeader>
             <DialogTitle>
               {dialogMode === "custom_api" ? "添加 Custom API" : "添加 Custom MCP"}
@@ -943,7 +943,7 @@ export function ConnectorsTab() {
               </Button>
             </div>
 
-            <div className="rounded-md border border-border-light divide-y divide-border-light flex-1 min-h-0 overflow-y-auto">
+            <div className="rounded-md border border-border-light divide-y divide-border-light flex-1 min-h-0 overflow-y-auto scrollbar-default">
               {mcpSoItems.length === 0 ? (
                 <div className="px-3 py-5 text-xs text-text-tertiary">
                   {mcpSoLoading ? "加载中..." : "暂无匹配结果"}
@@ -1040,7 +1040,7 @@ export function ConnectorsTab() {
               </DialogDescription>
             )}
           </DialogHeader>
-          <div className="flex-1 min-h-0 overflow-y-auto space-y-4 pr-1">
+          <div className="flex-1 min-h-0 overflow-y-auto scrollbar-default space-y-4 pr-1">
             {mcpSoDetailLoading ? (
               <div className="text-sm text-text-tertiary py-4">加载详情中...</div>
             ) : (
@@ -1136,7 +1136,7 @@ export function ConnectorsTab() {
 
       {/* Detail Dialog */}
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="max-w-[40rem] max-h-[85vh] overflow-y-auto">
+        <DialogContent className="max-w-[40rem] max-h-[85vh] overflow-y-auto scrollbar-default">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-3">
               {selectedConnector && (

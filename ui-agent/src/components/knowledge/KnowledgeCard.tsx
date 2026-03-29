@@ -12,7 +12,7 @@ export function KnowledgeCard({ document, onClick }: KnowledgeCardProps) {
   if (!document) return null;
   return (
     <button
-      className="text-left rounded-xl border px-md py-sm transition-colors h-24 border-border-light bg-white hover:bg-primary/5 hover:border-primary/40"
+      className="cursor-pointer text-left rounded-xl border px-md py-sm transition-colors h-24 border-border-light bg-white hover:bg-primary/5 hover:border-primary/40"
       onClick={onClick}
     >
       <div className="text-sm font-medium truncate text-text-primary">{document.filename}</div>

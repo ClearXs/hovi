@@ -34,7 +34,11 @@ import {
   isChatStopCommandText,
   resolveChatRunExpiresAtMs,
 } from "../chat-abort.js";
-import { type ChatImageContent, parseMessageWithAttachments } from "../chat-attachments.js";
+import {
+  CHAT_ATTACHMENT_MAX_BYTES,
+  type ChatImageContent,
+  parseMessageWithAttachments,
+} from "../chat-attachments.js";
 import { stripEnvelopeFromMessage, stripEnvelopeFromMessages } from "../chat-sanitize.js";
 import { ADMIN_SCOPE } from "../method-scopes.js";
 import {
@@ -1188,16 +1192,19 @@ export const chatHandlers: GatewayRequestHandlers = {
       );
       return;
     }
-    let parsedMessage = inboundMessage;
+    let attachmentTextContext: string | undefined;
     let parsedImages: ChatImageContent[] = [];
     if (normalizedAttachments.length > 0) {
       try {
         const parsed = await parseMessageWithAttachments(inboundMessage, normalizedAttachments, {
-          maxBytes: 5_000_000,
+          maxBytes: CHAT_ATTACHMENT_MAX_BYTES,
           log: context.logGateway,
         });
-        parsedMessage = parsed.message;
+        attachmentTextContext = parsed.attachmentTextContext;
         parsedImages = parsed.images;
+        context.logGateway.info(
+          `chat.send: parsed attachments total=${normalizedAttachments.length} images=${parsedImages.length} textContext=${attachmentTextContext ? "yes" : "no"}`,
+        );
       } catch (err) {
         respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, String(err)));
         return;
@@ -1298,14 +1305,16 @@ export const chatHandlers: GatewayRequestHandlers = {
       };
       respond(true, ackPayload, undefined, { runId: clientRunId });
 
-      const trimmedMessage = parsedMessage.trim();
+      const trimmedMessage = inboundMessage.trim();
       const injectThinking = Boolean(
         p.thinking && trimmedMessage && !trimmedMessage.startsWith("/"),
       );
-      const commandBody = injectThinking ? `/think ${p.thinking} ${parsedMessage}` : parsedMessage;
+      const commandBody = injectThinking
+        ? `/think ${p.thinking} ${inboundMessage}`
+        : inboundMessage;
       const messageForAgent = systemProvenanceReceipt
-        ? [systemProvenanceReceipt, parsedMessage].filter(Boolean).join("\n\n")
-        : parsedMessage;
+        ? [systemProvenanceReceipt, inboundMessage].filter(Boolean).join("\n\n")
+        : inboundMessage;
       const clientInfo = client?.connect?.client;
       const {
         originatingChannel,
@@ -1327,11 +1336,12 @@ export const chatHandlers: GatewayRequestHandlers = {
       const stampedMessage = injectTimestamp(messageForAgent, timestampOptsFromConfig(cfg));
 
       const ctx: MsgContext & { Connectors?: string[] } = {
-        Body: parsedMessage,
+        Body: inboundMessage,
         BodyForAgent: stampedMessage,
         BodyForCommands: commandBody,
-        RawBody: parsedMessage,
+        RawBody: inboundMessage,
         CommandBody: commandBody,
+        AttachmentTextContext: attachmentTextContext,
         InputProvenance: systemInputProvenance,
         SessionKey: sessionKey,
         Provider: INTERNAL_MESSAGE_CHANNEL,

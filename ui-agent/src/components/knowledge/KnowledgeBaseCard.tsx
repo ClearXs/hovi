@@ -27,7 +27,7 @@ export function KnowledgeBaseCard({ kb, onClick }: KnowledgeBaseCardProps) {
 
   return (
     <button
-      className="text-left rounded-xl border px-md py-sm transition-colors min-h-28 h-auto border-border-light bg-white hover:bg-primary/5 hover:border-primary/40 overflow-hidden"
+      className="cursor-pointer text-left rounded-xl border px-md py-sm transition-colors min-h-28 h-auto border-border-light bg-white hover:bg-primary/5 hover:border-primary/40 overflow-hidden"
       onClick={onClick}
     >
       <div className="flex items-center gap-sm">

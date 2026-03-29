@@ -144,7 +144,7 @@ export function PersonaDetailView({ agentId, onBack }: PersonaDetailViewProps) {
       </div>
 
       <div className="flex flex-1 overflow-hidden">
-        <div className="w-1/2 overflow-auto border-r">
+        <div className="w-1/2 overflow-auto scrollbar-default border-r">
           <ScrollArea className="h-full">
             <div className="space-y-6 p-6">
               <div className="flex justify-center">

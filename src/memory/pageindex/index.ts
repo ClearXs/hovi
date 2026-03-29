@@ -19,6 +19,7 @@ import type {
   BuildIndexResult,
   SearchParams,
   SessionPageIndexMeta,
+  SessionDocumentMeta,
 } from "./types.js";
 
 /**
@@ -65,7 +66,14 @@ export async function buildIndex(params: BuildIndexParams): Promise<BuildIndexRe
     const outputPath = await saveIndex(pageIndexTree, sessionKey, documentId, agentId);
 
     // 8. 更新元数据
-    await updateSessionMeta(sessionKey, documentId, path.basename(filePath), outputPath, agentId);
+    await updateSessionMeta(
+      sessionKey,
+      documentId,
+      path.basename(filePath),
+      outputPath,
+      undefined,
+      agentId,
+    );
 
     return {
       success: true,
@@ -152,6 +160,11 @@ export async function updateSessionMeta(
   documentId: string,
   filename: string,
   indexPath: string | undefined,
+  options?: {
+    knowledgeDocumentId?: string;
+    kbId?: string;
+    mimeType?: string;
+  },
   agentId: string = "default",
 ): Promise<void> {
   const cfg = loadConfig();
@@ -164,11 +177,17 @@ export async function updateSessionMeta(
     pdf: "application/pdf",
     docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     doc: "application/msword",
+    xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    xls: "application/vnd.ms-excel",
+    csv: "text/csv",
+    json: "application/json",
     txt: "text/plain",
     md: "text/markdown",
     markdown: "text/markdown",
   };
-  const mimeType = ext ? mimeTypes[ext] || "application/octet-stream" : "application/octet-stream";
+  const inferredMimeType = ext
+    ? mimeTypes[ext] || "application/octet-stream"
+    : "application/octet-stream";
 
   let meta: SessionPageIndexMeta;
 
@@ -185,12 +204,21 @@ export async function updateSessionMeta(
   }
 
   // 更新或添加文档
-  const existingIndex = meta.documents.findIndex((d) => d.documentId === documentId);
+  let existingIndex = meta.documents.findIndex((d) => d.documentId === documentId);
+  if (existingIndex < 0 && options?.knowledgeDocumentId) {
+    existingIndex = meta.documents.findIndex(
+      (d) => d.knowledgeDocumentId && d.knowledgeDocumentId === options.knowledgeDocumentId,
+    );
+  }
+  const existingDoc = existingIndex >= 0 ? meta.documents[existingIndex] : undefined;
+  const effectiveDocumentId = existingDoc?.documentId ?? documentId;
   const docMeta = {
-    documentId,
+    documentId: effectiveDocumentId,
+    knowledgeDocumentId: options?.knowledgeDocumentId ?? existingDoc?.knowledgeDocumentId,
+    kbId: options?.kbId ?? existingDoc?.kbId,
     filename,
-    mimeType,
-    indexPath: indexPath || null,
+    mimeType: options?.mimeType ?? existingDoc?.mimeType ?? inferredMimeType,
+    indexPath: indexPath ?? existingDoc?.indexPath ?? null,
     builtAt: Date.now(),
   };
 
@@ -206,6 +234,180 @@ export async function updateSessionMeta(
   const metaDir = path.dirname(metaPath);
   await fs.mkdir(metaDir, { recursive: true });
   await fs.writeFile(metaPath, JSON.stringify(meta, null, 2), "utf-8");
+}
+
+export function mergeSessionDocumentsForBind(params: {
+  sourceDocuments: SessionDocumentMeta[];
+  targetDocuments: SessionDocumentMeta[];
+}): {
+  documents: SessionDocumentMeta[];
+  moved: SessionDocumentMeta[];
+  skipped: SessionDocumentMeta[];
+} {
+  const nextDocuments = [...params.targetDocuments];
+  const moved: SessionDocumentMeta[] = [];
+  const skipped: SessionDocumentMeta[] = [];
+  const identitySet = new Set<string>();
+  for (const doc of params.targetDocuments) {
+    identitySet.add(`doc:${doc.documentId}`);
+    if (doc.knowledgeDocumentId) {
+      identitySet.add(`kdoc:${doc.knowledgeDocumentId}`);
+    }
+  }
+
+  for (const doc of params.sourceDocuments) {
+    const docIdentity = `doc:${doc.documentId}`;
+    const knowledgeIdentity = doc.knowledgeDocumentId ? `kdoc:${doc.knowledgeDocumentId}` : null;
+    if (
+      identitySet.has(docIdentity) ||
+      (knowledgeIdentity !== null && identitySet.has(knowledgeIdentity))
+    ) {
+      skipped.push(doc);
+      continue;
+    }
+    nextDocuments.push(doc);
+    moved.push(doc);
+    identitySet.add(docIdentity);
+    if (knowledgeIdentity) {
+      identitySet.add(knowledgeIdentity);
+    }
+  }
+
+  return {
+    documents: nextDocuments,
+    moved,
+    skipped,
+  };
+}
+
+async function moveDocumentIndexForSessionBind(params: {
+  baseDir: string;
+  sourceSessionKey: string;
+  targetSessionKey: string;
+  documentId: string;
+}): Promise<void> {
+  const sourceDir = path.join(
+    params.baseDir,
+    "sessions",
+    params.sourceSessionKey,
+    ".pageindex",
+    "indices",
+    params.documentId,
+  );
+  const targetDir = path.join(
+    params.baseDir,
+    "sessions",
+    params.targetSessionKey,
+    ".pageindex",
+    "indices",
+    params.documentId,
+  );
+  try {
+    await fs.access(sourceDir);
+  } catch {
+    return;
+  }
+  await fs.mkdir(path.dirname(targetDir), { recursive: true });
+  try {
+    await fs.rename(sourceDir, targetDir);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code !== "EXDEV") {
+      throw err;
+    }
+    await fs.cp(sourceDir, targetDir, { recursive: true });
+    await fs.rm(sourceDir, { recursive: true, force: true });
+  }
+}
+
+export async function bindSessionDocuments(params: {
+  sourceSessionKey: string;
+  targetSessionKey: string;
+  agentId?: string;
+}): Promise<{ moved: number; skipped: number; totalSource: number }> {
+  const sourceSessionKey = params.sourceSessionKey.trim();
+  const targetSessionKey = params.targetSessionKey.trim();
+  if (!sourceSessionKey || !targetSessionKey || sourceSessionKey === targetSessionKey) {
+    return { moved: 0, skipped: 0, totalSource: 0 };
+  }
+
+  const cfg = loadConfig();
+  const resolvedAgentId = params.agentId ?? "default";
+  const baseDir = resolveAgentWorkspaceDir(cfg, resolvedAgentId);
+  const sourceMeta = await getSessionMeta(sourceSessionKey, resolvedAgentId);
+  if (!sourceMeta || sourceMeta.documents.length === 0) {
+    return { moved: 0, skipped: 0, totalSource: 0 };
+  }
+  const targetMeta =
+    (await getSessionMeta(targetSessionKey, resolvedAgentId)) ??
+    ({
+      sessionKey: targetSessionKey,
+      documents: [],
+      updatedAt: Date.now(),
+    } as SessionPageIndexMeta);
+
+  const merged = mergeSessionDocumentsForBind({
+    sourceDocuments: sourceMeta.documents,
+    targetDocuments: targetMeta.documents,
+  });
+
+  for (const doc of merged.moved) {
+    await moveDocumentIndexForSessionBind({
+      baseDir,
+      sourceSessionKey,
+      targetSessionKey,
+      documentId: doc.documentId,
+    });
+  }
+
+  const now = Date.now();
+  const normalizedDocs = merged.documents.map((doc) => {
+    if (!doc.indexPath) {
+      return doc;
+    }
+    return {
+      ...doc,
+      indexPath: path.join(
+        baseDir,
+        "sessions",
+        targetSessionKey,
+        ".pageindex",
+        "indices",
+        doc.documentId,
+        "index.json",
+      ),
+    };
+  });
+  const targetMetaPath = path.join(
+    baseDir,
+    "sessions",
+    targetSessionKey,
+    ".pageindex",
+    "meta.json",
+  );
+  await fs.mkdir(path.dirname(targetMetaPath), { recursive: true });
+  await fs.writeFile(
+    targetMetaPath,
+    JSON.stringify(
+      {
+        sessionKey: targetSessionKey,
+        documents: normalizedDocs,
+        updatedAt: now,
+      } satisfies SessionPageIndexMeta,
+      null,
+      2,
+    ),
+    "utf-8",
+  );
+
+  const sourcePageIndexDir = path.join(baseDir, "sessions", sourceSessionKey, ".pageindex");
+  await fs.rm(sourcePageIndexDir, { recursive: true, force: true });
+
+  return {
+    moved: merged.moved.length,
+    skipped: merged.skipped.length,
+    totalSource: sourceMeta.documents.length,
+  };
 }
 
 /**

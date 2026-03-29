@@ -19,7 +19,7 @@ export function DesktopStartupError({ error, onRetry }: DesktopStartupErrorProps
         <p className="mb-6 text-sm leading-6 text-text-secondary">
           Hovi 未能启动内置 gateway，请重试；如果问题持续存在，再查看错误信息定位原因。
         </p>
-        <pre className="mb-6 max-h-[45vh] min-h-24 w-full overflow-auto whitespace-pre-wrap break-all rounded-xl bg-background-secondary p-4 text-xs leading-6 text-text-secondary">
+        <pre className="mb-6 max-h-[45vh] min-h-24 w-full overflow-auto scrollbar-default whitespace-pre-wrap break-all rounded-xl bg-background-secondary p-4 text-xs leading-6 text-text-secondary">
           {error}
         </pre>
         <Button onClick={onRetry}>重试启动</Button>

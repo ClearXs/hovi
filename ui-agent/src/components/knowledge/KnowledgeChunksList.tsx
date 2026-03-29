@@ -200,7 +200,7 @@ export function KnowledgeChunksList({
       </div>
 
       {/* Chunk 列表 */}
-      <div className="flex-1 space-y-4 overflow-auto pr-xs scrollbar-narrow">
+      <div className="flex-1 space-y-4 overflow-auto scrollbar-default pr-xs">
         {filteredChunks.map((chunk) => {
           const chunkText = getChunkText(chunk);
           const isExpanded = expandedChunks.has(chunk.id);

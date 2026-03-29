@@ -20,7 +20,12 @@ vi.mock("./openrouter-model-capabilities.js", () => ({
 }));
 
 import type { OpenClawConfig } from "../../config/config.js";
-import { buildInlineProviderModels, resolveModel, resolveModelAsync } from "./model.js";
+import {
+  buildInlineProviderModels,
+  resolveModel,
+  resolveModelAsync,
+  resolveModelWithRegistry,
+} from "./model.js";
 import {
   buildOpenAICodexForwardCompatExpectation,
   makeModel,
@@ -372,6 +377,36 @@ describe("resolveModel", () => {
 
     expect(result.model?.contextWindow).toBe(262144);
     expect(result.model?.maxTokens).toBe(32768);
+  });
+
+  it("uses provider default model input capabilities for generic provider fallback", () => {
+    const cfg = {
+      models: {
+        providers: {
+          custom: {
+            baseUrl: "http://localhost:9000",
+            models: [
+              {
+                ...makeModel("model-a"),
+                input: ["text", "image"],
+              },
+            ],
+          },
+        },
+      },
+    } as OpenClawConfig;
+
+    const result = resolveModelWithRegistry({
+      provider: "custom",
+      modelId: "missing-model",
+      modelRegistry: {
+        find: vi.fn(() => null),
+      } as unknown as Parameters<typeof resolveModelWithRegistry>[0]["modelRegistry"],
+      cfg,
+      agentDir: "/tmp/agent",
+    });
+
+    expect(result?.input).toEqual(["text", "image"]);
   });
 
   it("propagates reasoning from matching configured fallback model", () => {

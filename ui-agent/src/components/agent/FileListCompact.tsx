@@ -63,7 +63,7 @@ export function FileListCompact({ files }: FileListCompactProps) {
   }
 
   return (
-    <div className="p-md flex gap-sm overflow-x-auto">
+    <div className="p-md flex gap-sm overflow-x-auto scrollbar-default">
       {files.map((file, index) => (
         <div
           key={index}

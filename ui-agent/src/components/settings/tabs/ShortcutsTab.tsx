@@ -15,6 +15,7 @@ export function ShortcutsTab() {
     // 初始化输入框显示当前快捷键
     const parts = [];
     if (shortcut.ctrl) parts.push("Ctrl");
+    if (shortcut.meta) parts.push("Cmd");
     if (shortcut.shift) parts.push("Shift");
     if (shortcut.alt) parts.push("Alt");
     parts.push(shortcut.key.toUpperCase());
@@ -25,19 +26,20 @@ export function ShortcutsTab() {
     e.preventDefault();
 
     // 获取修饰键状态
-    const ctrl = e.ctrlKey || e.metaKey;
+    const ctrl = e.ctrlKey;
+    const meta = e.metaKey;
     const shift = e.shiftKey;
     const alt = e.altKey;
 
     // 如果按下的是功能键或修饰键，不做处理
-    if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) {
+    if (["Control", "Shift", "Alt", "Meta", "OS"].includes(e.key)) {
       return;
     }
 
     // 如果只按下了一个普通键，直接设置
-    if (!ctrl && !shift && !alt) {
+    if (!ctrl && !shift && !alt && !meta) {
       const newKey = e.key.toLowerCase();
-      updateShortcut(id, newKey, false, false, false);
+      updateShortcut(id, newKey, false, false, false, false);
       setEditingId(null);
       return;
     }
@@ -45,17 +47,25 @@ export function ShortcutsTab() {
     // 如果按下了修饰键组合，构建快捷键字符串
     const parts = [];
     if (ctrl) parts.push("Ctrl");
+    if (meta) parts.push("Cmd");
     if (shift) parts.push("Shift");
     if (alt) parts.push("Alt");
     parts.push(e.key.toUpperCase());
     setInputValue(parts.join("+"));
 
     // 更新快捷键
-    updateShortcut(id, e.key.toLowerCase(), ctrl, shift, alt);
+    updateShortcut(id, e.key.toLowerCase(), ctrl, shift, alt, meta);
     setEditingId(null);
   };
 
-  const updateShortcut = (id: string, key: string, ctrl: boolean, shift: boolean, alt: boolean) => {
+  const updateShortcut = (
+    id: string,
+    key: string,
+    ctrl: boolean,
+    shift: boolean,
+    alt: boolean,
+    meta: boolean,
+  ) => {
     // 检查冲突
     const conflicts = shortcuts.filter(
       (s) =>
@@ -63,6 +73,7 @@ export function ShortcutsTab() {
         s.ctrl === ctrl &&
         s.shift === shift &&
         s.alt === alt &&
+        s.meta === meta &&
         s.key === key &&
         key !== "",
     );
@@ -73,12 +84,13 @@ export function ShortcutsTab() {
       toast.warning(`快捷键冲突，${conflicts.map((c) => c.label).join("、")} 的快捷键已被清除`);
     }
 
-    setShortcut(id, { key, ctrl, shift, alt });
+    setShortcut(id, { key, ctrl, shift, alt, meta });
   };
 
   const formatShortcut = (shortcut: (typeof shortcuts)[0]) => {
     const parts = [];
     if (shortcut.ctrl) parts.push("Ctrl");
+    if (shortcut.meta) parts.push("Cmd");
     if (shortcut.shift) parts.push("Shift");
     if (shortcut.alt) parts.push("Alt");
     if (shortcut.key) parts.push(shortcut.key.toUpperCase());

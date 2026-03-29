@@ -1,18 +1,77 @@
 "use client";
 
-import { User, ChevronDown, ChevronUp, Copy, Pencil, Check, X } from "lucide-react";
+import {
+  User,
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  Pencil,
+  Check,
+  X,
+  Paperclip,
+  Download,
+} from "lucide-react";
+import dynamic from "next/dynamic";
 import { memo, useMemo, useState, useRef, useEffect } from "react";
 import { FormattedContent } from "@/components/agent/FormattedContent";
 import { CitationBlock, Citation } from "@/components/chat/CitationBlock";
-import type { Message } from "@/components/chat/MessageList";
+import type { Message, SessionAttachmentMeta } from "@/components/chat/MessageList";
 import { FileList, FileItemProps } from "@/components/files/FileList";
 import { useStreamingReplay } from "@/contexts/StreamingReplayContext";
 import { useResponsive } from "@/hooks/useResponsive";
+import type { KnowledgeDetail } from "@/services/knowledgeApi";
+import { getKnowledge } from "@/services/knowledgeApi";
+import { resolveSessionKnowledgeDocumentRef, uploadSessionDocument } from "@/services/pageindexApi";
+import { useConnectionStore } from "@/stores/connectionStore";
+
+const LazyDocPreview = dynamic(
+  () => import("@/components/knowledge/preview/DocPreview").then((mod) => mod.DocPreview),
+  {
+    ssr: false,
+  },
+);
+
+interface PdfJsLib {
+  GlobalWorkerOptions: { workerSrc: string };
+  getDocument: (src: string) => {
+    promise: Promise<{
+      numPages: number;
+      getPage: (pageNumber: number) => Promise<{
+        getViewport: (options: { scale: number }) => { width: number; height: number };
+        render: (options: {
+          canvas: HTMLCanvasElement;
+          canvasContext: CanvasRenderingContext2D;
+          viewport: { width: number; height: number };
+        }) => { promise: Promise<void> };
+      }>;
+      getOutline: () => Promise<Array<{
+        title?: string;
+        dest?: string | unknown[] | null;
+        items?: Array<{
+          title?: string;
+          dest?: string | unknown[] | null;
+          items?: unknown[];
+        }>;
+      }> | null>;
+      getDestination: (destinationId: string) => Promise<unknown[] | null>;
+      getPageIndex: (ref: { num: number; gen: number }) => Promise<number>;
+    }>;
+  };
+}
+
+declare global {
+  interface Window {
+    pdfjsLib?: PdfJsLib;
+  }
+}
 
 interface MessageBubbleProps {
   role: "user" | "assistant";
   content: string;
   timestamp?: Date;
+  sessionKey?: string | null;
+  attachments?: File[];
+  sessionAttachments?: SessionAttachmentMeta[];
   files?: FileItemProps[];
   usage?: {
     input?: number;
@@ -35,7 +94,6 @@ interface MessageBubbleProps {
   }>;
   citations?: Citation[];
   status?: "sending" | "failed" | "waiting" | "cancelled";
-  isHighlighted?: boolean;
   onRetry?: () => void;
   onEditRetry?: () => void;
   onCopyRetry?: () => void;
@@ -49,17 +107,100 @@ interface MessageBubbleProps {
   messageIndex?: number; // Index of this message in the list
 }
 
+interface SkillStatusReport {
+  skills?: Array<{
+    skillKey: string;
+    disabled?: boolean;
+    eligible?: boolean;
+  }>;
+}
+
+type SkillStatusWsClient = {
+  sendRequest: <T>(method: string, params: unknown) => Promise<T>;
+};
+
+const SKILL_KEY_CACHE_TTL_MS = 60_000;
+let cachedSkillKeys: Set<string> | null = null;
+let cachedSkillKeysAt = 0;
+let inflightSkillKeysRequest: Promise<Set<string>> | null = null;
+
+async function loadAvailableSkillKeys(wsClient?: SkillStatusWsClient | null): Promise<Set<string>> {
+  if (!wsClient) {
+    return new Set<string>();
+  }
+  const now = Date.now();
+  if (cachedSkillKeys && now - cachedSkillKeysAt < SKILL_KEY_CACHE_TTL_MS) {
+    return cachedSkillKeys;
+  }
+  if (inflightSkillKeysRequest) {
+    return inflightSkillKeysRequest;
+  }
+  inflightSkillKeysRequest = wsClient
+    .sendRequest<SkillStatusReport>("skills.status", {})
+    .then((report) => {
+      const keys = new Set(
+        (report.skills ?? [])
+          .filter((skill) => !skill.disabled && skill.eligible !== false)
+          .map((skill) => skill.skillKey),
+      );
+      cachedSkillKeys = keys;
+      cachedSkillKeysAt = Date.now();
+      return keys;
+    })
+    .catch(() => new Set<string>())
+    .finally(() => {
+      inflightSkillKeysRequest = null;
+    });
+  return inflightSkillKeysRequest;
+}
+
+function isSkillToken(value: string, availableSkillKeys: Set<string> | null) {
+  if (!/^\/[\p{L}\p{N}._-]+$/u.test(value)) {
+    return false;
+  }
+  if (!availableSkillKeys) {
+    return false;
+  }
+  return availableSkillKeys.has(value.slice(1));
+}
+
+function renderUserMessageWithSkillHighlight(
+  content: string,
+  availableSkillKeys: Set<string> | null,
+) {
+  const segments = content.split(/(\/[\p{L}\p{N}._-]+)/gu);
+  return segments.map((segment, index) => {
+    if (!segment) {
+      return null;
+    }
+    if (isSkillToken(segment, availableSkillKeys)) {
+      return (
+        <span
+          key={`skill-${index}-${segment}`}
+          data-testid="skill-token"
+          className="inline-flex items-center rounded-md border border-white/35 bg-white/20 px-1.5 py-[1px] font-medium text-white"
+        >
+          {segment}
+        </span>
+      );
+    }
+    return <span key={`text-${index}-${segment}`}>{segment}</span>;
+  });
+}
+
 export function MessageBubble({
   role,
   content,
   timestamp,
+  sessionKey = null,
+  attachments = [],
+  sessionAttachments = [],
   files,
   usage,
   toolCalls = [],
   toolResults = [],
   citations,
   status,
-  isHighlighted = false,
   onRetry,
   onEditRetry,
   onCopyRetry,
@@ -77,8 +218,42 @@ export function MessageBubble({
   const isCancelled = status === "cancelled";
   const { isStreaming, getDisplayedText, currentMessageIndex } = useStreamingReplay();
   const { isMobile } = useResponsive();
+  const wsClient = useConnectionStore((s) => s.wsClient as SkillStatusWsClient | undefined);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [editContent, setEditContent] = useState("");
+  const [availableSkillKeys, setAvailableSkillKeys] = useState<Set<string> | null>(
+    () => cachedSkillKeys,
+  );
+  const [previewAttachment, setPreviewAttachment] = useState<File | null>(null);
+  const [previewAttachmentLabel, setPreviewAttachmentLabel] = useState<string | null>(null);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewText, setPreviewText] = useState<string | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewKnowledgeDetail, setPreviewKnowledgeDetail] = useState<KnowledgeDetail | null>(
+    null,
+  );
+  const [previewKnowledgeLoading, setPreviewKnowledgeLoading] = useState(false);
+  const [previewPdfPages, setPreviewPdfPages] = useState(0);
+  const [previewPdfPage, setPreviewPdfPage] = useState(1);
+  const [previewPdfLoading, setPreviewPdfLoading] = useState(false);
+  const [previewPdfError, setPreviewPdfError] = useState<string | null>(null);
+  const [previewPdfZoom, setPreviewPdfZoom] = useState(1);
+  const [previewPdfRenderKey, setPreviewPdfRenderKey] = useState(0);
+  const previewKnowledgeRefs = useRef<Map<string, { documentId: string; kbId?: string }>>(
+    new Map(),
+  );
+  const previewPdfCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const previewPdfDocRef = useRef<{
+    getPage: (pageNumber: number) => Promise<{
+      getViewport: (options: { scale: number }) => { width: number; height: number };
+      render: (options: {
+        canvas: HTMLCanvasElement;
+        canvasContext: CanvasRenderingContext2D;
+        viewport: { width: number; height: number };
+      }) => { promise: Promise<void> };
+    }>;
+  } | null>(null);
+  const previewPdfRenderingRef = useRef(false);
   const editInputRef = useRef<HTMLTextAreaElement>(null);
 
   // 当进入编辑模式时，加载原内容
@@ -87,6 +262,28 @@ export function MessageBubble({
       setEditContent(content);
     }
   }, [isEditing, content]);
+
+  useEffect(() => {
+    if (!isUser || !content.includes("/")) {
+      setAvailableSkillKeys(null);
+      return;
+    }
+    let active = true;
+    void loadAvailableSkillKeys(wsClient)
+      .then((keys) => {
+        if (active) {
+          setAvailableSkillKeys(keys);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setAvailableSkillKeys(new Set<string>());
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [content, isUser, wsClient]);
 
   // Get displayed content (full for non-streaming or user messages, streamed for assistant during replay)
   const displayedContent =
@@ -124,278 +321,741 @@ export function MessageBubble({
     return null;
   }, [usage]);
 
+  const hasUserAttachments = isUser && (attachments.length > 0 || sessionAttachments.length > 0);
+  const previewAttachmentIsPdf = previewAttachment ? isPdf(previewAttachment) : false;
+
+  const resetPreviewPdfState = () => {
+    setPreviewPdfPages(0);
+    setPreviewPdfPage(1);
+    setPreviewPdfLoading(false);
+    setPreviewPdfError(null);
+    setPreviewPdfZoom(1);
+    previewPdfDocRef.current = null;
+  };
+
+  const releasePreviewUrl = () => {
+    if (previewUrl) {
+      URL.revokeObjectURL(previewUrl);
+    }
+  };
+
+  const isTextPreviewable = (file: File) => {
+    const lower = file.name.toLowerCase();
+    return (
+      file.type.startsWith("text/") ||
+      file.type === "application/json" ||
+      lower.endsWith(".txt") ||
+      lower.endsWith(".md") ||
+      lower.endsWith(".markdown") ||
+      lower.endsWith(".csv") ||
+      lower.endsWith(".json")
+    );
+  };
+
+  function isPdf(file: File) {
+    const lower = file.name.toLowerCase();
+    return file.type === "application/pdf" || lower.endsWith(".pdf");
+  }
+
+  const supportsKnowledgePreview = (file: File) => {
+    const lower = file.name.toLowerCase();
+    return (
+      lower.endsWith(".docx") ||
+      lower.endsWith(".xlsx") ||
+      lower.endsWith(".xls") ||
+      lower.endsWith(".csv")
+    );
+  };
+
+  const buildPreviewCacheKey = (session: string | null | undefined, file: File) => {
+    return `${session ?? "no-session"}:${file.name}:${file.size}:${file.lastModified}`;
+  };
+
+  const resolveKnowledgePreviewRef = async (file: File) => {
+    const cacheKey = buildPreviewCacheKey(sessionKey, file);
+    const cached = previewKnowledgeRefs.current.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    if (!sessionKey) {
+      throw new Error("当前会话不可用，无法加载文档预览");
+    }
+
+    const uploadResult = await uploadSessionDocument({ sessionKey, file });
+    const resolved = await resolveSessionKnowledgeDocumentRef({
+      sessionKey,
+      documentId: uploadResult.documentId,
+      filename: file.name,
+      knowledgeDocumentId: uploadResult.knowledgeDocumentId,
+      kbId: uploadResult.kbId,
+    });
+
+    const ref = { documentId: resolved.knowledgeDocumentId, kbId: resolved.kbId };
+    previewKnowledgeRefs.current.set(cacheKey, ref);
+    return ref;
+  };
+
+  const resolveKnowledgePreviewRefForSessionAttachment = async (
+    attachment: SessionAttachmentMeta,
+  ) => {
+    const cacheKey = `session:${attachment.documentId}:${attachment.knowledgeDocumentId ?? ""}`;
+    const cached = previewKnowledgeRefs.current.get(cacheKey);
+    if (cached) {
+      return cached;
+    }
+    if (attachment.knowledgeDocumentId) {
+      const ref = { documentId: attachment.knowledgeDocumentId, kbId: attachment.kbId };
+      previewKnowledgeRefs.current.set(cacheKey, ref);
+      return ref;
+    }
+    if (!sessionKey) {
+      throw new Error("当前会话不可用，无法加载文档预览");
+    }
+    const resolved = await resolveSessionKnowledgeDocumentRef({
+      sessionKey,
+      documentId: attachment.documentId,
+      filename: attachment.name,
+      knowledgeDocumentId: attachment.knowledgeDocumentId,
+      kbId: attachment.kbId,
+    });
+    const ref = { documentId: resolved.knowledgeDocumentId, kbId: resolved.kbId };
+    previewKnowledgeRefs.current.set(cacheKey, ref);
+    return ref;
+  };
+
+  const handlePreviewAttachment = async (file: File) => {
+    releasePreviewUrl();
+    setPreviewAttachment(file);
+    setPreviewAttachmentLabel(file.name);
+    setPreviewText(null);
+    setPreviewError(null);
+    setPreviewUrl(null);
+    setPreviewKnowledgeDetail(null);
+    setPreviewKnowledgeLoading(false);
+    resetPreviewPdfState();
+
+    if (file.type.startsWith("image/") || isPdf(file)) {
+      setPreviewUrl(URL.createObjectURL(file));
+      return;
+    }
+
+    if (isTextPreviewable(file)) {
+      try {
+        const text = await file.text();
+        setPreviewText(text);
+      } catch {
+        setPreviewError("读取文本内容失败");
+      }
+      return;
+    }
+
+    if (supportsKnowledgePreview(file)) {
+      setPreviewKnowledgeLoading(true);
+      try {
+        const ref = await resolveKnowledgePreviewRef(file);
+        const detail = await getKnowledge(ref.documentId, ref.kbId);
+        setPreviewKnowledgeDetail(detail);
+      } catch (error) {
+        setPreviewError(error instanceof Error ? error.message : "加载文档预览失败");
+      } finally {
+        setPreviewKnowledgeLoading(false);
+      }
+      return;
+    }
+
+    setPreviewError("当前格式暂不支持在线预览，可下载后查看。");
+  };
+
+  const handlePreviewSessionAttachment = async (attachment: SessionAttachmentMeta) => {
+    releasePreviewUrl();
+    setPreviewAttachment(null);
+    setPreviewAttachmentLabel(attachment.name);
+    setPreviewText(null);
+    setPreviewError(null);
+    setPreviewUrl(null);
+    setPreviewKnowledgeDetail(null);
+    setPreviewKnowledgeLoading(true);
+    resetPreviewPdfState();
+    try {
+      const ref = await resolveKnowledgePreviewRefForSessionAttachment(attachment);
+      const detail = await getKnowledge(ref.documentId, ref.kbId);
+      setPreviewKnowledgeDetail(detail);
+    } catch (error) {
+      setPreviewError(error instanceof Error ? error.message : "加载文档预览失败");
+    } finally {
+      setPreviewKnowledgeLoading(false);
+    }
+  };
+
+  const closeAttachmentPreview = () => {
+    releasePreviewUrl();
+    setPreviewAttachment(null);
+    setPreviewAttachmentLabel(null);
+    setPreviewUrl(null);
+    setPreviewText(null);
+    setPreviewError(null);
+    setPreviewKnowledgeDetail(null);
+    setPreviewKnowledgeLoading(false);
+    resetPreviewPdfState();
+  };
+
+  const handleDownloadAttachment = (file: File) => {
+    const url = URL.createObjectURL(file);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = file.name;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (previewUrl) {
+        URL.revokeObjectURL(previewUrl);
+      }
+    };
+  }, [previewUrl]);
+
+  useEffect(() => {
+    let isActive = true;
+    if (!previewAttachmentIsPdf || !previewUrl) {
+      return;
+    }
+    const loadPdfJs = (): Promise<PdfJsLib> =>
+      new Promise((resolve, reject) => {
+        if (window.pdfjsLib) {
+          resolve(window.pdfjsLib);
+          return;
+        }
+        const script = document.createElement("script");
+        script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js";
+        script.onload = () => {
+          if (window.pdfjsLib) {
+            resolve(window.pdfjsLib);
+          } else {
+            reject(new Error("PDF.js 未正确加载"));
+          }
+        };
+        script.onerror = () => reject(new Error("PDF.js 加载失败"));
+        document.head.appendChild(script);
+      });
+
+    const initPdf = async () => {
+      setPreviewPdfLoading(true);
+      setPreviewPdfError(null);
+      try {
+        const pdfjs = await loadPdfJs();
+        if (!isActive) return;
+        pdfjs.GlobalWorkerOptions.workerSrc =
+          "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js";
+        const loadingTask = pdfjs.getDocument(previewUrl);
+        const pdf = await loadingTask.promise;
+        if (!isActive) return;
+        previewPdfDocRef.current = pdf;
+        setPreviewPdfPages(pdf.numPages);
+        setPreviewPdfPage(1);
+        setPreviewPdfRenderKey((key) => key + 1);
+      } catch (error) {
+        setPreviewPdfError(error instanceof Error ? error.message : "PDF 加载失败");
+      } finally {
+        if (isActive) {
+          setPreviewPdfLoading(false);
+        }
+      }
+    };
+
+    void initPdf();
+
+    return () => {
+      isActive = false;
+    };
+  }, [previewAttachmentIsPdf, previewUrl]);
+
+  useEffect(() => {
+    const renderPdfPage = async () => {
+      if (!previewAttachmentIsPdf || !previewPdfDocRef.current || !previewPdfCanvasRef.current)
+        return;
+      if (previewPdfRenderingRef.current) return;
+      previewPdfRenderingRef.current = true;
+      try {
+        const page = await previewPdfDocRef.current.getPage(previewPdfPage);
+        const viewport = page.getViewport({ scale: 1.2 * previewPdfZoom });
+        const canvas = previewPdfCanvasRef.current;
+        const context = canvas.getContext("2d");
+        if (!canvas || !context) return;
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
+        await page.render({ canvas, canvasContext: context, viewport }).promise;
+      } finally {
+        previewPdfRenderingRef.current = false;
+      }
+    };
+
+    void renderPdfPage();
+  }, [previewAttachmentIsPdf, previewPdfPage, previewPdfZoom, previewPdfRenderKey]);
+
+  const hasPreviewModal =
+    previewAttachment != null ||
+    previewAttachmentLabel != null ||
+    previewUrl != null ||
+    previewText != null ||
+    previewError != null ||
+    previewKnowledgeLoading ||
+    previewKnowledgeDetail != null;
+  const localAttachmentNames = useMemo(
+    () => new Set(attachments.map((file) => file.name)),
+    [attachments],
+  );
+  const visibleSessionAttachments = useMemo(
+    () => sessionAttachments.filter((attachment) => !localAttachmentNames.has(attachment.name)),
+    [localAttachmentNames, sessionAttachments],
+  );
+
   return (
-    <div className={`flex w-full mb-lg ${isUser ? "justify-end" : "justify-start"}`}>
-      <div
-        style={{ minWidth: isMobile ? "120px" : "200px" }}
-        className={`flex gap-sm max-w-[90%] md:max-w-[680px] lg:max-w-[800px] transition-shadow ${
-          isUser ? "flex-row-reverse" : "flex-row"
-        } ${isHighlighted ? "rounded-xl ring-2 ring-primary/40 shadow-[0_0_0_6px_rgba(99,102,241,0.15)] animate-attention" : ""}`}
-      >
-        {/* 头像 */}
+    <>
+      {hasPreviewModal && (
         <div
-          className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center overflow-hidden ${
-            isUser ? "bg-primary" : "bg-background-secondary"
-          }`}
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60"
+          onClick={closeAttachmentPreview}
         >
-          {isUser ? (
-            <User className="w-4 h-4 text-white" />
-          ) : (
-            <img src="/img/logo.png" alt="Hovi" className="w-full h-full object-contain" />
-          )}
-        </div>
-
-        {/* 消息内容 */}
-        <div className={`flex flex-col gap-xs ${isMobile ? "min-w-[100px]" : "min-w-[150px]"}`}>
           <div
-            className={`px-lg py-md rounded-lg ${
-              isUser
-                ? "bg-primary text-white rounded-tr-sm"
-                : "bg-surface text-text-primary rounded-tl-sm"
-            }`}
+            className="relative flex max-h-[97vh] w-[min(1320px,97vw)] flex-col overflow-hidden rounded-lg border border-border-light bg-background"
+            onClick={(e) => e.stopPropagation()}
           >
-            {isWaiting ? (
-              <div className="flex items-center justify-between gap-sm text-sm text-text-tertiary">
-                <span className="animate-pulse">正在输入...</span>
-                {onCancel && (
-                  <button
-                    type="button"
-                    onClick={onCancel}
-                    className="px-2 py-1 text-xs rounded border border-border-light text-text-secondary hover:bg-background-secondary transition-colors"
-                  >
-                    停止生成
-                  </button>
-                )}
+            <button
+              onClick={closeAttachmentPreview}
+              className="absolute top-2 right-2 z-10 rounded-full bg-black/50 p-1 text-white hover:bg-black/70"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <div className="flex items-center justify-between gap-sm border-b border-border-light px-md py-sm pr-12">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-text-primary">
+                  {previewAttachment?.name ?? previewAttachmentLabel ?? "附件预览"}
+                </p>
               </div>
-            ) : isCancelled ? (
-              <div className="flex flex-col gap-xs">
-                <div className="text-xs text-text-tertiary">已取消</div>
-                {content && (
-                  <FormattedContent
-                    content={content}
-                    className="text-sm max-w-full opacity-70"
-                    enableMarkdown={true}
-                  />
-                )}
-              </div>
-            ) : isEditing && isUser ? (
-              <textarea
-                ref={editInputRef}
-                value={editContent}
-                onChange={(e) => setEditContent(e.target.value)}
-                className="w-full min-w-[300px] bg-transparent text-sm text-white resize-none outline-none scrollbar-thin scrollbar-thumb-white/30 scrollbar-track-transparent"
-                rows={Math.max(2, editContent.split("\n").length)}
-                autoFocus
-              />
-            ) : isUser ? (
-              <p className="text-sm whitespace-pre-wrap leading-relaxed break-all min-w-[100px]">
-                {displayedContent}
-              </p>
-            ) : (
-              <FormattedContent
-                content={displayedContent}
-                className="text-sm max-w-full"
-                enableMarkdown={true}
-              />
-            )}
-          </div>
-
-          {/* 文件列表 - 只在内容完全显示后才显示 */}
-          {files && files.length > 0 && shouldShowFiles && (
-            <FileList files={files} title="生成的文档" />
-          )}
-
-          {/* 知识库引用来源 - 只在助手消息中显示 */}
-          {!isUser && citations && citations.length > 0 && (
-            <CitationBlock
-              citations={citations}
-              onCitationClick={(citation) => {
-                // TODO: 实现点击跳转到文档详情
-              }}
-            />
-          )}
-
-          {shouldShowMeta && !isUser && hasToolInfo && (
-            <div className="flex flex-col gap-xs text-xs text-text-tertiary">
-              {hasToolInfo && (
+              {previewAttachment && (
                 <button
                   type="button"
-                  onClick={() => setToolsOpen((prev) => !prev)}
-                  className="inline-flex w-fit items-center gap-xs text-text-secondary hover:text-text-primary"
+                  className="inline-flex items-center text-xs text-primary hover:underline"
+                  onClick={() => handleDownloadAttachment(previewAttachment)}
                 >
-                  <span>工具调用 ({toolCalls.length + toolResults.length})</span>
-                  {toolsOpen ? (
-                    <ChevronUp className="h-3 w-3" />
-                  ) : (
-                    <ChevronDown className="h-3 w-3" />
-                  )}
+                  <Download className="mr-xs h-3.5 w-3.5" />
+                  下载
                 </button>
               )}
-              {hasToolInfo && toolsOpen && (
-                <div className="rounded-md border border-border-light bg-background-secondary p-sm text-[11px] text-text-secondary">
-                  {toolCalls.map((call, index) => (
-                    <div key={`call-${call.id ?? index}`} className="mb-xs">
-                      <div className="font-medium text-text-primary">
-                        {call.name ?? "tool"} {call.id ? `(${call.id})` : ""}
-                        {call.status && (
-                          <span className="ml-xs text-[10px] text-text-tertiary">
-                            {call.status === "running" ? "进行中" : "完成"}
-                          </span>
-                        )}
-                        {call.durationMs != null && (
-                          <span className="ml-xs text-[10px] text-text-tertiary">
-                            {formatDuration(call.durationMs)}
-                          </span>
-                        )}
-                      </div>
-                      {call.arguments != null && (
-                        <pre className="whitespace-pre-wrap break-words text-[10px] text-text-tertiary">
-                          {JSON.stringify(call.arguments, null, 2)}
-                        </pre>
-                      )}
-                    </div>
-                  ))}
-                  {toolResults.map((result, index) => (
-                    <div key={`result-${result.toolCallId ?? index}`} className="mb-xs">
-                      <div
-                        className={`font-medium ${result.isError ? "text-red-500" : "text-text-primary"}`}
+            </div>
+            <div className="flex-1 overflow-auto scrollbar-default bg-background-secondary p-md">
+              {previewUrl && previewAttachment?.type.startsWith("image/") ? (
+                <div className="rounded-lg border border-border-light bg-background p-md">
+                  <img
+                    src={previewUrl}
+                    alt={previewAttachment?.name ?? previewAttachmentLabel ?? "附件"}
+                    className="mx-auto max-h-[78vh] w-auto max-w-full object-contain"
+                  />
+                </div>
+              ) : previewAttachmentIsPdf && previewUrl ? (
+                <div
+                  key={previewPdfRenderKey}
+                  className="rounded-lg border border-border-light bg-background p-sm"
+                >
+                  <div className="mb-sm flex items-center justify-between gap-sm">
+                    <div className="flex items-center gap-xs">
+                      <button
+                        type="button"
+                        className="rounded border border-border-light px-sm py-xs text-xs text-text-primary hover:bg-background-secondary disabled:opacity-40"
+                        disabled={previewPdfPage <= 1 || previewPdfLoading}
+                        onClick={() => setPreviewPdfPage((prev) => Math.max(1, prev - 1))}
                       >
-                        结果 {result.toolName ?? "tool"}{" "}
-                        {result.toolCallId ? `(${result.toolCallId})` : ""}
-                        {result.durationMs != null && (
-                          <span className="ml-xs text-[10px] text-text-tertiary">
-                            {formatDuration(result.durationMs)}
-                          </span>
-                        )}
-                      </div>
-                      {result.content && <ToolResultContent content={result.content} />}
+                        上一页
+                      </button>
+                      <span className="min-w-[68px] text-center text-xs text-text-tertiary">
+                        {previewPdfPages ? `${previewPdfPage} / ${previewPdfPages}` : "加载中"}
+                      </span>
+                      <button
+                        type="button"
+                        className="rounded border border-border-light px-sm py-xs text-xs text-text-primary hover:bg-background-secondary disabled:opacity-40"
+                        disabled={
+                          previewPdfPages === 0 ||
+                          previewPdfPage >= previewPdfPages ||
+                          previewPdfLoading
+                        }
+                        onClick={() =>
+                          setPreviewPdfPage((prev) => Math.min(previewPdfPages, prev + 1))
+                        }
+                      >
+                        下一页
+                      </button>
                     </div>
-                  ))}
+                    <div className="flex items-center gap-xs">
+                      <button
+                        type="button"
+                        className="rounded border border-border-light px-sm py-xs text-xs text-text-primary hover:bg-background-secondary"
+                        onClick={() => setPreviewPdfZoom((zoom) => Math.max(0.5, zoom - 0.25))}
+                      >
+                        缩小
+                      </button>
+                      <span className="min-w-[54px] text-center text-xs text-text-tertiary">
+                        {Math.round(previewPdfZoom * 100)}%
+                      </span>
+                      <button
+                        type="button"
+                        className="rounded border border-border-light px-sm py-xs text-xs text-text-primary hover:bg-background-secondary"
+                        onClick={() => setPreviewPdfZoom((zoom) => Math.min(3, zoom + 0.25))}
+                      >
+                        放大
+                      </button>
+                    </div>
+                  </div>
+                  <div className="h-[76vh] overflow-auto scrollbar-default rounded border border-border-light bg-background-secondary p-sm">
+                    {previewPdfLoading ? (
+                      <div className="flex h-full items-center justify-center text-sm text-text-tertiary">
+                        加载 PDF 中...
+                      </div>
+                    ) : previewPdfError ? (
+                      <div className="flex h-full items-center justify-center text-sm text-error">
+                        {previewPdfError}
+                      </div>
+                    ) : (
+                      <canvas
+                        key={previewPdfRenderKey}
+                        ref={previewPdfCanvasRef}
+                        className="mx-auto block bg-white"
+                      />
+                    )}
+                  </div>
+                </div>
+              ) : previewKnowledgeLoading ? (
+                <div className="flex h-[60vh] items-center justify-center rounded-lg border border-border-light bg-background p-md text-sm text-text-tertiary">
+                  正在准备文档预览...
+                </div>
+              ) : previewKnowledgeDetail ? (
+                <div className="h-[80vh] overflow-hidden rounded-lg border border-border-light bg-background">
+                  <LazyDocPreview detail={previewKnowledgeDetail} />
+                </div>
+              ) : previewText != null ? (
+                <div className="rounded-lg border border-border-light bg-background p-md">
+                  <pre className="whitespace-pre-wrap text-sm font-mono text-text-primary">
+                    {previewText}
+                  </pre>
+                </div>
+              ) : (
+                <div className="flex h-[60vh] items-center justify-center rounded-lg border border-border-light bg-background p-md text-sm text-text-tertiary">
+                  {previewError ?? "预览准备中..."}
                 </div>
               )}
             </div>
-          )}
-
-          {/* 功能按钮 */}
+          </div>
+        </div>
+      )}
+      <div className={`flex w-full mb-lg ${isUser ? "justify-end" : "justify-start"}`}>
+        <div
+          style={{ minWidth: isMobile ? "120px" : "200px" }}
+          className={`flex gap-sm max-w-[90%] md:max-w-[680px] lg:max-w-[800px] transition-shadow ${
+            isUser ? "flex-row-reverse" : "flex-row"
+          }`}
+        >
+          {/* 头像 */}
           <div
-            className={`flex items-center gap-xs text-xs ${isUser ? "justify-end" : "justify-end"}`}
+            className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center overflow-hidden ${
+              isUser ? "bg-primary" : "bg-background-secondary"
+            }`}
           >
-            {/* 助手消息：复制按钮 */}
-            {!isUser && !isWaiting && content && onCopy && (
-              <button
-                type="button"
-                onClick={() => onCopy?.(content)}
-                className="p-xs text-text-tertiary hover:text-text-primary rounded hover:bg-background-secondary cursor-pointer"
-                title="复制"
-              >
-                <Copy className="h-3 w-3" />
-              </button>
-            )}
-            {/* 用户消息：复制按钮 */}
-            {isUser && !status && !isEditing && onCopy && (
-              <button
-                type="button"
-                onClick={() => onCopy?.(content)}
-                className="p-xs text-text-tertiary hover:text-text-primary rounded hover:bg-background-secondary cursor-pointer"
-                title="复制"
-              >
-                <Copy className="h-3 w-3" />
-              </button>
-            )}
-            {/* 用户消息：编辑按钮 */}
-            {isUser && !status && !isEditing && onEdit && (
-              <button
-                type="button"
-                onClick={onEdit}
-                className="p-xs text-text-tertiary hover:text-text-primary rounded hover:bg-background-secondary cursor-pointer"
-                title="编辑"
-              >
-                <Pencil className="h-3 w-3" />
-              </button>
-            )}
-            {/* 用户消息：编辑中显示取消和确认按钮 */}
-            {isUser && isEditing && (
-              <>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setEditContent(content);
-                    onEditCancel?.();
-                  }}
-                  className="p-xs text-text-tertiary hover:text-text-primary rounded hover:bg-background-secondary cursor-pointer"
-                  title="取消"
-                >
-                  <X className="h-3 w-3" />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onEditConfirm?.(editContent)}
-                  className="p-xs text-text-tertiary hover:text-text-primary rounded hover:bg-background-secondary cursor-pointer"
-                  title="确认发送"
-                >
-                  <Check className="h-3 w-3" />
-                </button>
-              </>
+            {isUser ? (
+              <User className="w-4 h-4 text-white" />
+            ) : (
+              <img src="/img/logo.png" alt="Hovi" className="w-full h-full object-contain" />
             )}
           </div>
 
-          {/* 时间戳 */}
-          {timestamp && (
-            <span className={`text-xs text-text-tertiary ${isUser ? "text-right" : "text-left"}`}>
-              {timestamp.toLocaleString("zh-CN", {
-                year: "numeric",
-                month: "2-digit",
-                day: "2-digit",
-                hour: "2-digit",
-                minute: "2-digit",
-                second: "2-digit",
-              })}
-            </span>
-          )}
-          {isUser && status === "failed" && (
-            <div className="flex items-center gap-sm text-xs text-text-tertiary">
-              <span className="text-error">发送失败</span>
-              {status === "failed" && onRetry && (
-                <button
-                  type="button"
-                  onClick={onRetry}
-                  className="rounded border border-error/40 px-sm py-[2px] text-[10px] text-error hover:bg-error/10"
-                >
-                  重试
-                </button>
-              )}
-              {status === "failed" && onEditRetry && (
-                <button
-                  type="button"
-                  onClick={onEditRetry}
-                  className="rounded border border-border-light px-sm py-[2px] text-[10px] text-text-secondary hover:bg-background-secondary"
-                >
-                  编辑后重试
-                </button>
-              )}
-              {status === "failed" && onCopyRetry && (
-                <button
-                  type="button"
-                  onClick={onCopyRetry}
-                  className="rounded border border-border-light px-sm py-[2px] text-[10px] text-text-secondary hover:bg-background-secondary"
-                >
-                  复制并回填
-                </button>
-              )}
-              {status === "failed" && onDelete && (
-                <button
-                  type="button"
-                  onClick={onDelete}
-                  className="rounded border border-border-light px-sm py-[2px] text-[10px] text-text-secondary hover:bg-background-secondary"
-                >
-                  删除
-                </button>
+          {/* 消息内容 */}
+          <div className={`flex flex-col gap-xs ${isMobile ? "min-w-[100px]" : "min-w-[150px]"}`}>
+            <div
+              className={`px-lg py-md rounded-lg ${
+                isUser
+                  ? "bg-primary text-white rounded-tr-sm"
+                  : "bg-surface text-text-primary rounded-tl-sm"
+              }`}
+            >
+              {isWaiting ? (
+                <div className="flex items-center justify-between gap-sm text-sm text-text-tertiary">
+                  <span className="animate-pulse">正在输入...</span>
+                  {onCancel && (
+                    <button
+                      type="button"
+                      onClick={onCancel}
+                      className="px-2 py-1 text-xs rounded border border-border-light text-text-secondary hover:bg-background-secondary transition-colors"
+                    >
+                      停止生成
+                    </button>
+                  )}
+                </div>
+              ) : isCancelled ? (
+                <div className="flex flex-col gap-xs">
+                  <div className="text-xs text-text-tertiary">已取消</div>
+                  {content && (
+                    <FormattedContent
+                      content={content}
+                      className="text-sm max-w-full opacity-70"
+                      enableMarkdown={true}
+                    />
+                  )}
+                </div>
+              ) : isEditing && isUser ? (
+                <textarea
+                  ref={editInputRef}
+                  value={editContent}
+                  onChange={(e) => setEditContent(e.target.value)}
+                  className="w-full min-w-[300px] bg-transparent text-sm text-white resize-none outline-none scrollbar-default"
+                  rows={Math.max(2, editContent.split("\n").length)}
+                  autoFocus
+                />
+              ) : isUser ? (
+                <p className="text-sm whitespace-pre-wrap leading-relaxed break-all min-w-[100px]">
+                  {renderUserMessageWithSkillHighlight(displayedContent, availableSkillKeys)}
+                </p>
+              ) : (
+                <FormattedContent
+                  content={displayedContent}
+                  className="text-sm max-w-full"
+                  enableMarkdown={true}
+                />
               )}
             </div>
-          )}
+
+            {/* 用户附件 - 挂载在消息气泡下方 */}
+            {hasUserAttachments && shouldShowMeta && (
+              <div className="mt-xs flex flex-wrap gap-xs">
+                {attachments.map((file, index) => (
+                  <button
+                    key={`${file.name}-${file.size}-${file.lastModified}-${index}`}
+                    type="button"
+                    onClick={() => {
+                      void handlePreviewAttachment(file);
+                    }}
+                    className="inline-flex max-w-full items-center gap-xs rounded-md border border-border-light bg-background-secondary px-sm py-xs text-xs text-text-secondary hover:border-primary/40 hover:text-text-primary"
+                    title={file.name}
+                  >
+                    <Paperclip className="h-3 w-3 shrink-0" />
+                    <span className="truncate max-w-[260px]">{file.name}</span>
+                  </button>
+                ))}
+                {visibleSessionAttachments.map((attachment) => (
+                  <button
+                    key={`${attachment.documentId}:${attachment.knowledgeDocumentId ?? ""}`}
+                    type="button"
+                    onClick={() => {
+                      void handlePreviewSessionAttachment(attachment);
+                    }}
+                    className="inline-flex max-w-full items-center gap-xs rounded-md border border-border-light bg-background-secondary px-sm py-xs text-xs text-text-secondary hover:border-primary/40 hover:text-text-primary"
+                    title={attachment.name}
+                  >
+                    <Paperclip className="h-3 w-3 shrink-0" />
+                    <span className="truncate max-w-[260px]">{attachment.name}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* 文件列表 - 只在内容完全显示后才显示 */}
+            {files && files.length > 0 && shouldShowFiles && (
+              <FileList files={files} title="生成的文档" />
+            )}
+
+            {/* 知识库引用来源 - 只在助手消息中显示 */}
+            {!isUser && citations && citations.length > 0 && (
+              <CitationBlock
+                citations={citations}
+                onCitationClick={(citation) => {
+                  // TODO: 实现点击跳转到文档详情
+                }}
+              />
+            )}
+
+            {shouldShowMeta && !isUser && hasToolInfo && (
+              <div className="flex flex-col gap-xs text-xs text-text-tertiary">
+                {hasToolInfo && (
+                  <button
+                    type="button"
+                    onClick={() => setToolsOpen((prev) => !prev)}
+                    className="inline-flex w-fit items-center gap-xs text-text-secondary hover:text-text-primary"
+                  >
+                    <span>工具调用 ({toolCalls.length + toolResults.length})</span>
+                    {toolsOpen ? (
+                      <ChevronUp className="h-3 w-3" />
+                    ) : (
+                      <ChevronDown className="h-3 w-3" />
+                    )}
+                  </button>
+                )}
+                {hasToolInfo && toolsOpen && (
+                  <div className="rounded-md border border-border-light bg-background-secondary p-sm text-[11px] text-text-secondary">
+                    {toolCalls.map((call, index) => (
+                      <div key={`call-${call.id ?? index}`} className="mb-xs">
+                        <div className="font-medium text-text-primary">
+                          {call.name ?? "tool"} {call.id ? `(${call.id})` : ""}
+                          {call.status && (
+                            <span className="ml-xs text-[10px] text-text-tertiary">
+                              {call.status === "running" ? "进行中" : "完成"}
+                            </span>
+                          )}
+                          {call.durationMs != null && (
+                            <span className="ml-xs text-[10px] text-text-tertiary">
+                              {formatDuration(call.durationMs)}
+                            </span>
+                          )}
+                        </div>
+                        {call.arguments != null && (
+                          <pre className="whitespace-pre-wrap break-words text-[10px] text-text-tertiary">
+                            {JSON.stringify(call.arguments, null, 2)}
+                          </pre>
+                        )}
+                      </div>
+                    ))}
+                    {toolResults.map((result, index) => (
+                      <div key={`result-${result.toolCallId ?? index}`} className="mb-xs">
+                        <div
+                          className={`font-medium ${result.isError ? "text-red-500" : "text-text-primary"}`}
+                        >
+                          结果 {result.toolName ?? "tool"}{" "}
+                          {result.toolCallId ? `(${result.toolCallId})` : ""}
+                          {result.durationMs != null && (
+                            <span className="ml-xs text-[10px] text-text-tertiary">
+                              {formatDuration(result.durationMs)}
+                            </span>
+                          )}
+                        </div>
+                        {result.content && <ToolResultContent content={result.content} />}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 功能按钮 */}
+            <div
+              className={`flex items-center gap-xs text-xs ${isUser ? "justify-end" : "justify-end"}`}
+            >
+              {/* 助手消息：复制按钮 */}
+              {!isUser && !isWaiting && content && onCopy && (
+                <button
+                  type="button"
+                  onClick={() => onCopy?.(content)}
+                  className="p-xs text-text-tertiary hover:text-text-primary rounded hover:bg-background-secondary cursor-pointer"
+                  title="复制"
+                >
+                  <Copy className="h-3 w-3" />
+                </button>
+              )}
+              {/* 用户消息：复制按钮 */}
+              {isUser && !status && !isEditing && onCopy && (
+                <button
+                  type="button"
+                  onClick={() => onCopy?.(content)}
+                  className="p-xs text-text-tertiary hover:text-text-primary rounded hover:bg-background-secondary cursor-pointer"
+                  title="复制"
+                >
+                  <Copy className="h-3 w-3" />
+                </button>
+              )}
+              {/* 用户消息：编辑按钮 */}
+              {isUser && !status && !isEditing && onEdit && (
+                <button
+                  type="button"
+                  onClick={onEdit}
+                  className="p-xs text-text-tertiary hover:text-text-primary rounded hover:bg-background-secondary cursor-pointer"
+                  title="编辑"
+                >
+                  <Pencil className="h-3 w-3" />
+                </button>
+              )}
+              {/* 用户消息：编辑中显示取消和确认按钮 */}
+              {isUser && isEditing && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditContent(content);
+                      onEditCancel?.();
+                    }}
+                    className="p-xs text-text-tertiary hover:text-text-primary rounded hover:bg-background-secondary cursor-pointer"
+                    title="取消"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onEditConfirm?.(editContent)}
+                    className="p-xs text-text-tertiary hover:text-text-primary rounded hover:bg-background-secondary cursor-pointer"
+                    title="确认发送"
+                  >
+                    <Check className="h-3 w-3" />
+                  </button>
+                </>
+              )}
+            </div>
+
+            {/* 时间戳 */}
+            {timestamp && (
+              <span className={`text-xs text-text-tertiary ${isUser ? "text-right" : "text-left"}`}>
+                {timestamp.toLocaleString("zh-CN", {
+                  year: "numeric",
+                  month: "2-digit",
+                  day: "2-digit",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  second: "2-digit",
+                })}
+              </span>
+            )}
+            {isUser && status === "failed" && (
+              <div className="flex items-center gap-sm text-xs text-text-tertiary">
+                <span className="text-error">发送失败</span>
+                {status === "failed" && onRetry && (
+                  <button
+                    type="button"
+                    onClick={onRetry}
+                    className="rounded border border-error/40 px-sm py-[2px] text-[10px] text-error hover:bg-error/10"
+                  >
+                    重试
+                  </button>
+                )}
+                {status === "failed" && onEditRetry && (
+                  <button
+                    type="button"
+                    onClick={onEditRetry}
+                    className="rounded border border-border-light px-sm py-[2px] text-[10px] text-text-secondary hover:bg-background-secondary"
+                  >
+                    编辑后重试
+                  </button>
+                )}
+                {status === "failed" && onCopyRetry && (
+                  <button
+                    type="button"
+                    onClick={onCopyRetry}
+                    className="rounded border border-border-light px-sm py-[2px] text-[10px] text-text-secondary hover:bg-background-secondary"
+                  >
+                    复制并回填
+                  </button>
+                )}
+                {status === "failed" && onDelete && (
+                  <button
+                    type="button"
+                    onClick={onDelete}
+                    className="rounded border border-border-light px-sm py-[2px] text-[10px] text-text-secondary hover:bg-background-secondary"
+                  >
+                    删除
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }
 

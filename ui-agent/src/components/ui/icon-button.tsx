@@ -23,7 +23,7 @@ export function IconButton({
     <button
       onClick={onClick}
       className={cn(
-        "p-2 rounded-md transition-colors duration-fast",
+        "cursor-pointer p-2 rounded-md transition-colors duration-fast",
         variant === "default" &&
           "hover:bg-surface-hover text-text-secondary hover:text-text-primary",
         variant === "danger" && "hover:bg-error-light text-error",

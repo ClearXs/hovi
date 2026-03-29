@@ -34,7 +34,6 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
@@ -52,9 +51,7 @@ interface SidebarProps {
   onRenameSession?: (key: string) => void;
   onDeleteSession?: (key: string) => void;
   onViewSession?: (key: string) => void;
-  searchQuery?: string;
   filterKind?: "all" | "direct" | "group" | "global" | "unknown";
-  onSearchChange?: (value: string) => void;
   onFilterChange?: (value: SidebarProps["filterKind"]) => void;
   unreadOnly?: boolean;
   onUnreadToggle?: (value: boolean) => void;
@@ -71,13 +68,17 @@ interface SidebarProps {
   onToggleCollapse?: () => void;
   isLoading?: boolean;
   onOpenKnowledge?: () => void;
+  onOpenChannel?: () => void;
   onOpenPersonaSettings?: () => void;
   onOpenCronJobs?: () => void;
   onOpenAgentManage?: () => void;
+  onOpenTaskSearch?: () => void;
   onGoHome?: () => void;
   assistantVisible?: boolean;
   onToggleAssistantVisible?: () => void;
-  activeView?: "chat" | "knowledge" | "persona" | "my";
+  activeView?: "chat" | "channel" | "knowledge" | "persona" | "my";
+  searchShortcutLabel?: string;
+  newSessionShortcutLabel?: string;
 }
 
 const Sidebar = ({
@@ -89,9 +90,7 @@ const Sidebar = ({
   onRenameSession = () => {},
   onDeleteSession = () => {},
   onViewSession = () => {},
-  searchQuery = "",
   filterKind = "all",
-  onSearchChange = () => {},
   onFilterChange = () => {},
   unreadOnly = false,
   onUnreadToggle = () => {},
@@ -108,13 +107,17 @@ const Sidebar = ({
   onToggleCollapse = () => {},
   isLoading = false,
   onOpenKnowledge = () => {},
+  onOpenChannel = () => {},
   onOpenPersonaSettings = () => {},
   onOpenCronJobs = () => {},
   onOpenAgentManage = () => {},
+  onOpenTaskSearch = () => {},
   onGoHome = () => {},
   assistantVisible = true,
   onToggleAssistantVisible = () => {},
   activeView = "chat",
+  searchShortcutLabel = "Ctrl+Cmd+K",
+  newSessionShortcutLabel = "Ctrl+Cmd+N",
 }: SidebarProps) => {
   // 任务列表收缩状态
   const [isTasksExpanded, setIsTasksExpanded] = useState(true);
@@ -141,9 +144,7 @@ const Sidebar = ({
     [],
   );
 
-  const randomQuote = useMemo(() => {
-    return characterQuotes[Math.floor(Math.random() * characterQuotes.length)];
-  }, [characterQuotes, aboutOpen]);
+  const randomQuote = characterQuotes[0] ?? "";
 
   // 版本更新内容
   const versionUpdates = [
@@ -161,11 +162,14 @@ const Sidebar = ({
 
   // Mock functions for search and library
   const handleSearchClick = () => {
-    // no-op: search is handled inline
+    onOpenTaskSearch();
   };
 
   const handleLibraryClick = () => {
     onOpenKnowledge();
+  };
+  const handleChannelClick = () => {
+    onOpenChannel();
   };
 
   const handlePersonaSettingsClick = () => {
@@ -236,7 +240,7 @@ const Sidebar = ({
           </div>
 
           {/* 内容区域 */}
-          <div className="flex-1 overflow-y-auto p-5">
+          <div className="flex-1 overflow-y-auto scrollbar-default p-5">
             {/* 角色卡片 */}
             <div className="rounded-lg border border-border-light p-4 mb-4">
               <div className="flex items-center gap-3">
@@ -629,15 +633,19 @@ const Sidebar = ({
             <button
               onClick={onNewSession}
               className={cn(
-                "w-10 h-10 rounded-md flex items-center justify-center transition-colors duration-fast",
-                activeView === "chat" ? "bg-primary/10" : "hover:bg-surface-hover",
+                "group w-10 h-10 rounded-md flex items-center justify-center transition-all duration-fast cursor-pointer active:bg-surface-subtle",
+                activeView === "chat"
+                  ? "bg-primary/10 hover:bg-primary/20"
+                  : "hover:bg-background-secondary",
               )}
-              title="新建任务"
+              title={`新建任务 (${newSessionShortcutLabel})`}
             >
               <Plus
                 className={cn(
-                  "w-5 h-5",
-                  activeView === "chat" ? "text-primary" : "text-text-secondary",
+                  "w-5 h-5 transition-colors",
+                  activeView === "chat"
+                    ? "text-primary"
+                    : "text-text-secondary group-hover:text-text-primary",
                 )}
               />
             </button>
@@ -647,10 +655,10 @@ const Sidebar = ({
           <div className="flex flex-col items-center gap-md flex-shrink-0">
             <button
               onClick={handleSearchClick}
-              className="w-10 h-10 rounded-md hover:bg-surface-hover flex items-center justify-center transition-colors duration-fast"
-              title="搜索"
+              className="group w-10 h-10 rounded-md hover:bg-background-secondary active:bg-surface-subtle flex items-center justify-center transition-all duration-fast cursor-pointer"
+              title={`搜索 (${searchShortcutLabel})`}
             >
-              <FiSearch className="w-5 h-5 text-text-secondary" />
+              <FiSearch className="w-5 h-5 text-text-secondary group-hover:text-text-primary transition-colors" />
             </button>
           </div>
 
@@ -659,15 +667,38 @@ const Sidebar = ({
             <button
               onClick={handleLibraryClick}
               className={cn(
-                "w-10 h-10 rounded-md flex items-center justify-center transition-colors duration-fast",
-                activeView === "knowledge" ? "bg-primary/10" : "hover:bg-surface-hover",
+                "group w-10 h-10 rounded-md flex items-center justify-center transition-all duration-fast cursor-pointer active:bg-surface-subtle",
+                activeView === "knowledge"
+                  ? "bg-primary/10 hover:bg-primary/20"
+                  : "hover:bg-background-secondary",
               )}
               title="知识库"
             >
               <FiBook
                 className={cn(
-                  "w-5 h-5",
-                  activeView === "knowledge" ? "text-primary" : "text-text-secondary",
+                  "w-5 h-5 transition-colors",
+                  activeView === "knowledge"
+                    ? "text-primary"
+                    : "text-text-secondary group-hover:text-text-primary",
+                )}
+              />
+            </button>
+            <button
+              onClick={handleChannelClick}
+              className={cn(
+                "group w-10 h-10 rounded-md flex items-center justify-center transition-all duration-fast cursor-pointer active:bg-surface-subtle",
+                activeView === "channel"
+                  ? "bg-primary/10 hover:bg-primary/20"
+                  : "hover:bg-background-secondary",
+              )}
+              title="频道"
+            >
+              <Box
+                className={cn(
+                  "w-5 h-5 transition-colors",
+                  activeView === "channel"
+                    ? "text-primary"
+                    : "text-text-secondary group-hover:text-text-primary",
                 )}
               />
             </button>
@@ -677,9 +708,9 @@ const Sidebar = ({
                 <TooltipTrigger asChild>
                   <button
                     onClick={handlePersonaSettingsClick}
-                    className="w-10 h-10 rounded-md flex items-center justify-center transition-colors duration-fast hover:bg-surface-hover active:bg-surface-subtle cursor-pointer"
+                    className="group w-10 h-10 rounded-md flex items-center justify-center transition-all duration-fast hover:bg-background-secondary active:bg-surface-subtle cursor-pointer"
                   >
-                    <Sparkles className="w-5 h-5 text-text-secondary hover:text-text-primary transition-colors" />
+                    <Sparkles className="w-5 h-5 text-text-secondary group-hover:text-text-primary transition-colors" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent>
@@ -694,9 +725,9 @@ const Sidebar = ({
                 <TooltipTrigger asChild>
                   <button
                     onClick={handleCronJobsClick}
-                    className="w-10 h-10 rounded-md flex items-center justify-center transition-colors duration-fast hover:bg-surface-hover active:bg-surface-subtle cursor-pointer"
+                    className="group w-10 h-10 rounded-md flex items-center justify-center transition-all duration-fast hover:bg-background-secondary active:bg-surface-subtle cursor-pointer"
                   >
-                    <Clock className="w-5 h-5 text-text-secondary hover:text-text-primary transition-colors" />
+                    <Clock className="w-5 h-5 text-text-secondary group-hover:text-text-primary transition-colors" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent>
@@ -711,9 +742,9 @@ const Sidebar = ({
                 <TooltipTrigger asChild>
                   <button
                     onClick={handleAgentManageClick}
-                    className="w-10 h-10 rounded-md flex items-center justify-center transition-colors duration-fast hover:bg-surface-hover active:bg-surface-subtle cursor-pointer"
+                    className="group w-10 h-10 rounded-md flex items-center justify-center transition-all duration-fast hover:bg-background-secondary active:bg-surface-subtle cursor-pointer"
                   >
-                    <Bot className="w-5 h-5 text-text-secondary hover:text-text-primary transition-colors" />
+                    <Bot className="w-5 h-5 text-text-secondary group-hover:text-text-primary transition-colors" />
                   </button>
                 </TooltipTrigger>
                 <TooltipContent>
@@ -732,9 +763,9 @@ const Sidebar = ({
               <TooltipTrigger asChild>
                 <button
                   onClick={() => openSettings()}
-                  className="w-10 h-10 rounded-md hover:bg-surface-hover active:bg-surface-subtle flex items-center justify-center transition-colors duration-fast cursor-pointer"
+                  className="group w-10 h-10 rounded-md hover:bg-background-secondary active:bg-surface-subtle flex items-center justify-center transition-all duration-fast cursor-pointer"
                 >
-                  <Settings className="w-4 h-4 text-text-secondary hover:text-text-primary transition-colors" />
+                  <Settings className="w-4 h-4 text-text-secondary group-hover:text-text-primary transition-colors" />
                 </button>
               </TooltipTrigger>
               <TooltipContent>
@@ -746,10 +777,10 @@ const Sidebar = ({
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
-                  className="w-10 h-10 rounded-md hover:bg-surface-hover active:bg-surface-subtle flex items-center justify-center transition-colors duration-fast cursor-pointer"
+                  className="group w-10 h-10 rounded-md hover:bg-background-secondary active:bg-surface-subtle flex items-center justify-center transition-all duration-fast cursor-pointer"
                   onClick={() => setAboutOpen(true)}
                 >
-                  <Info className="w-4 h-4 text-text-secondary hover:text-text-primary transition-colors" />
+                  <Info className="w-4 h-4 text-text-secondary group-hover:text-text-primary transition-colors" />
                 </button>
               </TooltipTrigger>
               <TooltipContent>
@@ -801,56 +832,109 @@ const Sidebar = ({
           <button
             onClick={onNewSession}
             className={cn(
-              "w-full flex items-center gap-sm px-lg py-sm transition-colors",
-              activeView === "chat" ? "bg-primary/10" : "hover:bg-background-secondary",
+              "group w-full flex items-center justify-between rounded-md px-lg py-sm transition-all duration-fast cursor-pointer active:bg-surface-subtle",
+              activeView === "chat"
+                ? "bg-primary/10 hover:bg-primary/20"
+                : "hover:bg-background-secondary",
             )}
           >
-            <FiEdit3
-              className={cn(
-                "w-4 h-4 flex-shrink-0",
-                activeView === "chat" ? "text-primary" : "text-text-secondary",
-              )}
-            />
-            <span
-              className={cn(
-                "text-xs font-medium",
-                activeView === "chat" ? "text-text-primary" : "text-text-secondary",
-              )}
-            >
-              新建任务
+            <span className="flex items-center gap-sm min-w-0">
+              <FiEdit3
+                className={cn(
+                  "w-4 h-4 flex-shrink-0 transition-colors",
+                  activeView === "chat"
+                    ? "text-primary"
+                    : "text-text-secondary group-hover:text-text-primary",
+                )}
+              />
+              <span
+                className={cn(
+                  "text-xs font-medium transition-colors",
+                  activeView === "chat"
+                    ? "text-text-primary"
+                    : "text-text-secondary group-hover:text-text-primary",
+                )}
+              >
+                新建任务
+              </span>
+            </span>
+            <span className="text-[11px] text-text-tertiary opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+              {newSessionShortcutLabel}
             </span>
           </button>
 
           {/* 搜索 */}
           <button
             onClick={handleSearchClick}
-            className="w-full flex items-center gap-sm px-lg py-sm hover:bg-background-secondary transition-colors"
+            className="group w-full flex items-center justify-between rounded-md px-lg py-sm hover:bg-background-secondary active:bg-surface-subtle transition-all duration-fast cursor-pointer"
           >
-            <FiSearch className="w-4 h-4 text-text-secondary flex-shrink-0" />
-            <span className="text-xs font-medium text-text-secondary">搜索</span>
+            <span className="flex items-center gap-sm min-w-0">
+              <FiSearch className="w-4 h-4 text-text-secondary group-hover:text-text-primary transition-colors flex-shrink-0" />
+              <span className="text-xs font-medium text-text-secondary group-hover:text-text-primary transition-colors">
+                搜索
+              </span>
+            </span>
+            <span className="text-[11px] text-text-tertiary opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+              {searchShortcutLabel}
+            </span>
           </button>
 
           {/* 知识库 */}
           <button
             onClick={handleLibraryClick}
             className={cn(
-              "w-full flex items-center gap-sm px-lg py-sm transition-colors",
-              activeView === "knowledge" ? "bg-primary/10" : "hover:bg-background-secondary",
+              "group w-full flex items-center gap-sm rounded-md px-lg py-sm transition-all duration-fast cursor-pointer active:bg-surface-subtle",
+              activeView === "knowledge"
+                ? "bg-primary/10 hover:bg-primary/20"
+                : "hover:bg-background-secondary",
             )}
           >
             <FiBook
               className={cn(
-                "w-4 h-4 flex-shrink-0",
-                activeView === "knowledge" ? "text-primary" : "text-text-secondary",
+                "w-4 h-4 flex-shrink-0 transition-colors",
+                activeView === "knowledge"
+                  ? "text-primary"
+                  : "text-text-secondary group-hover:text-text-primary",
               )}
             />
             <span
               className={cn(
-                "text-xs font-medium",
-                activeView === "knowledge" ? "text-text-primary" : "text-text-secondary",
+                "text-xs font-medium transition-colors",
+                activeView === "knowledge"
+                  ? "text-text-primary"
+                  : "text-text-secondary group-hover:text-text-primary",
               )}
             >
               知识库
+            </span>
+          </button>
+          {/* 频道 */}
+          <button
+            onClick={handleChannelClick}
+            className={cn(
+              "group w-full flex items-center gap-sm rounded-md px-lg py-sm transition-all duration-fast cursor-pointer active:bg-surface-subtle",
+              activeView === "channel"
+                ? "bg-primary/10 hover:bg-primary/20"
+                : "hover:bg-background-secondary",
+            )}
+          >
+            <Box
+              className={cn(
+                "w-4 h-4 flex-shrink-0 transition-colors",
+                activeView === "channel"
+                  ? "text-primary"
+                  : "text-text-secondary group-hover:text-text-primary",
+              )}
+            />
+            <span
+              className={cn(
+                "text-xs font-medium transition-colors",
+                activeView === "channel"
+                  ? "text-text-primary"
+                  : "text-text-secondary group-hover:text-text-primary",
+              )}
+            >
+              频道
             </span>
           </button>
         </div>
@@ -908,7 +992,11 @@ const Sidebar = ({
                 <DropdownMenuTrigger asChild>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <div className="p-1 rounded hover:bg-surface-hover active:bg-surface-subtle transition-colors cursor-pointer">
+                      <button
+                        type="button"
+                        aria-label="排序"
+                        className="p-1 rounded hover:bg-surface-hover active:bg-surface-subtle transition-colors cursor-pointer"
+                      >
                         <TrendingUp
                           className={cn(
                             "w-3.5 h-3.5 transition-colors",
@@ -917,7 +1005,7 @@ const Sidebar = ({
                               : "text-text-tertiary hover:text-text-primary",
                           )}
                         />
-                      </div>
+                      </button>
                     </TooltipTrigger>
                     <TooltipContent>
                       <p>排序</p>
@@ -925,7 +1013,7 @@ const Sidebar = ({
                   </Tooltip>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => onSortChange("recent")}>
+                  <DropdownMenuItem onSelect={() => onSortChange("recent")}>
                     <span className="mr-2 inline-flex w-3.5 h-3.5 items-center justify-center">
                       {sortMode === "recent" && <Check className="w-3.5 h-3.5 text-primary" />}
                     </span>
@@ -933,7 +1021,7 @@ const Sidebar = ({
                       最近活动
                     </span>
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => onSortChange("name")}>
+                  <DropdownMenuItem onSelect={() => onSortChange("name")}>
                     <span className="mr-2 inline-flex w-3.5 h-3.5 items-center justify-center">
                       {sortMode === "name" && <Check className="w-3.5 h-3.5 text-primary" />}
                     </span>
@@ -945,7 +1033,11 @@ const Sidebar = ({
                 <DropdownMenuTrigger asChild>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <div className="p-1 rounded hover:bg-surface-hover active:bg-surface-subtle transition-colors cursor-pointer">
+                      <button
+                        type="button"
+                        aria-label="过滤"
+                        className="p-1 rounded hover:bg-surface-hover active:bg-surface-subtle transition-colors cursor-pointer"
+                      >
                         <Filter
                           className={cn(
                             "w-3.5 h-3.5 transition-colors",
@@ -954,7 +1046,7 @@ const Sidebar = ({
                               : "text-text-tertiary hover:text-text-primary",
                           )}
                         />
-                      </div>
+                      </button>
                     </TooltipTrigger>
                     <TooltipContent>
                       <p>过滤</p>
@@ -962,13 +1054,13 @@ const Sidebar = ({
                   </Tooltip>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem onClick={() => onFilterChange("all")}>
+                  <DropdownMenuItem onSelect={() => onFilterChange("all")}>
                     <span className="mr-2 inline-flex w-3.5 h-3.5 items-center justify-center">
                       {filterKind === "all" && <Check className="w-3.5 h-3.5 text-primary" />}
                     </span>
                     <span className={filterKind === "all" ? "text-primary" : undefined}>全部</span>
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => onFilterChange("direct")}>
+                  <DropdownMenuItem onSelect={() => onFilterChange("direct")}>
                     <span className="mr-2 inline-flex w-3.5 h-3.5 items-center justify-center">
                       {filterKind === "direct" && <Check className="w-3.5 h-3.5 text-primary" />}
                     </span>
@@ -976,7 +1068,7 @@ const Sidebar = ({
                       私聊
                     </span>
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => onFilterChange("group")}>
+                  <DropdownMenuItem onSelect={() => onFilterChange("group")}>
                     <span className="mr-2 inline-flex w-3.5 h-3.5 items-center justify-center">
                       {filterKind === "group" && <Check className="w-3.5 h-3.5 text-primary" />}
                     </span>
@@ -984,7 +1076,7 @@ const Sidebar = ({
                       群组
                     </span>
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => onFilterChange("global")}>
+                  <DropdownMenuItem onSelect={() => onFilterChange("global")}>
                     <span className="mr-2 inline-flex w-3.5 h-3.5 items-center justify-center">
                       {filterKind === "global" && <Check className="w-3.5 h-3.5 text-primary" />}
                     </span>
@@ -992,7 +1084,7 @@ const Sidebar = ({
                       全局
                     </span>
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => onFilterChange("unknown")}>
+                  <DropdownMenuItem onSelect={() => onFilterChange("unknown")}>
                     <span className="mr-2 inline-flex w-3.5 h-3.5 items-center justify-center">
                       {filterKind === "unknown" && <Check className="w-3.5 h-3.5 text-primary" />}
                     </span>
@@ -1002,26 +1094,6 @@ const Sidebar = ({
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
-            </div>
-          </div>
-
-          <div className="px-lg pb-sm flex-shrink-0">
-            <div className="relative">
-              <Input
-                placeholder="搜索会话..."
-                value={searchQuery}
-                onChange={(event) => onSearchChange(event.target.value)}
-                className="h-8 text-xs pr-7"
-              />
-              {searchQuery && (
-                <button
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-primary"
-                  onClick={() => onSearchChange("")}
-                  aria-label="清空搜索"
-                >
-                  <X className="h-3.5 w-3.5" />
-                </button>
-              )}
             </div>
           </div>
 
@@ -1045,7 +1117,7 @@ const Sidebar = ({
 
           {/* 任务列表内容 - 可收缩 */}
           {isTasksExpanded && (
-            <ScrollArea ref={scrollAreaRef} className="flex-1 px-md overflow-y-auto">
+            <ScrollArea ref={scrollAreaRef} className="flex-1 px-md">
               {isLoading ? (
                 <div className="space-y-xs pb-lg">
                   {Array.from({ length: 8 }).map((_, index) => (
@@ -1067,10 +1139,10 @@ const Sidebar = ({
                 // 空状态
                 <div className="flex flex-col items-center justify-center py-4xl text-center">
                   <MessageSquare className="w-12 h-12 text-text-tertiary mb-md" />
-                  {searchQuery ? (
+                  {filterKind !== "all" || unreadOnly ? (
                     <>
                       <p className="text-sm text-text-secondary mb-xs">没有找到相关会话</p>
-                      <p className="text-xs text-text-tertiary">试试清空搜索或换个关键词</p>
+                      <p className="text-xs text-text-tertiary">试试调整筛选条件</p>
                     </>
                   ) : (
                     <>
@@ -1103,7 +1175,7 @@ const Sidebar = ({
                           }
                         }}
                         className={cn(
-                          "w-full text-left rounded-md px-sm py-sm transition-all duration-fast group relative",
+                          "w-full cursor-pointer text-left rounded-md px-sm py-sm transition-all duration-fast group relative",
                           isSelected ? "bg-primary-light" : "hover:bg-surface-hover",
                         )}
                       >

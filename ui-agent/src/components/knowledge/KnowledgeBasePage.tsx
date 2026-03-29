@@ -166,7 +166,7 @@ export function KnowledgeBasePage() {
                       onChange={(e) => setFilterTagQuery(e.target.value)}
                       placeholder="搜索标签"
                     />
-                    <div className="max-h-56 space-y-1 overflow-auto pr-1">
+                    <div className="max-h-56 space-y-1 overflow-auto scrollbar-default pr-1">
                       {filteredSearchTags.map((tag) => {
                         const selected = selectedFilterTags.includes(tag.name);
                         return (
@@ -466,7 +466,7 @@ export function KnowledgeBasePage() {
                 添加
               </Button>
             </div>
-            <div className="max-h-64 space-y-1 overflow-auto pr-1">
+            <div className="max-h-64 space-y-1 overflow-auto scrollbar-default pr-1">
               {availableTags.map((tag) => {
                 const isSelected = selectedFilterTags.includes(tag.name);
                 return (

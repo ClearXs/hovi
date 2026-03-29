@@ -706,6 +706,7 @@ async function agentCommandInternal(
     acpResolution,
   } = prepared;
   let sessionEntry = prepared.sessionEntry;
+  const turnId = opts.turnId?.trim() || undefined;
 
   try {
     if (opts.deliver === true) {
@@ -729,6 +730,7 @@ async function agentCommandInternal(
       const startedAt = Date.now();
       registerAgentRunContext(runId, {
         sessionKey,
+        turnId,
       });
       emitAgentEvent({
         runId,
