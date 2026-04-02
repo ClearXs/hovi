@@ -1,5 +1,5 @@
 @import "tailwindcss";
-@config "../../tailwind.config.ts";
+@config "../../tailwind.config.js";
 @source "../**/*.{js,ts,jsx,tsx,mdx}";
 
 /* 导入设计令牌 - Import design tokens */

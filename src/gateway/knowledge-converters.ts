@@ -35,8 +35,20 @@ interface IDocumentData {
     dataStream: string;
     textRuns?: unknown[];
     paragraphs?: unknown[];
+    customBlocks?: unknown[];
+    tables?: unknown[];
+    customRanges?: unknown[];
+    customDecorations?: unknown[];
+    sectionBreaks?: unknown[];
   };
   documentStyle: unknown;
+  locale?: string;
+  title?: string;
+  tableSource?: unknown;
+  drawings?: unknown;
+  drawingsOrder?: unknown[];
+  headers?: unknown;
+  footers?: unknown;
 }
 
 async function importXlsx() {
@@ -131,7 +143,11 @@ export async function csvToUniver(filePath: string): Promise<IWorkbookData> {
  * Convert DOCX file to Univer IDocumentData format
  */
 export async function docxToUniver(filePath: string): Promise<IDocumentData> {
-  const mammoth = (await import("mammoth")).default;
+  const mammoth = (await import("mammoth")).default as typeof import("mammoth") & {
+    extractRawText: (options: {
+      buffer: Buffer;
+    }) => Promise<{ value: string; messages: unknown[] }>;
+  };
   const { promises: fsPromises } = await import("node:fs");
 
   const buffer = await fsPromises.readFile(filePath);

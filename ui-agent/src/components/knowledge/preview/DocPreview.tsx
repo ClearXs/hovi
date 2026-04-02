@@ -49,6 +49,7 @@ import {
   RotateCcw,
   Save,
 } from "lucide-react";
+import dynamic from "next/dynamic";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -65,13 +66,21 @@ import {
 } from "@/services/knowledgeApi";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useToastStore } from "@/stores/toastStore";
-import { UniverDocPreview } from "./UniverDocPreview";
-import { UniverSheetPreview } from "./UniverSheetPreview";
 
 interface DocPreviewProps {
   detail: KnowledgeDetail | null;
   highlightKeywords?: string[];
 }
+
+const UniverDocPreview = dynamic(
+  () => import("./UniverDocPreview").then((mod) => mod.UniverDocPreview),
+  { ssr: false },
+);
+
+const UniverSheetPreview = dynamic(
+  () => import("./UniverSheetPreview").then((mod) => mod.UniverSheetPreview),
+  { ssr: false },
+);
 
 interface PdfOutlineNode {
   id: string;

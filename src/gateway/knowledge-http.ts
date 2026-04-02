@@ -3,6 +3,13 @@ import fsPromises from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { DatabaseSync } from "node:sqlite";
 import busboy from "busboy";
+import { KnowledgeManager } from "../../packages/memory-host-sdk/src/host/knowledge-manager.js";
+import type {
+  KnowledgeBaseTagInput,
+  UpdateKnowledgeSettingsParams,
+} from "../../packages/memory-host-sdk/src/host/knowledge-manager.js";
+import type { KnowledgeBaseRuntimeSettings } from "../../packages/memory-host-sdk/src/host/knowledge-schema.js";
+import { requireNodeSqlite } from "../../packages/memory-host-sdk/src/host/sqlite.js";
 import {
   resolveAgentDir,
   resolveAgentWorkspaceDir,
@@ -10,13 +17,6 @@ import {
 } from "../agents/agent-scope.js";
 import { loadConfig } from "../config/config.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
-import { KnowledgeManager } from "../memory/knowledge-manager.js";
-import type {
-  KnowledgeBaseTagInput,
-  UpdateKnowledgeSettingsParams,
-} from "../memory/knowledge-manager.js";
-import type { KnowledgeBaseRuntimeSettings } from "../memory/knowledge-schema.js";
-import { requireNodeSqlite } from "../memory/sqlite.js";
 import { AuthRateLimiter } from "./auth-rate-limit.ts";
 import { authorizeGatewayConnect, type ResolvedGatewayAuth } from "./auth.js";
 import {
@@ -142,47 +142,59 @@ function parseBaseSettings(value: unknown): Partial<KnowledgeBaseRuntimeSettings
   const settings: Partial<KnowledgeBaseRuntimeSettings> = {};
   if (raw.vectorization && typeof raw.vectorization === "object") {
     const vectorization = raw.vectorization as Record<string, unknown>;
-    settings.vectorization = {
-      enabled: typeof vectorization.enabled === "boolean" ? vectorization.enabled : undefined,
-    } as Partial<KnowledgeBaseRuntimeSettings["vectorization"]>;
+    Object.assign(settings, {
+      vectorization: {
+        enabled: typeof vectorization.enabled === "boolean" ? vectorization.enabled : undefined,
+      } as Partial<KnowledgeBaseRuntimeSettings["vectorization"]>,
+    });
   }
   if (raw.chunk && typeof raw.chunk === "object") {
     const chunk = raw.chunk as Record<string, unknown>;
-    settings.chunk = {
-      enabled: typeof chunk.enabled === "boolean" ? chunk.enabled : undefined,
-      size: typeof chunk.size === "number" ? chunk.size : undefined,
-      overlap: typeof chunk.overlap === "number" ? chunk.overlap : undefined,
-      separator:
-        chunk.separator === "auto" ||
-        chunk.separator === "paragraph" ||
-        chunk.separator === "sentence"
-          ? chunk.separator
-          : undefined,
-    } as Partial<KnowledgeBaseRuntimeSettings["chunk"]>;
+    Object.assign(settings, {
+      chunk: {
+        enabled: typeof chunk.enabled === "boolean" ? chunk.enabled : undefined,
+        size: typeof chunk.size === "number" ? chunk.size : undefined,
+        overlap: typeof chunk.overlap === "number" ? chunk.overlap : undefined,
+        separator:
+          chunk.separator === "auto" ||
+          chunk.separator === "paragraph" ||
+          chunk.separator === "sentence"
+            ? chunk.separator
+            : undefined,
+      } as Partial<KnowledgeBaseRuntimeSettings["chunk"]>,
+    });
   }
   if (raw.retrieval && typeof raw.retrieval === "object") {
     const retrieval = raw.retrieval as Record<string, unknown>;
-    settings.retrieval = {
-      mode:
-        retrieval.mode === "semantic" || retrieval.mode === "keyword" || retrieval.mode === "hybrid"
-          ? retrieval.mode
-          : undefined,
-      topK: typeof retrieval.topK === "number" ? retrieval.topK : undefined,
-      minScore: typeof retrieval.minScore === "number" ? retrieval.minScore : undefined,
-      hybridAlpha: typeof retrieval.hybridAlpha === "number" ? retrieval.hybridAlpha : undefined,
-    } as Partial<KnowledgeBaseRuntimeSettings["retrieval"]>;
+    Object.assign(settings, {
+      retrieval: {
+        mode:
+          retrieval.mode === "semantic" ||
+          retrieval.mode === "keyword" ||
+          retrieval.mode === "hybrid"
+            ? retrieval.mode
+            : undefined,
+        topK: typeof retrieval.topK === "number" ? retrieval.topK : undefined,
+        minScore: typeof retrieval.minScore === "number" ? retrieval.minScore : undefined,
+        hybridAlpha: typeof retrieval.hybridAlpha === "number" ? retrieval.hybridAlpha : undefined,
+      } as Partial<KnowledgeBaseRuntimeSettings["retrieval"]>,
+    });
   }
   if (raw.index && typeof raw.index === "object") {
     const index = raw.index as Record<string, unknown>;
-    settings.index = {
-      mode: index.mode === "high_quality" || index.mode === "balanced" ? index.mode : undefined,
-    } as Partial<KnowledgeBaseRuntimeSettings["index"]>;
+    Object.assign(settings, {
+      index: {
+        mode: index.mode === "high_quality" || index.mode === "balanced" ? index.mode : undefined,
+      } as Partial<KnowledgeBaseRuntimeSettings["index"]>,
+    });
   }
   if (raw.graph && typeof raw.graph === "object") {
     const graph = raw.graph as Record<string, unknown>;
-    settings.graph = {
-      enabled: typeof graph.enabled === "boolean" ? graph.enabled : undefined,
-    } as Partial<KnowledgeBaseRuntimeSettings["graph"]>;
+    Object.assign(settings, {
+      graph: {
+        enabled: typeof graph.enabled === "boolean" ? graph.enabled : undefined,
+      } as Partial<KnowledgeBaseRuntimeSettings["graph"]>,
+    });
   }
   return settings;
 }

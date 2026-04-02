@@ -12,15 +12,32 @@ HASH_FILE="$ROOT_DIR/src/canvas-host/a2ui/.bundle.hash"
 OUTPUT_FILE="$ROOT_DIR/src/canvas-host/a2ui/a2ui.bundle.js"
 A2UI_RENDERER_DIR="$ROOT_DIR/vendor/a2ui/renderers/lit"
 A2UI_APP_DIR="$ROOT_DIR/apps/shared/OpenClawKit/Tools/CanvasA2UI"
+ALLOW_MISSING_A2UI_BUNDLE=0
+
+if [[ "${OPENCLAW_A2UI_SKIP_MISSING:-0}" == "1" || -n "${OPENCLAW_UI_AGENT_DESKTOP_TARGET:-}" ]]; then
+  ALLOW_MISSING_A2UI_BUNDLE=1
+fi
 
 # Docker builds exclude vendor/apps via .dockerignore.
 # In that environment we can keep a prebuilt bundle only if it exists.
-if [[ ! -d "$A2UI_RENDERER_DIR" || ! -d "$A2UI_APP_DIR" ]]; then
+renderer_has_inputs=0
+if [[ -d "$A2UI_RENDERER_DIR/src" ]]; then
+  if find "$A2UI_RENDERER_DIR/src" -type f \( -name '*.ts' -o -name '*.json' \) -print -quit | grep -q .; then
+    renderer_has_inputs=1
+  fi
+fi
+
+if [[ ! -d "$A2UI_RENDERER_DIR" || ! -d "$A2UI_APP_DIR" || "$renderer_has_inputs" != "1" ]]; then
   if [[ -f "$OUTPUT_FILE" ]]; then
     echo "A2UI sources missing; keeping prebuilt bundle."
     exit 0
   fi
+  if [[ "$ALLOW_MISSING_A2UI_BUNDLE" == "1" ]]; then
+    echo "A2UI sources missing; skipping bundle for this build target." >&2
+    exit 0
+  fi
   echo "A2UI sources missing and no prebuilt bundle found at: $OUTPUT_FILE" >&2
+  echo "Set OPENCLAW_A2UI_SKIP_MISSING=1 to skip this bundle step." >&2
   exit 1
 fi
 

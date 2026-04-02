@@ -3,7 +3,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
 import { resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import type { OpenClawConfig } from "../config/config.js";
-import { openBoundaryFileSync } from "../infra/boundary-file-read.js";
+import { matchBoundaryFileOpenFailure, openBoundaryFileSync } from "../infra/boundary-file-read.js";
 import {
   isPackageProvenControlUiRootSync,
   resolveControlUiRootSync,
@@ -11,13 +11,12 @@ import {
 import { isWithinDir } from "../infra/path-safety.js";
 import { openVerifiedFileSync } from "../infra/safe-open-sync.js";
 import { AVATAR_MAX_BYTES } from "../shared/avatar-policy.js";
-import { resolveRuntimeServiceVersion } from "../version.js";
 import { DEFAULT_ASSISTANT_IDENTITY, resolveAssistantIdentity } from "./assistant-identity.js";
 import {
   CONTROL_UI_BOOTSTRAP_CONFIG_PATH,
   type ControlUiBootstrapConfig,
 } from "./control-ui-contract.js";
-import { buildControlUiCspHeader } from "./control-ui-csp.js";
+import { buildControlUiCspHeader, computeInlineScriptHashes } from "./control-ui-csp.js";
 import {
   isReadHttpMethod,
   respondNotFound as respondControlUiNotFound,
@@ -241,6 +240,13 @@ function serveResolvedFile(res: ServerResponse, filePath: string, body: Buffer) 
 }
 
 function serveResolvedIndexHtml(res: ServerResponse, body: string) {
+  const hashes = computeInlineScriptHashes(body);
+  if (hashes.length > 0) {
+    res.setHeader(
+      "Content-Security-Policy",
+      buildControlUiCspHeader({ inlineScriptHashes: hashes }),
+    );
+  }
   res.setHeader("Content-Type", "text/html; charset=utf-8");
   res.setHeader("Cache-Control", "no-cache");
   res.end(body);
@@ -278,10 +284,12 @@ function resolveSafeControlUiFile(
     rejectHardlinks,
   });
   if (!opened.ok) {
-    if (opened.reason === "io") {
-      throw opened.error;
-    }
-    return null;
+    return matchBoundaryFileOpenFailure(opened, {
+      io: (failure) => {
+        throw failure.error;
+      },
+      fallback: () => null,
+    });
   }
   return { path: opened.path, fd: opened.fd };
 }
@@ -363,8 +371,6 @@ export function handleControlUiHttpRequest(
       basePath,
       assistantName: identity.name,
       assistantAvatar: avatarValue ?? identity.avatar,
-      assistantAgentId: identity.agentId,
-      serverVersion: resolveRuntimeServiceVersion(process.env),
     } satisfies ControlUiBootstrapConfig);
     return true;
   }

@@ -51,12 +51,12 @@ describe("Scene Management", () => {
       const { respond, getResult } = createResponder();
 
       await sceneHandlers["scenes.list"]({
-        req: { method: "scenes.list", params: { agentId: testAgentId } },
+        req: {} as never,
         params: { agentId: testAgentId },
         respond,
-        client: undefined,
-        isWebchatConnect: false,
-        context: {},
+        client: null as never,
+        isWebchatConnect: () => false,
+        context: {} as never,
       });
 
       const result = getResult();
@@ -90,12 +90,12 @@ describe("Scene Management", () => {
       const { respond, getResult } = createResponder();
 
       await sceneHandlers["scenes.list"]({
-        req: { method: "scenes.list", params: { agentId: testAgentId } },
+        req: {} as never,
         params: { agentId: testAgentId },
         respond,
-        client: undefined,
-        isWebchatConnect: false,
-        context: {},
+        client: null as never,
+        isWebchatConnect: () => false,
+        context: {} as never,
       });
 
       const result = getResult();
@@ -114,7 +114,7 @@ describe("Scene Management", () => {
       const { respond, getResult } = createResponder();
 
       await sceneHandlers["scenes.create"]({
-        req: { method: "scenes.create", params: {} },
+        req: {} as never,
         params: {
           agentId: testAgentId,
           name: "New Scene",
@@ -123,9 +123,9 @@ describe("Scene Management", () => {
           main_file: "main.json",
         },
         respond,
-        client: undefined,
-        isWebchatConnect: false,
-        context: {},
+        client: null as never,
+        isWebchatConnect: () => false,
+        context: {} as never,
       });
 
       const result = getResult();
@@ -147,16 +147,16 @@ describe("Scene Management", () => {
       const { respond, getResult } = createResponder();
 
       await sceneHandlers["scenes.create"]({
-        req: { method: "scenes.create", params: {} },
+        req: {} as never,
         params: {
           name: "New Scene",
           r_path: "scenes/new",
           main_file: "main.json",
         },
         respond,
-        client: undefined,
-        isWebchatConnect: false,
-        context: {},
+        client: null as never,
+        isWebchatConnect: () => false,
+        context: {} as never,
       });
 
       const result = getResult();
@@ -169,16 +169,16 @@ describe("Scene Management", () => {
       const { respond, getResult } = createResponder();
 
       await sceneHandlers["scenes.create"]({
-        req: { method: "scenes.create", params: {} },
+        req: {} as never,
         params: {
           agentId: testAgentId,
           r_path: "scenes/new",
           main_file: "main.json",
         },
         respond,
-        client: undefined,
-        isWebchatConnect: false,
-        context: {},
+        client: null as never,
+        isWebchatConnect: () => false,
+        context: {} as never,
       });
 
       const result = getResult();
@@ -209,15 +209,15 @@ describe("Scene Management", () => {
       const { respond, getResult } = createResponder();
 
       await sceneHandlers["scenes.get"]({
-        req: { method: "scenes.get", params: {} },
+        req: {} as never,
         params: {
           agentId: testAgentId,
           sceneId: testScene.id,
         },
         respond,
-        client: undefined,
-        isWebchatConnect: false,
-        context: {},
+        client: null as never,
+        isWebchatConnect: () => false,
+        context: {} as never,
       });
 
       const result = getResult();
@@ -231,15 +231,15 @@ describe("Scene Management", () => {
       const { respond, getResult } = createResponder();
 
       await sceneHandlers["scenes.get"]({
-        req: { method: "scenes.get", params: {} },
+        req: {} as never,
         params: {
           agentId: testAgentId,
           sceneId: "non-existent-id",
         },
         respond,
-        client: undefined,
-        isWebchatConnect: false,
-        context: {},
+        client: null as never,
+        isWebchatConnect: () => false,
+        context: {} as never,
       });
 
       const result = getResult();
@@ -270,7 +270,7 @@ describe("Scene Management", () => {
       const { respond, getResult } = createResponder();
 
       await sceneHandlers["scenes.update"]({
-        req: { method: "scenes.update", params: {} },
+        req: {} as never,
         params: {
           agentId: testAgentId,
           sceneId: testScene.id,
@@ -278,9 +278,9 @@ describe("Scene Management", () => {
           description: "Updated description",
         },
         respond,
-        client: undefined,
-        isWebchatConnect: false,
-        context: {},
+        client: null as never,
+        isWebchatConnect: () => false,
+        context: {} as never,
       });
 
       const result = getResult();
@@ -318,15 +318,15 @@ describe("Scene Management", () => {
       const { respond, getResult } = createResponder();
 
       await sceneHandlers["scenes.delete"]({
-        req: { method: "scenes.delete", params: {} },
+        req: {} as never,
         params: {
           agentId: testAgentId,
           sceneId: testScene.id,
         },
         respond,
-        client: undefined,
-        isWebchatConnect: false,
-        context: {},
+        client: null as never,
+        isWebchatConnect: () => false,
+        context: {} as never,
       });
 
       const result = getResult();
@@ -360,15 +360,15 @@ describe("Scene Management", () => {
       const { respond, getResult } = createResponder();
 
       await sceneHandlers["scenes.delete"]({
-        req: { method: "scenes.delete", params: {} },
+        req: {} as never,
         params: {
           agentId: testAgentId,
           sceneId: testScene.id,
         },
         respond,
-        client: undefined,
-        isWebchatConnect: false,
-        context: {},
+        client: null as never,
+        isWebchatConnect: () => false,
+        context: {} as never,
       });
 
       const result = getResult();
@@ -417,15 +417,15 @@ describe("Scene Management", () => {
       const { respond, getResult } = createResponder();
 
       await sceneHandlers["scenes.setActive"]({
-        req: { method: "scenes.setActive", params: {} },
+        req: {} as never,
         params: {
           agentId: testAgentId,
           sceneId: scene2.id,
         },
         respond,
-        client: undefined,
-        isWebchatConnect: false,
-        context: {},
+        client: null as never,
+        isWebchatConnect: () => false,
+        context: {} as never,
       });
 
       const result = getResult();
@@ -463,15 +463,15 @@ describe("Scene Management", () => {
       const { respond, getResult } = createResponder();
 
       await sceneHandlers["scenes.setActive"]({
-        req: { method: "scenes.setActive", params: {} },
+        req: {} as never,
         params: {
           agentId: testAgentId,
           sceneId: null,
         },
         respond,
-        client: undefined,
-        isWebchatConnect: false,
-        context: {},
+        client: null as never,
+        isWebchatConnect: () => false,
+        context: {} as never,
       });
 
       const result = getResult();

@@ -14,13 +14,35 @@ describe("asr handlers without sherpa runtime", () => {
   it("still serves config and status for the default cloud provider", async () => {
     const { asrHandlers } = await import("./asr.js");
 
-    const config = await (asrHandlers["asr.config.get"] as never)({});
-    const status = await (asrHandlers["asr.status"] as never)({ params: {} });
+    let configResult: unknown;
+    let statusResult: unknown;
 
-    expect(config).toMatchObject({
+    await (
+      asrHandlers["asr.config.get"] as (opts: {
+        respond: (ok: boolean, data: unknown) => void;
+      }) => Promise<void>
+    )({
+      respond: (_ok, data) => {
+        configResult = data;
+      },
+    });
+
+    await (
+      asrHandlers["asr.status"] as (opts: {
+        params: unknown;
+        respond: (ok: boolean, data: unknown) => void;
+      }) => Promise<void>
+    )({
+      params: {},
+      respond: (_ok, data) => {
+        statusResult = data;
+      },
+    });
+
+    expect(configResult).toMatchObject({
       provider: "deepgram",
     });
-    expect(status).toMatchObject({
+    expect(statusResult).toMatchObject({
       provider: "deepgram",
       status: "ready",
     });

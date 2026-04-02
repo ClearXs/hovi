@@ -1,6 +1,11 @@
 import crypto from "node:crypto";
 import type { OpenClawConfig } from "../../config/config.js";
 import { loadConfig, writeConfigFile } from "../../config/config.js";
+import type {
+  ConnectorEntry,
+  ConnectorSessionState,
+  ConnectorOAuthProvider,
+} from "../../config/types.connectors.js";
 import {
   ErrorCodes,
   errorShape,
@@ -256,34 +261,34 @@ function normalizeOAuthProviderConfig(
 
 function ensureConnectorRoot(cfg: OpenClawConfig): {
   connectors: NonNullable<OpenClawConfig["connectors"]>;
-  entries: Record<string, Record<string, unknown>>;
-  sessions: Record<string, { connectorIds?: string[] }>;
-  oauthProviders: Record<string, Record<string, unknown>>;
+  entries: Record<string, ConnectorEntry>;
+  sessions: Record<string, ConnectorSessionState>;
+  oauthProviders: Record<string, ConnectorOAuthProvider>;
 } {
   const currentConnectors =
     cfg.connectors && typeof cfg.connectors === "object" ? cfg.connectors : {};
-  const entries =
+  const entries: Record<string, ConnectorEntry> | undefined =
     currentConnectors.entries && typeof currentConnectors.entries === "object"
-      ? (currentConnectors.entries as Record<string, Record<string, unknown>>)
-      : {};
-  const sessions =
+      ? currentConnectors.entries
+      : undefined;
+  const sessions: Record<string, ConnectorSessionState> | undefined =
     currentConnectors.sessions && typeof currentConnectors.sessions === "object"
-      ? (currentConnectors.sessions as Record<string, { connectorIds?: string[] }>)
-      : {};
-  const oauthProviders =
+      ? currentConnectors.sessions
+      : undefined;
+  const oauthProviders: Record<string, ConnectorOAuthProvider> | undefined =
     currentConnectors.oauthProviders && typeof currentConnectors.oauthProviders === "object"
-      ? (currentConnectors.oauthProviders as Record<string, Record<string, unknown>>)
-      : {};
+      ? currentConnectors.oauthProviders
+      : undefined;
   return {
     connectors: {
       ...currentConnectors,
-      entries,
-      sessions,
-      oauthProviders,
+      entries: entries ?? {},
+      sessions: sessions ?? {},
+      oauthProviders: oauthProviders ?? {},
     },
-    entries,
-    sessions,
-    oauthProviders,
+    entries: entries ?? {},
+    sessions: sessions ?? {},
+    oauthProviders: oauthProviders ?? {},
   };
 }
 
@@ -508,7 +513,7 @@ export const connectorsHandlers: GatewayRequestHandlers = {
 
     const cfg = loadConfig();
     const { connectors, entries, oauthProviders } = ensureConnectorRoot(cfg);
-    const current = entries[id] && typeof entries[id] === "object" ? { ...entries[id] } : {};
+    const current: Partial<ConnectorEntry> = entries[id] ? { ...entries[id] } : {};
 
     current.type = p.type;
     current.name = p.name.trim() || id;
@@ -561,7 +566,7 @@ export const connectorsHandlers: GatewayRequestHandlers = {
       }
     }
 
-    entries[id] = current;
+    entries[id] = current as ConnectorEntry;
     connectors.entries = entries;
     connectors.oauthProviders = oauthProviders;
 
@@ -779,7 +784,7 @@ export const connectorsHandlers: GatewayRequestHandlers = {
         : undefined;
 
     const { connectors, entries } = ensureConnectorRoot(cfg);
-    const current = entries[p.id] && typeof entries[p.id] === "object" ? { ...entries[p.id] } : {};
+    const current: Partial<ConnectorEntry> = entries[p.id] ? { ...entries[p.id] } : {};
     current.type = current.type ?? "app";
     current.authMode = "oauth";
     current.status = "connected";
@@ -805,7 +810,7 @@ export const connectorsHandlers: GatewayRequestHandlers = {
       nextOauth.scope = tokenPayload.scope;
     }
     current.oauth = nextOauth;
-    entries[p.id] = current;
+    entries[p.id] = current as ConnectorEntry;
     connectors.entries = entries;
 
     await writeConfigFile({

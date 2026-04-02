@@ -11,14 +11,18 @@ export function getA2uiPaths(env = process.env) {
 }
 
 export async function copyA2uiAssets({ srcDir, outDir }: { srcDir: string; outDir: string }) {
-  const skipMissing = process.env.OPENCLAW_A2UI_SKIP_MISSING === "1";
+  const skipMissing =
+    process.env.OPENCLAW_A2UI_SKIP_MISSING === "1" ||
+    typeof process.env.OPENCLAW_UI_AGENT_DESKTOP_TARGET === "string";
   try {
     await fs.stat(path.join(srcDir, "index.html"));
     await fs.stat(path.join(srcDir, "a2ui.bundle.js"));
   } catch (err) {
     const message = 'Missing A2UI bundle assets. Run "pnpm canvas:a2ui:bundle" and retry.';
     if (skipMissing) {
-      console.warn(`${message} Skipping copy (OPENCLAW_A2UI_SKIP_MISSING=1).`);
+      console.warn(
+        `${message} Skipping copy (OPENCLAW_A2UI_SKIP_MISSING=1 or OPENCLAW_UI_AGENT_DESKTOP_TARGET set).`,
+      );
       return;
     }
     throw new Error(message, { cause: err });

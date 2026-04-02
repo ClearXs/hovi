@@ -5,8 +5,11 @@ export const ErrorCodes = {
   NOT_PAIRED: "NOT_PAIRED",
   AGENT_TIMEOUT: "AGENT_TIMEOUT",
   INVALID_REQUEST: "INVALID_REQUEST",
+  APPROVAL_NOT_FOUND: "APPROVAL_NOT_FOUND",
   UNAVAILABLE: "UNAVAILABLE",
   INTERNAL_ERROR: "INTERNAL_ERROR",
+  NOT_FOUND: "NOT_FOUND",
+  KB_NOT_ENABLED: "KB_NOT_ENABLED",
 } as const;
 
 export type ErrorCode = (typeof ErrorCodes)[keyof typeof ErrorCodes];

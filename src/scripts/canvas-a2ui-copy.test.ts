@@ -40,6 +40,24 @@ describe("canvas a2ui copy", () => {
     });
   });
 
+  it("skips missing assets when OPENCLAW_UI_AGENT_DESKTOP_TARGET is set", async () => {
+    await withA2uiFixture(async (dir) => {
+      const previousTarget = process.env.OPENCLAW_UI_AGENT_DESKTOP_TARGET;
+      process.env.OPENCLAW_UI_AGENT_DESKTOP_TARGET = "win32";
+      try {
+        await expect(
+          copyA2uiAssets({ srcDir: dir, outDir: path.join(dir, "out") }),
+        ).resolves.toBeUndefined();
+      } finally {
+        if (previousTarget === undefined) {
+          delete process.env.OPENCLAW_UI_AGENT_DESKTOP_TARGET;
+        } else {
+          process.env.OPENCLAW_UI_AGENT_DESKTOP_TARGET = previousTarget;
+        }
+      }
+    });
+  });
+
   it("copies bundled assets to dist", async () => {
     await withA2uiFixture(async (dir) => {
       const srcDir = path.join(dir, "src");

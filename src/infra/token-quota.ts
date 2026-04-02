@@ -36,10 +36,10 @@ export function getUserQuota(userId: string, config: OpenClawConfig): QuotaUser 
   }
   const userQuota = quota.users?.[userId];
   // limit <= 0 视为无限额
-  if (!userQuota || userQuota.limit <= 0) {
+  if (!userQuota || (userQuota.limit ?? 0) <= 0) {
     return undefined;
   }
-  return userQuota;
+  return userQuota as QuotaUser;
 }
 
 /**

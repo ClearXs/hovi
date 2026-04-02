@@ -3,10 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { KnowledgeManager } from "../../../packages/memory-host-sdk/src/host/knowledge-manager.js";
+import { ensureKnowledgeSchema } from "../../../packages/memory-host-sdk/src/host/knowledge-schema.js";
+import { ensureMemoryIndexSchema } from "../../../packages/memory-host-sdk/src/host/memory-schema.js";
 import type { OpenClawConfig } from "../../config/config.js";
-import { KnowledgeManager } from "../../memory/knowledge-manager.js";
-import { ensureKnowledgeSchema } from "../../memory/knowledge-schema.js";
-import { ensureMemoryIndexSchema } from "../../memory/memory-schema.js";
 
 // Simple test-only implementations (not using actual tools which require mocking)
 describe("Knowledge Tools Integration", () => {
@@ -23,6 +23,7 @@ describe("Knowledge Tools Integration", () => {
       embeddingCacheTable: "embedding_cache",
       ftsTable: "chunks_fts",
       ftsEnabled: true,
+      cacheEnabled: true,
     });
     ensureKnowledgeSchema(db);
 
@@ -58,7 +59,7 @@ describe("Knowledge Tools Integration", () => {
       },
     } as OpenClawConfig;
 
-    manager = new KnowledgeManager({ cfg, db, baseDir: tempDir });
+    manager = new KnowledgeManager({ cfg, db, baseDir: tempDir, agentId: "agent-1" });
     baseId = manager.createBase({
       agentId: "agent-1",
       name: "Base-1",
@@ -201,6 +202,7 @@ describe("Knowledge Tools Integration", () => {
         cfg: disabledCfg,
         db,
         baseDir: tempDir,
+        agentId: "agent-1",
       });
 
       expect(disabledManager.isEnabled("agent-1")).toBe(false);

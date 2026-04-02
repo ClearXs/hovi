@@ -11,7 +11,7 @@ import {
   SecretsConfigSchema,
 } from "./zod-schema.core.js";
 import { HookMappingSchema, HooksGmailSchema, InternalHooksSchema } from "./zod-schema.hooks.js";
-import { InstallRecordShape } from "./zod-schema.installs.js";
+import { PluginInstallRecordShape } from "./zod-schema.installs.js";
 import { ChannelsSchema } from "./zod-schema.providers.js";
 import { sensitive } from "./zod-schema.sensitive.js";
 import {
@@ -102,6 +102,7 @@ const MemoryQmdSchema = z
     command: z.string().optional(),
     mcporter: MemoryQmdMcporterSchema.optional(),
     searchMode: z.union([z.literal("query"), z.literal("search"), z.literal("vsearch")]).optional(),
+    searchTool: z.string().trim().min(1).optional(),
     includeDefaultMemory: z.boolean().optional(),
     paths: z.array(MemoryQmdPathSchema).optional(),
     sessions: MemoryQmdSessionSchema.optional(),
@@ -174,6 +175,13 @@ const PluginEntrySchema = z
       })
       .strict()
       .optional(),
+    subagent: z
+      .object({
+        allowModelOverride: z.boolean().optional(),
+        allowedModels: z.array(z.string()).optional(),
+      })
+      .strict()
+      .optional(),
     config: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
@@ -221,6 +229,30 @@ const TalkSchema = z
       });
     }
   });
+
+const McpServerSchema = z
+  .object({
+    command: z.string().optional(),
+    args: z.array(z.string()).optional(),
+    env: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
+    cwd: z.string().optional(),
+    workingDirectory: z.string().optional(),
+    url: HttpUrlSchema.optional(),
+    headers: z
+      .record(
+        z.string(),
+        z.union([z.string().register(sensitive), z.number(), z.boolean()]).register(sensitive),
+      )
+      .optional(),
+  })
+  .catchall(z.unknown());
+
+const McpConfigSchema = z
+  .object({
+    servers: z.record(z.string(), McpServerSchema).optional(),
+  })
+  .strict()
+  .optional();
 
 export const OpenClawSchema = z
   .object({
@@ -378,13 +410,9 @@ export const OpenClawSchema = z
               .object({
                 cdpPort: z.number().int().min(1).max(65535).optional(),
                 cdpUrl: z.string().optional(),
+                userDataDir: z.string().optional(),
                 driver: z
-                  .union([
-                    z.literal("openclaw"),
-                    z.literal("clawd"),
-                    z.literal("extension"),
-                    z.literal("existing-session"),
-                  ])
+                  .union([z.literal("openclaw"), z.literal("clawd"), z.literal("existing-session")])
                   .optional(),
                 attachOnly: z.boolean().optional(),
                 color: HexColorSchema,
@@ -395,11 +423,13 @@ export const OpenClawSchema = z
                 {
                   message: "Profile must set cdpPort or cdpUrl",
                 },
-              ),
+              )
+              .refine((value) => value.driver === "existing-session" || !value.userDataDir, {
+                message: 'Profile userDataDir is only supported with driver="existing-session"',
+              }),
           )
           .optional(),
         extraArgs: z.array(z.string()).optional(),
-        relayBindHost: z.union([z.string().ipv4(), z.string().ipv6()]).optional(),
       })
       .strict()
       .optional(),
@@ -427,6 +457,7 @@ export const OpenClawSchema = z
                 provider: z.string(),
                 mode: z.union([z.literal("api_key"), z.literal("oauth"), z.literal("token")]),
                 email: z.string().optional(),
+                displayName: z.string().optional(),
               })
               .strict(),
           )
@@ -438,6 +469,8 @@ export const OpenClawSchema = z
             billingBackoffHoursByProvider: z.record(z.string(), z.number().positive()).optional(),
             billingMaxHours: z.number().positive().optional(),
             failureWindowHours: z.number().positive().optional(),
+            overloadedProfileRotations: z.number().int().nonnegative().optional(),
+            overloadedBackoffMs: z.number().int().nonnegative().optional(),
           })
           .strict()
           .optional(),
@@ -755,6 +788,7 @@ export const OpenClawSchema = z
               ])
               .optional(),
             debounceMs: z.number().int().min(0).optional(),
+            deferralTimeoutMs: z.number().int().min(0).optional(),
           })
           .strict()
           .optional(),
@@ -879,6 +913,7 @@ export const OpenClawSchema = z
       })
       .optional(),
     memory: MemorySchema,
+    mcp: McpConfigSchema,
     skills: z
       .object({
         allowBundled: z.array(z.string()).optional(),
@@ -937,7 +972,7 @@ export const OpenClawSchema = z
             z.string(),
             z
               .object({
-                ...InstallRecordShape,
+                ...PluginInstallRecordShape,
               })
               .strict(),
           )

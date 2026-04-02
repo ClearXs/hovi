@@ -108,6 +108,11 @@ interface ClawHubSearchItem {
   updatedAt?: number;
 }
 
+interface ClawHubSearchResponse {
+  results?: ClawHubSearchItem[];
+  items?: ClawHubSearchItem[];
+}
+
 interface ClawHubBrowseItem {
   slug: string;
   displayName: string;
@@ -169,6 +174,10 @@ interface InstallHistoryEntry {
   message: string;
 }
 
+const CLAWHUB_BASE_URL = "https://clawhub.ai";
+const CLAWHUB_PAGE_LIMIT = 24;
+const CLAWHUB_DISCOVERY_QUERIES = ["openclaw", "agent", "skill"];
+
 function parseRetryAfterSeconds(message: string): number | null {
   const match = message.match(/retry after\s+(\d+)s/i);
   if (!match?.[1]) {
@@ -179,6 +188,41 @@ function parseRetryAfterSeconds(message: string): number | null {
     return null;
   }
   return seconds;
+}
+
+function isVersionParamError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("at /version: must be string") ||
+    lower.includes("unexpected property 'version'") ||
+    lower.includes('unexpected property "version"')
+  );
+}
+
+function isSourceInstallShapeError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("unexpected property 'source'") ||
+    lower.includes('unexpected property "source"') ||
+    lower.includes("must have required property 'installid'") ||
+    lower.includes('must have required property "installid"') ||
+    lower.includes("must have required property 'name'") ||
+    lower.includes('must have required property "name"')
+  );
+}
+
+function isLegacyInstallShapeError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes("unexpected property 'name'") ||
+    lower.includes('unexpected property "name"') ||
+    lower.includes("unexpected property 'installid'") ||
+    lower.includes('unexpected property "installid"') ||
+    lower.includes("must have required property 'source'") ||
+    lower.includes('must have required property "source"') ||
+    lower.includes("must have required property 'slug'") ||
+    lower.includes('must have required property "slug"')
+  );
 }
 
 function normalizeSearchText(value: string): string {
@@ -852,6 +896,52 @@ function ClawHubDialog({
 
   const trimmedQuery = query.trim();
 
+  const fetchClawHubSearchItems = useCallback(
+    async (searchQuery: string): Promise<ClawHubBrowseItem[]> => {
+      const searchUrl = new URL("/api/v1/search", CLAWHUB_BASE_URL);
+      searchUrl.searchParams.set("q", searchQuery);
+      searchUrl.searchParams.set("limit", String(CLAWHUB_PAGE_LIMIT));
+      searchUrl.searchParams.set("nonSuspiciousOnly", "true");
+
+      const response = await fetch(searchUrl.toString());
+      if (!response.ok) {
+        throw new Error(`ClawHub 搜索失败 (${response.status})`);
+      }
+
+      const data = (await response.json()) as ClawHubSearchResponse;
+      const results = Array.isArray(data.results)
+        ? data.results
+        : Array.isArray(data.items)
+          ? data.items
+          : [];
+
+      return results
+        .map((item) => {
+          const slug = typeof item.slug === "string" ? item.slug.trim() : "";
+          if (!slug) {
+            return null;
+          }
+          const displayName =
+            typeof item.displayName === "string" && item.displayName.trim()
+              ? item.displayName
+              : slug;
+          const version =
+            typeof item.version === "string" && item.version.trim()
+              ? item.version.trim()
+              : undefined;
+          return {
+            slug,
+            displayName,
+            summary: item.summary ?? "暂无简介",
+            version,
+            updatedAt: item.updatedAt,
+          } satisfies ClawHubBrowseItem;
+        })
+        .filter((item): item is ClawHubBrowseItem => item !== null);
+    },
+    [],
+  );
+
   const loadClawHubItems = useCallback(
     async (opts?: { append?: boolean; cursor?: string | null }) => {
       const append = opts?.append === true;
@@ -865,18 +955,18 @@ function ClawHubDialog({
       setError(null);
 
       try {
-        const url = new URL(
-          trimmedQuery ? "/api/v1/search" : "/api/v1/skills",
-          "https://clawhub.ai",
-        );
         if (trimmedQuery) {
-          url.searchParams.set("q", trimmedQuery);
-          url.searchParams.set("limit", "24");
-        } else {
-          url.searchParams.set("limit", "24");
-          if (cursor) {
-            url.searchParams.set("cursor", cursor);
-          }
+          const mapped = await fetchClawHubSearchItems(trimmedQuery);
+          setItems(mapped);
+          setNextCursor(null);
+          return;
+        }
+
+        const url = new URL("/api/v1/skills", CLAWHUB_BASE_URL);
+        url.searchParams.set("limit", String(CLAWHUB_PAGE_LIMIT));
+        url.searchParams.set("nonSuspiciousOnly", "true");
+        if (cursor) {
+          url.searchParams.set("cursor", cursor);
         }
 
         const response = await fetch(url.toString());
@@ -884,35 +974,66 @@ function ClawHubDialog({
           throw new Error(`ClawHub 请求失败 (${response.status})`);
         }
 
-        if (trimmedQuery) {
-          const data = (await response.json()) as { results?: ClawHubSearchItem[] };
-          const mapped: ClawHubBrowseItem[] = (data.results ?? []).map((item) => ({
-            slug: item.slug,
-            displayName: item.displayName,
-            summary: item.summary ?? "暂无简介",
-            version: item.version,
-            updatedAt: item.updatedAt,
-          }));
-          setItems(mapped);
-          setNextCursor(null);
-          return;
-        }
-
         const data = (await response.json()) as {
           items?: ClawHubSkillListItem[];
           nextCursor?: string | null;
         };
-        const mapped: ClawHubBrowseItem[] = (data.items ?? []).map((item) => ({
-          slug: item.slug,
-          displayName: item.displayName,
-          summary: item.summary ?? "暂无简介",
-          version: item.latestVersion?.version,
-          updatedAt: item.updatedAt,
-          downloads: item.stats?.downloads,
-          stars: item.stats?.stars,
-        }));
-        setItems((prev) => (append ? [...prev, ...mapped] : mapped));
-        setNextCursor(data.nextCursor ?? null);
+        const mapped: ClawHubBrowseItem[] = (data.items ?? [])
+          .map((item) => {
+            const slug = typeof item.slug === "string" ? item.slug.trim() : "";
+            if (!slug) {
+              return null;
+            }
+            const version =
+              typeof item.latestVersion?.version === "string" && item.latestVersion.version.trim()
+                ? item.latestVersion.version.trim()
+                : undefined;
+            return {
+              slug,
+              displayName:
+                typeof item.displayName === "string" && item.displayName.trim()
+                  ? item.displayName
+                  : slug,
+              summary: item.summary ?? "暂无简介",
+              version,
+              updatedAt: item.updatedAt,
+              downloads: item.stats?.downloads,
+              stars: item.stats?.stars,
+            } satisfies ClawHubBrowseItem;
+          })
+          .filter((item): item is ClawHubBrowseItem => item !== null);
+
+        if (mapped.length > 0 || append || cursor) {
+          setItems((prev) => (append ? [...prev, ...mapped] : mapped));
+          setNextCursor(data.nextCursor ?? null);
+          return;
+        }
+
+        // ClawHub list endpoint may return empty; use search-based discovery fallback.
+        const discoverySettled = await Promise.allSettled(
+          CLAWHUB_DISCOVERY_QUERIES.map((searchQuery) => fetchClawHubSearchItems(searchQuery)),
+        );
+        const deduped = new Map<string, ClawHubBrowseItem>();
+        for (const result of discoverySettled) {
+          if (result.status !== "fulfilled") {
+            continue;
+          }
+          for (const item of result.value) {
+            if (!item.slug || deduped.has(item.slug)) {
+              continue;
+            }
+            deduped.set(item.slug, item);
+            if (deduped.size >= CLAWHUB_PAGE_LIMIT) {
+              break;
+            }
+          }
+          if (deduped.size >= CLAWHUB_PAGE_LIMIT) {
+            break;
+          }
+        }
+
+        setItems(Array.from(deduped.values()));
+        setNextCursor(null);
       } catch (err) {
         setError(err instanceof Error ? err.message : "加载 ClawHub Skills 失败");
       } finally {
@@ -920,7 +1041,7 @@ function ClawHubDialog({
         setIsLoadingMore(false);
       }
     },
-    [trimmedQuery],
+    [fetchClawHubSearchItems, trimmedQuery],
   );
 
   useEffect(() => {
@@ -1039,7 +1160,7 @@ function ClawHubDialog({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-[42rem] h-[70vh] flex flex-col">
+      <DialogContent className="w-[94vw] max-w-[58rem] h-[82vh] flex flex-col">
         <DialogHeader>
           <DialogTitle>从 ClawHub 浏览 Skills</DialogTitle>
           <DialogDescription>搜索并安装社区 Skills</DialogDescription>
@@ -1498,11 +1619,13 @@ export function SkillsTab() {
   // ClawHub install
   const handleClawHubInstall = useCallback(
     (item: { slug: string; displayName: string; summary?: string; version?: string }) => {
+      const requestedVersion =
+        typeof item.version === "string" && item.version.trim() ? item.version.trim() : undefined;
       setClawhubOpen(false);
       setConfirmInstall({
         title: item.displayName,
         source: "clawhub",
-        description: `从 ClawHub 安装 "${item.slug}"${item.version ? ` (v${item.version})` : ""}${item.summary ? `\n\n${item.summary}` : ""}`,
+        description: `从 ClawHub 安装 "${item.slug}"${requestedVersion ? ` (v${requestedVersion})` : ""}${item.summary ? `\n\n${item.summary}` : ""}`,
         action: async () => {
           if (!wsClient) return;
           const now = Date.now();
@@ -1513,32 +1636,78 @@ export function SkillsTab() {
           }
           let result: { ok: boolean; message: string } | undefined;
           try {
+            const legacyInstallParams = requestedVersion
+              ? {
+                  name: item.slug,
+                  version: requestedVersion,
+                  installId: "clawhub",
+                  timeoutMs: 120000,
+                }
+              : {
+                  name: item.slug,
+                  installId: "clawhub",
+                  timeoutMs: 120000,
+                };
+            const sourceInstallParams = requestedVersion
+              ? {
+                  source: "clawhub" as const,
+                  slug: item.slug,
+                  version: requestedVersion,
+                  timeoutMs: 120000,
+                }
+              : {
+                  source: "clawhub" as const,
+                  slug: item.slug,
+                  timeoutMs: 120000,
+                };
             try {
               result = await wsClient.sendRequest<{ ok: boolean; message: string }>(
                 "skills.install",
-                {
-                  name: item.slug,
-                  version: item.version,
-                  installId: "clawhub",
-                  timeoutMs: 120000,
-                },
+                legacyInstallParams,
               );
-            } catch (err) {
-              const message = err instanceof Error ? err.message : String(err);
-              const versionUnsupported =
-                message.includes("unexpected property 'version'") ||
-                message.includes('unexpected property "version"');
-              if (!versionUnsupported) {
-                throw err;
+            } catch (legacyErr) {
+              const legacyMessage =
+                legacyErr instanceof Error ? legacyErr.message : String(legacyErr);
+              if (requestedVersion && isVersionParamError(legacyMessage)) {
+                result = await wsClient.sendRequest<{ ok: boolean; message: string }>(
+                  "skills.install",
+                  {
+                    name: item.slug,
+                    installId: "clawhub",
+                    timeoutMs: 120000,
+                  },
+                );
+                // Legacy schema accepted only when version is omitted.
+                // Continue into shared success/error handling below.
               }
-              result = await wsClient.sendRequest<{ ok: boolean; message: string }>(
-                "skills.install",
-                {
-                  name: item.slug,
-                  installId: "clawhub",
-                  timeoutMs: 120000,
-                },
-              );
+
+              if (!isLegacyInstallShapeError(legacyMessage)) {
+                throw legacyErr;
+              }
+
+              try {
+                result = await wsClient.sendRequest<{ ok: boolean; message: string }>(
+                  "skills.install",
+                  sourceInstallParams,
+                );
+              } catch (sourceErr) {
+                const sourceMessage =
+                  sourceErr instanceof Error ? sourceErr.message : String(sourceErr);
+                if (!requestedVersion || !isVersionParamError(sourceMessage)) {
+                  if (!isSourceInstallShapeError(sourceMessage)) {
+                    throw sourceErr;
+                  }
+                  throw sourceErr;
+                }
+                result = await wsClient.sendRequest<{ ok: boolean; message: string }>(
+                  "skills.install",
+                  {
+                    source: "clawhub",
+                    slug: item.slug,
+                    timeoutMs: 120000,
+                  },
+                );
+              }
             }
           } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -1791,7 +1960,10 @@ export function SkillsTab() {
           <div className="text-xs font-semibold text-text-secondary mb-2">安装历史</div>
           <div className="space-y-1.5">
             {installHistory.map((entry) => (
-              <div key={entry.id} className="flex items-center gap-2 text-xs text-text-secondary">
+              <div
+                key={entry.id}
+                className="flex items-start gap-2 text-xs text-text-secondary min-w-0"
+              >
                 <span className="text-text-tertiary w-14">{formatHistoryTime(entry.at)}</span>
                 <SourceBadge source={entry.source} />
                 <span
@@ -1803,8 +1975,12 @@ export function SkillsTab() {
                 >
                   {entry.status === "success" ? "成功" : "失败"}
                 </span>
-                <span className="text-text-primary truncate max-w-[14rem]">{entry.title}</span>
-                <span className="text-text-tertiary truncate">{entry.message}</span>
+                <span className="text-text-primary max-w-[18rem] break-all shrink-0">
+                  {entry.title}
+                </span>
+                <span className="text-text-tertiary min-w-0 whitespace-pre-wrap break-all">
+                  {entry.message}
+                </span>
               </div>
             ))}
           </div>

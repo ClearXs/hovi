@@ -22,6 +22,42 @@ import {
 type EventHandler = (payload: unknown) => void;
 type ResponseHandler = (response: WSResponse) => void;
 
+const DEFAULT_RPC_TIMEOUT_MS = 30_000;
+const REQUEST_TIMEOUT_BUFFER_MS = 5_000;
+const MAX_RPC_TIMEOUT_MS = 900_000;
+const LONG_RUNNING_RPC_TIMEOUT_BY_METHOD: Record<string, number> = {
+  "knowledge.rebuild": 180_000,
+  "knowledge.graph.build": 180_000,
+  "knowledge.graph.buildAll": 180_000,
+  "skills.install": 180_000,
+};
+
+function readTimeoutMs(params?: Record<string, unknown> | ConnectParams): number | null {
+  if (!params || typeof params !== "object") {
+    return null;
+  }
+  const raw = (params as { timeoutMs?: unknown }).timeoutMs;
+  if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) {
+    return null;
+  }
+  return Math.floor(raw);
+}
+
+export function resolveRpcRequestTimeoutMs(
+  method: string,
+  params?: Record<string, unknown> | ConnectParams,
+): number {
+  const methodTimeout = LONG_RUNNING_RPC_TIMEOUT_BY_METHOD[method] ?? DEFAULT_RPC_TIMEOUT_MS;
+  const requestedTimeout = readTimeoutMs(params);
+  if (requestedTimeout === null) {
+    return methodTimeout;
+  }
+  return Math.min(
+    MAX_RPC_TIMEOUT_MS,
+    Math.max(methodTimeout, requestedTimeout + REQUEST_TIMEOUT_BUFFER_MS),
+  );
+}
+
 export interface ClawdbotWebSocketClientOptions {
   url: string;
   token?: string;
@@ -355,13 +391,7 @@ export class ClawdbotWebSocketClient {
       params: params as Record<string, unknown>,
     };
 
-    // Determine timeout based on method (long-running operations need longer timeout)
-    const longRunningMethods = [
-      "knowledge.rebuild",
-      "knowledge.graph.build",
-      "knowledge.graph.buildAll",
-    ];
-    const timeout = longRunningMethods.includes(method) ? 180000 : 30000; // 3 min for rebuild, 30s default
+    const timeout = resolveRpcRequestTimeoutMs(method, params);
 
     return new Promise((resolve, reject) => {
       // Set up response handler

@@ -7,6 +7,15 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
+import { KnowledgeManager } from "../../../packages/memory-host-sdk/src/host/knowledge-manager.js";
+import { isPandocAvailable } from "../../../packages/memory-host-sdk/src/host/pageindex/converter.js";
+import {
+  bindSessionDocuments,
+  buildIndex,
+  search,
+  getSessionMeta,
+} from "../../../packages/memory-host-sdk/src/host/pageindex/index.js";
+import { requireNodeSqlite } from "../../../packages/memory-host-sdk/src/host/sqlite.js";
 import {
   resolveAgentDir,
   resolveAgentWorkspaceDir,
@@ -14,15 +23,6 @@ import {
 } from "../../agents/agent-scope.js";
 import { loadConfig } from "../../config/config.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
-import { KnowledgeManager } from "../../memory/knowledge-manager.js";
-import { isPandocAvailable } from "../../memory/pageindex/converter.js";
-import {
-  bindSessionDocuments,
-  buildIndex,
-  search,
-  getSessionMeta,
-} from "../../memory/pageindex/index.js";
-import { requireNodeSqlite } from "../../memory/sqlite.js";
 import { ErrorCodes, errorShape } from "../protocol/index.js";
 import type { GatewayRequestHandlers } from "./types.js";
 
@@ -257,7 +257,8 @@ export const pageIndexHandlers: GatewayRequestHandlers = {
 
       // 7. 保存文档到 session meta（所有文件类型）
       try {
-        const { updateSessionMeta } = await import("../../memory/pageindex/index.js");
+        const { updateSessionMeta } =
+          await import("../../../packages/memory-host-sdk/src/host/pageindex/index.js");
         await updateSessionMeta(
           p.sessionKey,
           documentId,

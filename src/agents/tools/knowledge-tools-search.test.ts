@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { MemorySearchResult } from "../../memory/types.js";
+import type { MemorySearchResult } from "../../../packages/memory-host-sdk/src/host/types.js";
 import { rankKnowledgeResults } from "./knowledge-tools.js";
 
 function makeResult(params: {

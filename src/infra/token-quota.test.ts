@@ -1,11 +1,12 @@
 import { describe, it, expect } from "vitest";
+import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { getUserQuota, checkQuota, calculateCost, USD_TO_CNY } from "./token-quota.js";
 
 describe("token-quota", () => {
   const testConfig = {
     quota: { enabled: true, users: { testuser: { limit: 100, spent: 50 } } },
     modelPricing: { "claude-3-5-sonnet": { input: 3, output: 15 } },
-  } as unknown;
+  } as OpenClawConfig;
 
   describe("getUserQuota", () => {
     it("应返回用户配额", () => {
@@ -13,14 +14,14 @@ describe("token-quota", () => {
     });
 
     it("功能关闭应返回 undefined", () => {
-      const config = { quota: { enabled: false } } as unknown;
+      const config = { quota: { enabled: false } } as OpenClawConfig;
       expect(getUserQuota("testuser", config)).toBeUndefined();
     });
 
     it("无限额(limit<=0)应返回 undefined", () => {
       const config = {
         quota: { enabled: true, users: { alice: { limit: 0, spent: 100 } } },
-      } as unknown;
+      } as OpenClawConfig;
       expect(getUserQuota("alice", config)).toBeUndefined();
     });
 

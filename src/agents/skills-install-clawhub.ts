@@ -168,6 +168,17 @@ function clampWaitMs(waitMs: number, timeoutMs: number): number {
   return Math.min(capped, timeoutMs);
 }
 
+function remainingBudgetMs(params: { startedAt: number; timeoutMs: number }): number {
+  return Math.max(0, params.timeoutMs - (Date.now() - params.startedAt));
+}
+
+function resolveMaxRateLimitRetries(timeoutMs: number): number {
+  // Allow more retries for rate-limit-heavy installs while keeping an upper bound.
+  // 1 retry budget per second (capped), with a conservative floor for short timeouts.
+  const byTimeout = Math.floor(Math.max(1_000, timeoutMs) / 1_000);
+  return Math.max(5, Math.min(120, byTimeout));
+}
+
 function classifyHttpFailure(params: {
   status: number | null;
   slug: string;
@@ -229,54 +240,99 @@ async function resolveTargetVersion(params: {
     return { ok: true, version: requestedVersion };
   }
 
-  const { response, release } = await fetchWithSsrFGuard({
-    url: buildSkillMetadataUrl(params.slug),
-    timeoutMs: params.timeoutMs,
-  });
-  try {
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      const status = response.status;
-      return {
-        ok: false,
-        result: {
-          ok: false,
-          message: classifyHttpFailure({ status, slug: params.slug, stage: "resolve" }),
-          stdout: "",
-          stderr: body.trim(),
-          code: status,
-        },
-      };
+  const url = buildSkillMetadataUrl(params.slug);
+  const startedAt = Date.now();
+  const maxRetries = resolveMaxRateLimitRetries(params.timeoutMs);
+  let attempt = 0;
+  let lastStatus: number | null = null;
+  let lastBody = "";
+  let lastRateLimitWaitMs: number | null = null;
+
+  while (attempt <= maxRetries) {
+    attempt += 1;
+    const fetchTimeoutMs = remainingBudgetMs({ startedAt, timeoutMs: params.timeoutMs });
+    if (fetchTimeoutMs <= 0) {
+      break;
     }
-    const payload = (await response.json()) as ClawHubSkillMetadata;
-    const version = payload?.latestVersion?.version?.trim();
-    if (!version) {
+    const { response, release } = await fetchWithSsrFGuard({
+      url,
+      timeoutMs: fetchTimeoutMs,
+    });
+    try {
+      if (response.ok) {
+        const payload = (await response.json()) as ClawHubSkillMetadata;
+        const version = payload?.latestVersion?.version?.trim();
+        if (!version) {
+          return {
+            ok: false,
+            result: {
+              ok: false,
+              message: `ClawHub skill "${params.slug}" has no installable version`,
+              stdout: "",
+              stderr: "",
+              code: null,
+            },
+          };
+        }
+        return { ok: true, version };
+      }
+
+      lastStatus = response.status;
+      lastBody = await response.text().catch(() => "");
+      const isRateLimited = response.status === 429;
+      if (!isRateLimited || attempt > maxRetries) {
+        break;
+      }
+
+      const retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
+      const rateLimitResetMs = parseRateLimitResetMs(response.headers.get("x-ratelimit-reset"));
+      const backoffMs = Math.min(4_000, 500 * 2 ** (attempt - 1));
+      const waitMs = clampWaitMs(
+        Math.max(0, retryAfterMs ?? rateLimitResetMs ?? backoffMs),
+        remainingBudgetMs({ startedAt, timeoutMs: params.timeoutMs }),
+      );
+      lastRateLimitWaitMs = waitMs;
+      const elapsed = Date.now() - startedAt;
+      if (elapsed + waitMs >= params.timeoutMs) {
+        break;
+      }
+      await sleep(waitMs);
+    } catch (err) {
       return {
         ok: false,
         result: {
           ok: false,
-          message: `ClawHub skill "${params.slug}" has no installable version`,
+          message: `Failed to resolve ${params.slug} version from ClawHub`,
           stdout: "",
-          stderr: "",
+          stderr: err instanceof Error ? err.message : String(err),
           code: null,
         },
       };
+    } finally {
+      await release();
     }
-    return { ok: true, version };
-  } catch (err) {
-    return {
-      ok: false,
-      result: {
-        ok: false,
-        message: `Failed to resolve ${params.slug} version from ClawHub`,
-        stdout: "",
-        stderr: err instanceof Error ? err.message : String(err),
-        code: null,
-      },
-    };
-  } finally {
-    await release();
   }
+
+  const isRateLimited = lastStatus === 429;
+  const waitSeconds =
+    isRateLimited && typeof lastRateLimitWaitMs === "number"
+      ? Math.max(1, Math.ceil(lastRateLimitWaitMs / 1000))
+      : null;
+  return {
+    ok: false,
+    result: {
+      ok: false,
+      message: classifyHttpFailure({
+        status: lastStatus,
+        slug: params.slug,
+        stage: "resolve",
+        waitSeconds,
+      }),
+      stdout: "",
+      stderr: lastBody.trim(),
+      code: lastStatus,
+    },
+  };
 }
 
 export async function installClawHubSkill(
@@ -328,7 +384,7 @@ export async function installClawHubSkill(
 
     const url = buildDownloadUrl({ slug, version: targetVersion });
     const startedAt = Date.now();
-    const maxRetries = 5;
+    const maxRetries = resolveMaxRateLimitRetries(timeoutMs);
     let downloaded = false;
     let attempt = 0;
     let lastStatus: number | null = null;
@@ -337,7 +393,11 @@ export async function installClawHubSkill(
 
     while (attempt <= maxRetries && !downloaded) {
       attempt += 1;
-      const { response, release } = await fetchWithSsrFGuard({ url, timeoutMs });
+      const fetchTimeoutMs = remainingBudgetMs({ startedAt, timeoutMs });
+      if (fetchTimeoutMs <= 0) {
+        break;
+      }
+      const { response, release } = await fetchWithSsrFGuard({ url, timeoutMs: fetchTimeoutMs });
       try {
         if (response.ok && response.body) {
           const file = await fs.open(zipPath, "w");
@@ -362,7 +422,7 @@ export async function installClawHubSkill(
         const backoffMs = Math.min(4_000, 500 * 2 ** (attempt - 1));
         const waitMs = clampWaitMs(
           Math.max(0, retryAfterMs ?? rateLimitResetMs ?? backoffMs),
-          timeoutMs,
+          remainingBudgetMs({ startedAt, timeoutMs }),
         );
         lastRateLimitWaitMs = waitMs;
         const elapsed = Date.now() - startedAt;

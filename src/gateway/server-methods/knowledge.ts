@@ -1,4 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
+import { KnowledgeManager } from "../../../packages/memory-host-sdk/src/host/knowledge-manager.js";
+import { requireNodeSqlite } from "../../../packages/memory-host-sdk/src/host/sqlite.js";
 import {
   resolveAgentDir,
   resolveAgentWorkspaceDir,
@@ -7,8 +9,6 @@ import {
 import { readStringParam, readNumberParam } from "../../agents/tools/common.js";
 import { loadConfig } from "../../config/config.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
-import { KnowledgeManager } from "../../memory/knowledge-manager.js";
-import { requireNodeSqlite } from "../../memory/sqlite.js";
 import { ErrorCodes, errorShape } from "../protocol/index.js";
 import type { GatewayRequestHandlers } from "./types.js";
 
@@ -26,7 +26,7 @@ function getDatabase(agentId: string): DatabaseSync {
   const cfg = loadConfig();
   const agentDir = resolveAgentDir(cfg, agentId);
   const dbPath = `${agentDir}/memory.db`;
-  let db: DB;
+  let db: DatabaseSync;
   try {
     db = new DB(dbPath);
   } catch (err) {
@@ -184,7 +184,7 @@ function formatDocument(doc: {
   mimetype: string;
   size: number;
   uploaded_at: number;
-  indexed_at: number | null;
+  indexed_at?: number | null;
   tags?: string[];
   description?: string | null;
   source_type?: string | null;
@@ -196,7 +196,7 @@ function formatDocument(doc: {
     mimetype: doc.mimetype,
     size: doc.size,
     uploadedAt: new Date(doc.uploaded_at).toISOString(),
-    indexed: doc.indexed_at !== null,
+    indexed: doc.indexed_at != null,
     tags: doc.tags ?? [],
     description: doc.description ?? null,
     sourceType: doc.source_type ?? null,
@@ -281,7 +281,7 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
         return;
       }
 
-      const p = params as KnowledgeCreateParams;
+      const p = params as unknown as KnowledgeCreateParams;
       if (!p.name || typeof p.name !== "string" || !p.name.trim()) {
         respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "知识库名称不能为空"));
         return;
@@ -319,7 +319,7 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
         return;
       }
 
-      const p = params as KnowledgeUpdateParams;
+      const p = params as unknown as KnowledgeUpdateParams;
       if (!p.kbId) {
         respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "缺少 kbId 参数"));
         return;
@@ -362,7 +362,7 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
         return;
       }
 
-      const p = params as KnowledgeDeleteParams;
+      const p = params as unknown as KnowledgeDeleteParams;
       if (!p.kbId) {
         respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "缺少 kbId 参数"));
         return;
@@ -397,7 +397,7 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
         return;
       }
 
-      const p = params as KnowledgeGetParams;
+      const p = params as unknown as KnowledgeGetParams;
       if (!p.kbId) {
         respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "缺少 kbId 参数"));
         return;
@@ -432,7 +432,7 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
         return;
       }
 
-      const p = params as KnowledgeDocumentsParams;
+      const p = params as unknown as KnowledgeDocumentsParams;
       if (!p.kbId) {
         respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "缺少 kbId 参数"));
         return;
@@ -470,8 +470,10 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
   // 文档上传 (base64 content)
   "knowledge.upload": async ({ params, respond }) => {
     try {
+      const contentPreview =
+        typeof params.content === "string" ? params.content.substring(0, 50) : undefined;
       log.info(
-        `knowledge.upload received params: ${JSON.stringify({ ...params, content: params.content?.substring(0, 50) })}`,
+        `knowledge.upload received params: ${JSON.stringify({ ...params, content: contentPreview })}`,
       );
 
       const agentId = resolveAgentId(params, {});
@@ -538,8 +540,8 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
 
       respond(true, {
         documentId: result.documentId,
-        filename: result.filename,
-        size: result.size,
+        filename: p.filename,
+        size: fileBuffer.byteLength,
         indexed: result.indexed,
       });
     } catch (err) {
@@ -564,7 +566,7 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
         return;
       }
 
-      const p = params as KnowledgeDocumentDeleteParams;
+      const p = params as unknown as KnowledgeDocumentDeleteParams;
       if (!p.documentId) {
         respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "缺少 documentId 参数"));
         return;
@@ -603,7 +605,7 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
         return;
       }
 
-      const p = params as KnowledgeDocumentGetParams;
+      const p = params as unknown as KnowledgeDocumentGetParams;
       if (!p.documentId) {
         respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "缺少 documentId 参数"));
         return;
@@ -642,7 +644,7 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
         return;
       }
 
-      const p = params as KnowledgeDocumentUpdateParams;
+      const p = params as unknown as KnowledgeDocumentUpdateParams;
       if (!p.documentId) {
         respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "缺少 documentId 参数"));
         return;
@@ -726,7 +728,7 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
         return;
       }
 
-      const p = params as KnowledgeChunksParams;
+      const p = params as unknown as KnowledgeChunksParams;
       if (!p.documentId) {
         respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "缺少 documentId 参数"));
         return;
@@ -770,7 +772,7 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
         return;
       }
 
-      const p = params as KnowledgeSearchParams;
+      const p = params as unknown as KnowledgeSearchParams;
       if (!p.query || typeof p.query !== "string" || !p.query.trim()) {
         respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "缺少 query 参数"));
         return;
@@ -793,7 +795,8 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
       console.log(`[knowledge.search] agentId=${agentId}, kbId=${kbId}`);
 
       // Use MemoryIndexManager for search
-      const { MemoryIndexManager } = await import("../../memory/manager.js");
+      const { MemoryIndexManager } =
+        await import("../../../extensions/memory-core/src/memory/manager.js");
       const memoryManager = await MemoryIndexManager.get({
         cfg: loadConfig(),
         agentId,
@@ -826,7 +829,7 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
             documentId,
             kbId: doc?.kb_id ?? null,
             filename: doc?.filename ?? documentId,
-            chunkId: result.id,
+            chunkId: result.path,
             snippet: result.snippet,
             score: result.score,
             lines: `${result.startLine}-${result.endLine}`,
@@ -1407,6 +1410,7 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
       const kbId = readStringParam(params, "kbId", { required: false });
 
       const manager = getKnowledgeManager(agentId);
+      const doc = manager.getDocument({ agentId, documentId, kbId });
       const resolved = manager.resolveDocumentPath({ agentId, documentId, kbId });
 
       const { promises: fsPromises } = await import("node:fs");
@@ -1416,7 +1420,7 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
       respond(true, {
         content,
         mimetype: resolved.mimetype,
-        filename: resolved.filename,
+        filename: doc?.filename ?? documentId,
       });
     } catch (err) {
       log.error(`knowledge.file.get failed: ${String(err)}`);

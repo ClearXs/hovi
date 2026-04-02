@@ -1,9 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
 import { Type } from "@sinclair/typebox";
+import { KnowledgeManager } from "../../../packages/memory-host-sdk/src/host/knowledge-manager.js";
+import { requireNodeSqlite } from "../../../packages/memory-host-sdk/src/host/sqlite.js";
+import type { MemorySearchResult } from "../../../packages/memory-host-sdk/src/host/types.js";
 import { loadConfig } from "../../config/config.js";
-import { KnowledgeManager } from "../../memory/knowledge-manager.js";
-import { requireNodeSqlite } from "../../memory/sqlite.js";
-import type { MemorySearchResult } from "../../memory/types.js";
 import { resolveAgentDir, resolveAgentWorkspaceDir } from "../agent-scope.js";
 import type { AnyAgentTool } from "./common.js";
 import { jsonResult, readStringParam, readStringArrayParam, readNumberParam } from "./common.js";
@@ -133,7 +133,8 @@ export function createKnowledgeSearchTool(opts: { agentId: string }): AnyAgentTo
           throw new Error("No knowledge base found. Please create a knowledge base first.");
         }
         // Cross-KB search: search across all knowledge bases
-        const { MemoryIndexManager } = await import("../../memory/manager.js");
+        const { MemoryIndexManager } =
+          await import("../../../extensions/memory-core/src/memory/manager.js");
         const memoryManager = await MemoryIndexManager.get({
           cfg: loadConfig(),
           agentId: opts.agentId,
@@ -182,7 +183,7 @@ export function createKnowledgeSearchTool(opts: { agentId: string }): AnyAgentTo
                   kbId: base.id,
                   kbName,
                   filename: doc?.filename ?? documentId,
-                  chunkId: result.id,
+                  chunkId: result.path,
                   snippet: result.snippet,
                   score: result.score,
                   lines: `${result.startLine}-${result.endLine}`,
@@ -212,7 +213,7 @@ export function createKnowledgeSearchTool(opts: { agentId: string }): AnyAgentTo
               // Convert graph entities to results
               for (const entity of graphSearchResult.entities) {
                 allResults.push({
-                  documentId: entity.documentId || "",
+                  documentId: "",
                   kbId: base.id,
                   kbName,
                   filename: "",
@@ -234,7 +235,7 @@ export function createKnowledgeSearchTool(opts: { agentId: string }): AnyAgentTo
                   chunkId: relation.id,
                   snippet:
                     relation.description || `${relation.sourceName} → ${relation.targetName}`,
-                  score: relation.score || 0,
+                  score: 0,
                   lines: "",
                   sourceType: "graph_relation" as const,
                 });
@@ -268,13 +269,24 @@ export function createKnowledgeSearchTool(opts: { agentId: string }): AnyAgentTo
       // ============================================================
       // 1. Vector Search (existing)
       // ============================================================
-      const { MemoryIndexManager } = await import("../../memory/manager.js");
+      const { MemoryIndexManager } =
+        await import("../../../extensions/memory-core/src/memory/manager.js");
       const memoryManager = await MemoryIndexManager.get({
         cfg: loadConfig(),
         agentId: opts.agentId,
       });
 
-      let vectorResults: (typeof result)[] = [];
+      let vectorResults: Array<{
+        documentId: string;
+        kbId: string;
+        kbName: string;
+        filename: string;
+        chunkId: string;
+        snippet: string;
+        score: number;
+        lines: string;
+        sourceType: "vector" | "graph_entity" | "graph_relation";
+      }> = [];
       if (memoryManager) {
         const rawResults = await memoryManager.search(query, {
           maxResults: Math.max(maxResults, baseSettings.retrieval.topK),
@@ -303,7 +315,7 @@ export function createKnowledgeSearchTool(opts: { agentId: string }): AnyAgentTo
               kbId: resolvedKbId,
               kbName,
               filename: doc?.filename ?? documentId,
-              chunkId: result.id,
+              chunkId: result.path,
               snippet: result.snippet,
               score: result.score,
               lines: `${result.startLine}-${result.endLine}`,
@@ -394,7 +406,7 @@ export function createKnowledgeSearchTool(opts: { agentId: string }): AnyAgentTo
               filename: "",
               chunkId: relation.id,
               snippet: relation.description || `${relation.sourceName} → ${relation.targetName}`,
-              score: relation.score || 0,
+              score: 0,
               sourceType: "graph_relation",
               graphRelation: {
                 id: relation.id,
