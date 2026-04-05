@@ -122,6 +122,7 @@ export type ToolsEffectiveGroup = SchemaType<"ToolsEffectiveGroup">;
 export type ToolsEffectiveResult = SchemaType<"ToolsEffectiveResult">;
 export type SkillsBinsParams = SchemaType<"SkillsBinsParams">;
 export type SkillsBinsResult = SchemaType<"SkillsBinsResult">;
+export type SkillsDeleteParams = SchemaType<"SkillsDeleteParams">;
 export type SkillsInstallParams = SchemaType<"SkillsInstallParams">;
 export type SkillsUpdateParams = SchemaType<"SkillsUpdateParams">;
 export type CronJob = SchemaType<"CronJob">;

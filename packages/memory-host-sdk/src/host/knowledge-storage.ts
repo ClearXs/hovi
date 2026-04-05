@@ -10,7 +10,7 @@ export type StoreDocumentParams = {
   filename: string;
   buffer: Buffer;
   mimetype: string;
-  sourceType: "web_api" | "chat_attachment";
+  sourceType: "web_api" | "chat_attachment" | "local_fs" | "smb" | "s3" | "webdav";
   sourceMetadata?: Record<string, unknown>;
   ownerAgentId: string;
   description?: string;
@@ -30,7 +30,7 @@ export type UpdateDocumentParams = {
   filename: string;
   buffer: Buffer;
   mimetype: string;
-  sourceType: "web_api" | "chat_attachment";
+  sourceType: "web_api" | "chat_attachment" | "local_fs" | "smb" | "s3" | "webdav";
   sourceMetadata?: Record<string, unknown>;
   ownerAgentId: string;
   description?: string;
@@ -344,13 +344,16 @@ export class KnowledgeStorageManager {
       return false;
     }
 
-    const absPath = path.join(this.baseDir, doc.filepath);
-
-    // Delete file (ignore errors if file doesn't exist)
-    try {
-      await fs.unlink(absPath);
-    } catch {
-      // File may have been deleted already
+    const shouldDeleteOwnedFile =
+      doc.source_type === "web_api" || doc.source_type === "chat_attachment";
+    if (shouldDeleteOwnedFile) {
+      const absPath = path.join(this.baseDir, doc.filepath);
+      // Delete file (ignore errors if file doesn't exist)
+      try {
+        await fs.unlink(absPath);
+      } catch {
+        // File may have been deleted already
+      }
     }
 
     // Delete metadata (tags will cascade)

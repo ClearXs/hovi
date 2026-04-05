@@ -23,6 +23,7 @@ import { CronJobsDialog } from "@/components/cron/CronJobsDialog";
 import { SettingsPanel } from "@/components/desk-pet/SettingsPanel";
 import { VirtualAssistantPage } from "@/components/desk-pet/VirtualAssistantPage";
 import { DesktopBootstrap } from "@/components/desktop/DesktopBootstrap";
+import { DiscoverPage } from "@/components/discover/DiscoverPage";
 import { FileItemProps } from "@/components/files/FileList";
 import { KnowledgeBasePage } from "@/components/knowledge/KnowledgeBasePage";
 import MainLayout from "@/components/layout/MainLayout";
@@ -47,6 +48,7 @@ import type { AgentInfo } from "@/features/persona/types/persona";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useResponsive } from "@/hooks/useResponsive";
 import { isSubagentLifecycleEvent } from "@/lib/agent-stream-events";
+import { detectPathCardsFromAssistantMessage } from "@/lib/chat/path-detection";
 import {
   bindSessionDocuments,
   isPageIndexSupported,
@@ -131,6 +133,7 @@ const HOME_QUICK_CARDS: Array<{
 ];
 
 const HOME_PRIMARY_CARDS = HOME_QUICK_CARDS.slice(0, 2);
+const AUTO_APPROVE_ALWAYS_STORAGE_KEY = "hovi.approval.auto-allow-always.v1";
 
 // 内部组件，使用StreamingReplayContext
 function HomeContent() {
@@ -167,7 +170,7 @@ function HomeContent() {
   const { isMobile } = useResponsive();
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [activeMainView, setActiveMainView] = useState<
-    "chat" | "channel" | "knowledge" | "persona" | "my"
+    "chat" | "channel" | "discover" | "knowledge" | "persona" | "my"
   >("chat");
 
   // Get user name from config
@@ -216,6 +219,7 @@ function HomeContent() {
   const [availableConnectors, setAvailableConnectors] = useState<ConnectorItem[]>([]);
   const [sessionConnectorIds, setSessionConnectorIds] = useState<Record<string, string[]>>({});
   const [draftConnectorIds, setDraftConnectorIds] = useState<string[]>([]);
+  const [autoApproveAlways, setAutoApproveAlways] = useState(false);
 
   // 当前正在进行的 runId（用于取消）
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
@@ -223,6 +227,12 @@ function HomeContent() {
     `__preview_upload__:${typeof crypto?.randomUUID === "function" ? crypto.randomUUID() : Date.now().toString(36)}`,
   );
   const pendingUploadSessionKey = pendingUploadSessionKeyRef.current;
+  const detectedPathCardsCacheRef = useRef<Map<string, FileItemProps[]>>(new Map());
+  const MAX_PATH_CARDS_PER_MESSAGE = 20;
+  const workspaceDir =
+    typeof config?.agents?.defaults?.workspace === "string"
+      ? config.agents.defaults.workspace
+      : undefined;
 
   // Dialog states
   type DialogType = "rename" | "delete" | "batchDelete" | null;
@@ -254,6 +264,21 @@ function HomeContent() {
   }, [config]);
 
   useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const value = window.localStorage.getItem(AUTO_APPROVE_ALWAYS_STORAGE_KEY);
+      setAutoApproveAlways(value === "1" || value === "true");
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(AUTO_APPROVE_ALWAYS_STORAGE_KEY, autoApproveAlways ? "1" : "0");
+    } catch {}
+  }, [autoApproveAlways]);
+
+  useEffect(() => {
     if (status === "connected") {
       void fetchSessions();
     }
@@ -282,6 +307,10 @@ function HomeContent() {
       setCurrentConversationId(null);
       setActiveMainView("knowledge");
     };
+    const handleOpenDiscover = () => {
+      setCurrentConversationId(null);
+      setActiveMainView("discover");
+    };
     const handleOpenChannel = () => {
       setCurrentConversationId(null);
       setActiveMainView("channel");
@@ -297,6 +326,7 @@ function HomeContent() {
     window.addEventListener("mobile:open-cron-jobs", handleOpenCronJobs);
     window.addEventListener("mobile:open-agent-manage", handleOpenAgentManage);
     window.addEventListener("mobile:open-knowledge", handleOpenKnowledge);
+    window.addEventListener("mobile:open-discover", handleOpenDiscover);
     window.addEventListener("mobile:open-channel", handleOpenChannel);
     window.addEventListener("mobile:open-my", handleOpenMy);
 
@@ -307,6 +337,7 @@ function HomeContent() {
       window.removeEventListener("mobile:open-cron-jobs", handleOpenCronJobs);
       window.removeEventListener("mobile:open-agent-manage", handleOpenAgentManage);
       window.removeEventListener("mobile:open-knowledge", handleOpenKnowledge);
+      window.removeEventListener("mobile:open-discover", handleOpenDiscover);
       window.removeEventListener("mobile:open-channel", handleOpenChannel);
       window.removeEventListener("mobile:open-my", handleOpenMy);
     };
@@ -696,7 +727,7 @@ function HomeContent() {
   }, []);
 
   const normalizeHistoryMessages = useCallback(
-    (messages: unknown[]): Message[] => {
+    (messages: unknown[], sessionKey?: string): Message[] => {
       const normalized: Message[] = [];
       messages.forEach((item, index) => {
         const raw = item as {
@@ -793,19 +824,71 @@ function HomeContent() {
           });
         }
 
+        const messageId = `history-${index}-${timestamp.getTime()}`;
+        const normalizedRole = mappedRole === "system" ? "assistant" : mappedRole;
+        const detectedPathCards =
+          normalizedRole === "assistant"
+            ? detectPathCardsFromAssistantMessage(text, {
+                sessionKey,
+                maxPerMessage: MAX_PATH_CARDS_PER_MESSAGE,
+                workspaceDir,
+              })
+            : [];
+
         normalized.push({
-          id: `history-${index}-${timestamp.getTime()}`,
-          role: mappedRole === "system" ? "assistant" : mappedRole,
+          id: messageId,
+          role: normalizedRole,
           content: text || (toolCalls.length > 0 ? "[工具调用]" : "[无文本内容]"),
           timestamp,
           usage: normalizeUsage(raw?.usage),
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
           toolResults: toolResults.length > 0 ? toolResults : undefined,
+          files: detectedPathCards.length > 0 ? detectedPathCards : undefined,
         });
       });
       return normalized;
     },
-    [extractMessageText, normalizeUsage],
+    [extractMessageText, normalizeUsage, MAX_PATH_CARDS_PER_MESSAGE, workspaceDir],
+  );
+
+  const getDetectedPathCards = useCallback(
+    (params: { messageId: string; content: string; sessionKey?: string }): FileItemProps[] => {
+      const text = params.content.trim();
+      if (!text) return [];
+      const cacheKey = `${params.sessionKey ?? "no-session"}:${params.messageId}:${workspaceDir ?? "no-workspace"}:${text}`;
+      const cached = detectedPathCardsCacheRef.current.get(cacheKey);
+      if (cached) {
+        return cached;
+      }
+      const cards = detectPathCardsFromAssistantMessage(text, {
+        sessionKey: params.sessionKey,
+        maxPerMessage: MAX_PATH_CARDS_PER_MESSAGE,
+        workspaceDir,
+      });
+      detectedPathCardsCacheRef.current.set(cacheKey, cards);
+      if (detectedPathCardsCacheRef.current.size > 500) {
+        const firstKey = detectedPathCardsCacheRef.current.keys().next().value;
+        if (typeof firstKey === "string") {
+          detectedPathCardsCacheRef.current.delete(firstKey);
+        }
+      }
+      return cards;
+    },
+    [MAX_PATH_CARDS_PER_MESSAGE, workspaceDir],
+  );
+
+  const mergeDetectedPathCards = useCallback(
+    (
+      existing: FileItemProps[] | undefined,
+      detected: FileItemProps[],
+    ): FileItemProps[] | undefined => {
+      const base = (existing ?? []).filter((item) => item.source !== "detected-path");
+      if (base.length === 0 && detected.length === 0) {
+        return undefined;
+      }
+      return [...base, ...detected];
+    },
+    [],
   );
 
   const extractAttachmentNamesFromText = useCallback((text: string): string[] => {
@@ -947,7 +1030,7 @@ function HomeContent() {
           sessionKey,
           limit: totalToLoad,
         });
-        let history = normalizeHistoryMessages(result?.messages ?? []);
+        let history = normalizeHistoryMessages(result?.messages ?? [], sessionKey);
         try {
           const docsResult = await listSessionDocuments(sessionKey);
           history = attachSessionDocumentsToMessages(history, docsResult.documents ?? []);
@@ -1051,6 +1134,15 @@ function HomeContent() {
           }
           return prev;
         }
+        const existingFiles = index >= 0 ? messages[index]?.files : undefined;
+        const detectedPathCards =
+          data.state === "final"
+            ? getDetectedPathCards({ messageId, content: text, sessionKey })
+            : [];
+        const mergedFiles =
+          data.state === "final"
+            ? mergeDetectedPathCards(existingFiles, detectedPathCards)
+            : existingFiles;
         const nextMessage: Message = {
           id: messageId,
           role: "assistant",
@@ -1064,6 +1156,7 @@ function HomeContent() {
           ),
           toolCalls: toolData?.toolCalls,
           toolResults: toolData?.toolResults,
+          files: mergedFiles,
         };
         if (index >= 0) {
           messages[index] = {
@@ -1091,7 +1184,9 @@ function HomeContent() {
     mergeUsage,
     mergeToolCalls,
     mergeToolResults,
+    mergeDetectedPathCards,
     normalizeUsage,
+    getDetectedPathCards,
     toolEventsByRun,
     wsClient,
   ]);
@@ -1905,6 +2000,10 @@ function HomeContent() {
           setCurrentConversationId(null);
           setActiveMainView("knowledge");
         }}
+        onOpenDiscover={() => {
+          setCurrentConversationId(null);
+          setActiveMainView("discover");
+        }}
         onOpenChannel={() => {
           setCurrentConversationId(null);
           setActiveMainView("channel");
@@ -1918,7 +2017,9 @@ function HomeContent() {
         onOpenAgentManage={() => setAgentManageOpen(true)}
         onOpenTaskSearch={() => setTaskSearchOpen(true)}
         onGoHome={() => setActiveMainView("chat")}
-        assistantVisible={activeMainView !== "persona" && assistantVisible}
+        assistantVisible={
+          activeMainView !== "persona" && activeMainView !== "discover" && assistantVisible
+        }
         onToggleAssistantVisible={() => setAssistantVisible(!assistantVisible)}
         showTopBar={activeMainView !== "persona" && activeMainView !== "my"}
         showSidebar={activeMainView !== "persona" && activeMainView !== "my"}
@@ -1958,6 +2059,19 @@ function HomeContent() {
               <div className="flex-1 overflow-hidden bg-background-tertiary">
                 <KnowledgeBasePage />
               </div>
+            ) : activeMainView === "discover" ? (
+              <div className="flex-1 overflow-hidden bg-background-tertiary">
+                <DiscoverPage
+                  wsClient={wsClient ?? undefined}
+                  onError={(message) =>
+                    addToast({
+                      title: "请求失败",
+                      description: message,
+                      variant: "error",
+                    })
+                  }
+                />
+              </div>
             ) : activeMainView === "channel" ? (
               <div className="flex-1 overflow-hidden bg-background-tertiary">
                 <ChannelCenterPage />
@@ -1973,6 +2087,7 @@ function HomeContent() {
                 <MessageList
                   messages={currentMessages}
                   sessionKey={currentConversationId}
+                  autoApproveAlways={autoApproveAlways}
                   isLoading={historyLoadingKey === currentConversationId}
                   autoScrollToBottom={!(historyLoadingKey === currentConversationId)}
                   emptyState={{
@@ -2012,6 +2127,8 @@ function HomeContent() {
 
                   <EnhancedChatInput
                     onSend={handleSendMessage}
+                    autoApproveAlways={autoApproveAlways}
+                    onAutoApproveAlwaysChange={setAutoApproveAlways}
                     placeholder="输入消息... (支持 @ 提及和 / 命令)"
                     compact={true}
                     draftValue={draftMessage}
@@ -2100,6 +2217,8 @@ function HomeContent() {
 
                     <EnhancedChatInput
                       onSend={handleSendMessage}
+                      autoApproveAlways={autoApproveAlways}
+                      onAutoApproveAlwaysChange={setAutoApproveAlways}
                       placeholder="输入消息... (支持 @ 提及和 / 命令)"
                       compact={true}
                       draftValue={draftMessage}

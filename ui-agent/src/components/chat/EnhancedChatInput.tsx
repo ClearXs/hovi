@@ -30,6 +30,7 @@ import { useCallback, useMemo, useRef, useState, useEffect, KeyboardEvent, DragE
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Switch } from "@/components/ui/switch";
 import { formatFileSize } from "@/lib/fileUtils";
 import type { KnowledgeDetail } from "@/services/knowledgeApi";
 import { getKnowledge } from "@/services/knowledgeApi";
@@ -149,6 +150,8 @@ interface EnhancedChatInputProps {
   resetKey?: number; // 用于重置输入框
   sessionKey?: string | null;
   pendingUploadSessionKey?: string | null;
+  autoApproveAlways?: boolean;
+  onAutoApproveAlwaysChange?: (value: boolean) => void;
 }
 
 interface SkillStatusEntry {
@@ -168,8 +171,11 @@ export function resolveSlashPanelPlacement({
   caretTop,
   panelHeight,
   hostHeight,
+  hostTop,
   hostBottom,
+  visibleTop,
   viewportHeight,
+  visibleBottom,
   minTop = 8,
   gap = 8,
 }: {
@@ -177,19 +183,55 @@ export function resolveSlashPanelPlacement({
   caretTop: number;
   panelHeight: number;
   hostHeight: number;
+  hostTop: number;
   hostBottom: number;
+  visibleTop?: number;
   viewportHeight: number;
+  visibleBottom?: number;
   minTop?: number;
   gap?: number;
 }): { top: number; direction: "up" | "down" } {
   const clampedDownTop = Math.max(24, rawTop);
-  const spaceBelow = Math.max(0, viewportHeight - hostBottom + (hostHeight - clampedDownTop));
+  const topBoundary = Math.max(0, visibleTop ?? 0);
+  const bottomBoundary = Math.min(viewportHeight, visibleBottom ?? viewportHeight);
+  const spaceBelow = Math.max(0, bottomBoundary - hostBottom + (hostHeight - clampedDownTop));
   if (spaceBelow >= panelHeight) {
     return { top: clampedDownTop, direction: "down" };
   }
 
-  const upTop = Math.max(minTop, caretTop - panelHeight - gap);
+  const minTopWithinHost = topBoundary - hostTop + minTop;
+  const upTop = Math.max(minTopWithinHost, caretTop - panelHeight - gap);
   return { top: upTop, direction: "up" };
+}
+
+function resolveVisibleVerticalBounds(host: HTMLElement): { top: number; bottom: number } {
+  let top = 0;
+  let boundary = window.innerHeight;
+  let current: HTMLElement | null = host.parentElement;
+
+  while (current) {
+    const style = window.getComputedStyle(current);
+    const overflowY = `${style.overflowY} ${style.overflow}`.toLowerCase();
+    const clipsY =
+      overflowY.includes("hidden") ||
+      overflowY.includes("clip") ||
+      overflowY.includes("auto") ||
+      overflowY.includes("scroll");
+
+    if (clipsY) {
+      const rect = current.getBoundingClientRect();
+      if (Number.isFinite(rect.top)) {
+        top = Math.max(top, rect.top);
+      }
+      if (Number.isFinite(rect.bottom)) {
+        boundary = Math.min(boundary, rect.bottom);
+      }
+    }
+
+    current = current.parentElement;
+  }
+
+  return { top, bottom: boundary };
 }
 
 function resolveSlashTriggerToken(
@@ -301,6 +343,8 @@ export function EnhancedChatInput({
   resetKey = 0,
   sessionKey = null,
   pendingUploadSessionKey = null,
+  autoApproveAlways = false,
+  onAutoApproveAlwaysChange,
 }: EnhancedChatInputProps) {
   const wsClient = useConnectionStore((s) => s.wsClient);
   const openSettings = useSettingsStore((s) => s.openSettings);
@@ -578,13 +622,17 @@ export function EnhancedChatInput({
       Math.max(0, host.clientWidth - panelWidth),
     );
     const hostRect = host.getBoundingClientRect();
+    const visibleBounds = resolveVisibleVerticalBounds(host);
     const placement = resolveSlashPanelPlacement({
       rawTop,
       caretTop,
       panelHeight: 320,
       hostHeight: host.clientHeight,
+      hostTop: hostRect.top,
       hostBottom: hostRect.bottom,
+      visibleTop: visibleBounds.top,
       viewportHeight: window.innerHeight,
+      visibleBottom: visibleBounds.bottom,
     });
 
     setSlashPanelPosition({
@@ -1878,6 +1926,17 @@ export function EnhancedChatInput({
                 >
                   <Mic className="w-4 h-4" />
                 </button>
+
+                <div className="flex items-center gap-xs px-xs" title="始终允许（免审批）">
+                  <span className="text-[11px] text-text-tertiary whitespace-nowrap">始终允许</span>
+                  <Switch
+                    checked={autoApproveAlways}
+                    onCheckedChange={(checked) => onAutoApproveAlwaysChange?.(Boolean(checked))}
+                    disabled={disabled || isSending}
+                    aria-label="是否始终允许（免审批）"
+                    className="h-5 w-9"
+                  />
+                </div>
 
                 {/* 发送按钮 */}
                 <button

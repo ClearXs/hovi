@@ -13,6 +13,7 @@ import {
   AlertTriangle,
   RefreshCcw,
   Download,
+  Trash2,
   ChevronDown,
   ExternalLink,
   Search,
@@ -177,6 +178,7 @@ interface InstallHistoryEntry {
 const CLAWHUB_BASE_URL = "https://clawhub.ai";
 const CLAWHUB_PAGE_LIMIT = 24;
 const CLAWHUB_DISCOVERY_QUERIES = ["openclaw", "agent", "skill"];
+const CLAWHUB_SEARCH_DEBOUNCE_MS = 2000;
 
 function parseRetryAfterSeconds(message: string): number | null {
   const match = message.match(/retry after\s+(\d+)s/i);
@@ -227,6 +229,10 @@ function isLegacyInstallShapeError(message: string): boolean {
 
 function normalizeSearchText(value: string): string {
   return value.toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function canBulkDeleteSkill(skill: SkillStatusEntry): boolean {
+  return skill.source === "openclaw-managed" || skill.source === "openclaw-installed";
 }
 
 /* ------------------------------------------------------------------ */
@@ -373,12 +379,18 @@ function SkillCard({
   onInstall,
   onSetApiKey,
   onPreviewCode,
+  bulkDeleteMode,
+  selectedForDelete,
+  onToggleDeleteSelection,
 }: {
   skill: SkillStatusEntry;
   onToggle: (skillKey: string, enabled: boolean) => void;
   onInstall: (skillName: string, installId: string) => void;
   onSetApiKey: (skillKey: string, envKey: string, value: string) => void;
   onPreviewCode: (skill: SkillStatusEntry) => void;
+  bulkDeleteMode: boolean;
+  selectedForDelete: boolean;
+  onToggleDeleteSelection: (skillKey: string, selected: boolean) => void;
 }) {
   const [showApiKey, setShowApiKey] = useState(false);
   const [apiKeyInput, setApiKeyInput] = useState("");
@@ -388,6 +400,7 @@ function SkillCard({
     skill.missing.env.length > 0 ||
     skill.missing.config.length > 0 ||
     skill.missing.os.length > 0;
+  const removable = canBulkDeleteSkill(skill);
 
   return (
     <div className="border border-border-light rounded-lg p-4 hover:border-border transition-colors">
@@ -410,6 +423,23 @@ function SkillCard({
         </div>
 
         <div className="flex items-center gap-2 flex-shrink-0">
+          {bulkDeleteMode && (
+            <label
+              className={`inline-flex items-center gap-1 text-xs ${
+                removable ? "text-text-secondary" : "text-text-tertiary"
+              }`}
+            >
+              <input
+                type="checkbox"
+                checked={selectedForDelete}
+                disabled={!removable}
+                onChange={(e) => onToggleDeleteSelection(skill.skillKey, e.target.checked)}
+                className="h-3.5 w-3.5 rounded border-border-light"
+              />
+              删除
+            </label>
+          )}
+
           {/* Preview code button */}
           <Button
             size="sm"
@@ -596,6 +626,63 @@ function InstallConfirmDialog({
               </>
             ) : (
               "确认安装"
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function BulkDeleteConfirmDialog({
+  open,
+  skillKeys,
+  isDeleting,
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean;
+  skillKeys: string[];
+  isDeleting: boolean;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const preview = skillKeys.slice(0, 8);
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onCancel()}>
+      <DialogContent className="max-w-[28rem]">
+        <DialogHeader>
+          <DialogTitle>确认批量删除 Skills?</DialogTitle>
+          <DialogDescription>
+            即将删除 <strong>{skillKeys.length}</strong> 个已安装 Skills，此操作不可撤销。
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="rounded-md border border-border-light bg-surface-subtle p-3 text-xs text-text-secondary space-y-1 max-h-40 overflow-auto">
+          {preview.map((skillKey) => (
+            <div key={skillKey} className="font-mono break-all">
+              {skillKey}
+            </div>
+          ))}
+          {skillKeys.length > preview.length && (
+            <div className="text-text-tertiary">
+              ... 还有 {skillKeys.length - preview.length} 个
+            </div>
+          )}
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" size="sm" onClick={onCancel} disabled={isDeleting}>
+            取消
+          </Button>
+          <Button size="sm" variant="destructive" onClick={onConfirm} disabled={isDeleting}>
+            {isDeleting ? (
+              <>
+                <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />
+                删除中...
+              </>
+            ) : (
+              "确认删除"
             )}
           </Button>
         </DialogFooter>
@@ -880,6 +967,7 @@ function ClawHubDialog({
   cooldownUntilBySlug: Record<string, number>;
 }) {
   const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const [items, setItems] = useState<ClawHubBrowseItem[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [detailItem, setDetailItem] = useState<ClawHubBrowseItem | null>(null);
@@ -895,6 +983,7 @@ function ClawHubDialog({
   const [nowMs, setNowMs] = useState(Date.now());
 
   const trimmedQuery = query.trim();
+  const debouncedTrimmedQuery = debouncedQuery.trim();
 
   const fetchClawHubSearchItems = useCallback(
     async (searchQuery: string): Promise<ClawHubBrowseItem[]> => {
@@ -915,37 +1004,35 @@ function ClawHubDialog({
           ? data.items
           : [];
 
-      return results
-        .map((item) => {
-          const slug = typeof item.slug === "string" ? item.slug.trim() : "";
-          if (!slug) {
-            return null;
-          }
-          const displayName =
-            typeof item.displayName === "string" && item.displayName.trim()
-              ? item.displayName
-              : slug;
-          const version =
-            typeof item.version === "string" && item.version.trim()
-              ? item.version.trim()
-              : undefined;
-          return {
-            slug,
-            displayName,
-            summary: item.summary ?? "暂无简介",
-            version,
-            updatedAt: item.updatedAt,
-          } satisfies ClawHubBrowseItem;
-        })
-        .filter((item): item is ClawHubBrowseItem => item !== null);
+      const mapped: ClawHubBrowseItem[] = [];
+      for (const item of results) {
+        const slug = typeof item.slug === "string" ? item.slug.trim() : "";
+        if (!slug) {
+          continue;
+        }
+        const displayName =
+          typeof item.displayName === "string" && item.displayName.trim() ? item.displayName : slug;
+        const version =
+          typeof item.version === "string" && item.version.trim() ? item.version.trim() : undefined;
+        mapped.push({
+          slug,
+          displayName,
+          summary: item.summary ?? "暂无简介",
+          version,
+          updatedAt: item.updatedAt,
+        });
+      }
+
+      return mapped;
     },
     [],
   );
 
   const loadClawHubItems = useCallback(
-    async (opts?: { append?: boolean; cursor?: string | null }) => {
+    async (opts?: { append?: boolean; cursor?: string | null; searchQuery?: string }) => {
       const append = opts?.append === true;
       const cursor = opts?.cursor?.trim();
+      const searchQuery = (opts?.searchQuery ?? "").trim();
 
       if (append) {
         setIsLoadingMore(true);
@@ -955,8 +1042,8 @@ function ClawHubDialog({
       setError(null);
 
       try {
-        if (trimmedQuery) {
-          const mapped = await fetchClawHubSearchItems(trimmedQuery);
+        if (searchQuery) {
+          const mapped = await fetchClawHubSearchItems(searchQuery);
           setItems(mapped);
           setNextCursor(null);
           return;
@@ -978,30 +1065,29 @@ function ClawHubDialog({
           items?: ClawHubSkillListItem[];
           nextCursor?: string | null;
         };
-        const mapped: ClawHubBrowseItem[] = (data.items ?? [])
-          .map((item) => {
-            const slug = typeof item.slug === "string" ? item.slug.trim() : "";
-            if (!slug) {
-              return null;
-            }
-            const version =
-              typeof item.latestVersion?.version === "string" && item.latestVersion.version.trim()
-                ? item.latestVersion.version.trim()
-                : undefined;
-            return {
-              slug,
-              displayName:
-                typeof item.displayName === "string" && item.displayName.trim()
-                  ? item.displayName
-                  : slug,
-              summary: item.summary ?? "暂无简介",
-              version,
-              updatedAt: item.updatedAt,
-              downloads: item.stats?.downloads,
-              stars: item.stats?.stars,
-            } satisfies ClawHubBrowseItem;
-          })
-          .filter((item): item is ClawHubBrowseItem => item !== null);
+        const mapped: ClawHubBrowseItem[] = [];
+        for (const item of data.items ?? []) {
+          const slug = typeof item.slug === "string" ? item.slug.trim() : "";
+          if (!slug) {
+            continue;
+          }
+          const version =
+            typeof item.latestVersion?.version === "string" && item.latestVersion.version.trim()
+              ? item.latestVersion.version.trim()
+              : undefined;
+          mapped.push({
+            slug,
+            displayName:
+              typeof item.displayName === "string" && item.displayName.trim()
+                ? item.displayName
+                : slug,
+            summary: item.summary ?? "暂无简介",
+            version,
+            updatedAt: item.updatedAt,
+            downloads: item.stats?.downloads,
+            stars: item.stats?.stars,
+          });
+        }
 
         if (mapped.length > 0 || append || cursor) {
           setItems((prev) => (append ? [...prev, ...mapped] : mapped));
@@ -1041,25 +1127,22 @@ function ClawHubDialog({
         setIsLoadingMore(false);
       }
     },
-    [fetchClawHubSearchItems, trimmedQuery],
+    [fetchClawHubSearchItems],
   );
 
   useEffect(() => {
-    if (!open) {
-      return;
-    }
-    void loadClawHubItems();
-  }, [open, loadClawHubItems]);
+    const timer = setTimeout(() => {
+      setDebouncedQuery(query);
+    }, CLAWHUB_SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [query]);
 
   useEffect(() => {
     if (!open) {
       return;
     }
-    const timer = setTimeout(() => {
-      void loadClawHubItems();
-    }, 220);
-    return () => clearTimeout(timer);
-  }, [query, open, loadClawHubItems]);
+    void loadClawHubItems({ searchQuery: debouncedTrimmedQuery });
+  }, [open, loadClawHubItems, debouncedTrimmedQuery]);
 
   useEffect(() => {
     if (!open) {
@@ -1202,7 +1285,7 @@ function ClawHubDialog({
                   size="sm"
                   variant="outline"
                   className="h-7 text-xs"
-                  onClick={() => void loadClawHubItems()}
+                  onClick={() => void loadClawHubItems({ searchQuery: debouncedTrimmedQuery })}
                 >
                   重试
                 </Button>
@@ -1481,6 +1564,10 @@ export function SkillsTab() {
     Record<string, number>
   >({});
   const [installHistory, setInstallHistory] = useState<InstallHistoryEntry[]>([]);
+  const [bulkDeleteMode, setBulkDeleteMode] = useState(false);
+  const [selectedSkillKeysForDelete, setSelectedSkillKeysForDelete] = useState<string[]>([]);
+  const [confirmDeleteSkillKeys, setConfirmDeleteSkillKeys] = useState<string[] | null>(null);
+  const [isDeletingSkills, setIsDeletingSkills] = useState(false);
 
   const appendInstallHistory = useCallback((entry: Omit<InstallHistoryEntry, "id" | "at">) => {
     setInstallHistory((prev) =>
@@ -1516,6 +1603,15 @@ export function SkillsTab() {
   useEffect(() => {
     void loadSkills();
   }, [loadSkills]);
+
+  useEffect(() => {
+    const deletable = new Set(
+      (status?.skills ?? [])
+        .filter((skill) => canBulkDeleteSkill(skill))
+        .map((skill) => skill.skillKey),
+    );
+    setSelectedSkillKeysForDelete((prev) => prev.filter((skillKey) => deletable.has(skillKey)));
+  }, [status]);
 
   // Toggle skill enabled/disabled
   const handleToggle = useCallback(
@@ -1873,6 +1969,126 @@ export function SkillsTab() {
     ),
   };
 
+  const deletableFilteredSkillKeys = filteredSkills
+    .filter((skill) => canBulkDeleteSkill(skill))
+    .map((skill) => skill.skillKey);
+  const selectedDeletableSkillKeySet = new Set(selectedSkillKeysForDelete);
+  const selectedVisibleDeletableCount = deletableFilteredSkillKeys.filter((skillKey) =>
+    selectedDeletableSkillKeySet.has(skillKey),
+  ).length;
+  const allVisibleDeletableSelected =
+    deletableFilteredSkillKeys.length > 0 &&
+    selectedVisibleDeletableCount === deletableFilteredSkillKeys.length;
+
+  const handleToggleDeleteSelection = useCallback((skillKey: string, selected: boolean) => {
+    setSelectedSkillKeysForDelete((prev) => {
+      if (selected) {
+        return prev.includes(skillKey) ? prev : [...prev, skillKey];
+      }
+      return prev.filter((key) => key !== skillKey);
+    });
+  }, []);
+
+  const handleToggleSelectAllVisibleDeletable = useCallback(() => {
+    setSelectedSkillKeysForDelete((prev) => {
+      if (allVisibleDeletableSelected) {
+        const visibleSet = new Set(deletableFilteredSkillKeys);
+        return prev.filter((skillKey) => !visibleSet.has(skillKey));
+      }
+      const next = new Set(prev);
+      for (const skillKey of deletableFilteredSkillKeys) {
+        next.add(skillKey);
+      }
+      return [...next];
+    });
+  }, [allVisibleDeletableSelected, deletableFilteredSkillKeys]);
+
+  const handleRequestBulkDelete = useCallback(() => {
+    const selected = selectedSkillKeysForDelete.filter((skillKey) =>
+      deletableFilteredSkillKeys.includes(skillKey),
+    );
+    if (selected.length === 0) {
+      return;
+    }
+    setConfirmDeleteSkillKeys(selected);
+  }, [deletableFilteredSkillKeys, selectedSkillKeysForDelete]);
+
+  const handleConfirmDeleteSkills = useCallback(async () => {
+    if (!wsClient || !confirmDeleteSkillKeys || confirmDeleteSkillKeys.length === 0) {
+      setConfirmDeleteSkillKeys(null);
+      return;
+    }
+    setIsDeletingSkills(true);
+    try {
+      const result = await wsClient.sendRequest<{
+        ok: boolean;
+        removed: number;
+        results?: Array<{ skillKey: string; ok: boolean; message: string }>;
+      }>("skills.delete", {
+        skillKeys: confirmDeleteSkillKeys,
+        timeoutMs: 180000,
+      });
+      const rows = result?.results ?? [];
+      const failed = rows.filter((row) => !row.ok);
+      const removed = Number.isFinite(result?.removed)
+        ? Number(result.removed)
+        : rows.length - failed.length;
+
+      if (failed.length === 0) {
+        addToast({
+          title: "删除完成",
+          description: `已删除 ${removed} 个 Skills`,
+        });
+        appendInstallHistory({
+          source: "skills-delete",
+          title: `批量删除 (${confirmDeleteSkillKeys.length})`,
+          status: "success",
+          message: `已删除 ${removed} 个 Skills`,
+        });
+        setSelectedSkillKeysForDelete([]);
+        setBulkDeleteMode(false);
+      } else {
+        const detail = failed
+          .slice(0, 3)
+          .map((row) => `${row.skillKey}: ${row.message}`)
+          .join("；");
+        addToast({
+          title: "部分删除失败",
+          description:
+            detail || `已删除 ${removed} 个，失败 ${failed.length} 个。请重试或查看网关日志。`,
+          variant: "error",
+        });
+        appendInstallHistory({
+          source: "skills-delete",
+          title: `批量删除 (${confirmDeleteSkillKeys.length})`,
+          status: "failed",
+          message: detail || `已删除 ${removed} 个，失败 ${failed.length} 个`,
+        });
+        const failedKeySet = new Set(failed.map((row) => row.skillKey));
+        setSelectedSkillKeysForDelete((prev) =>
+          prev.filter((skillKey) => failedKeySet.has(skillKey)),
+        );
+      }
+      void loadSkills();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "批量删除失败";
+      addToast({
+        title: "批量删除失败",
+        description: message,
+        variant: "error",
+      });
+      appendInstallHistory({
+        source: "skills-delete",
+        title: `批量删除 (${confirmDeleteSkillKeys.length})`,
+        status: "failed",
+        message,
+      });
+    } finally {
+      setIsDeletingSkills(false);
+      setConfirmDeleteSkillKeys(null);
+    }
+  }, [addToast, appendInstallHistory, confirmDeleteSkillKeys, loadSkills, wsClient]);
+
   // Loading state
   if (isLoading && !status) {
     return (
@@ -1924,6 +2140,52 @@ export function SkillsTab() {
             刷新
           </Button>
 
+          {deletableFilteredSkillKeys.length > 0 && (
+            <>
+              {bulkDeleteMode && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 text-xs"
+                  onClick={handleToggleSelectAllVisibleDeletable}
+                >
+                  {allVisibleDeletableSelected ? "取消全选" : "全选可删"}
+                </Button>
+              )}
+              <Button
+                size="sm"
+                variant={bulkDeleteMode ? "destructive" : "outline"}
+                className="h-8 text-xs"
+                onClick={() => {
+                  if (bulkDeleteMode) {
+                    void handleRequestBulkDelete();
+                    return;
+                  }
+                  setBulkDeleteMode(true);
+                }}
+                disabled={bulkDeleteMode && selectedVisibleDeletableCount === 0}
+              >
+                <Trash2 className="w-3.5 h-3.5 mr-1.5" />
+                {bulkDeleteMode
+                  ? `删除选中 (${selectedVisibleDeletableCount})`
+                  : `批量删除 (${deletableFilteredSkillKeys.length})`}
+              </Button>
+              {bulkDeleteMode && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-8 text-xs"
+                  onClick={() => {
+                    setBulkDeleteMode(false);
+                    setSelectedSkillKeysForDelete([]);
+                  }}
+                >
+                  取消
+                </Button>
+              )}
+            </>
+          )}
+
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button size="sm" className="h-8 text-xs">
@@ -1953,6 +2215,7 @@ export function SkillsTab() {
         <span>共 {status?.skills.length ?? 0} 个 Skills</span>
         <span>已启用 {status?.skills.filter((s) => !s.disabled).length ?? 0}</span>
         <span>可用 {status?.skills.filter((s) => s.eligible).length ?? 0}</span>
+        {bulkDeleteMode && <span>已选删除 {selectedVisibleDeletableCount} 个</span>}
       </div>
 
       {installHistory.length > 0 && (
@@ -2008,6 +2271,9 @@ export function SkillsTab() {
               onInstall={handleInstall}
               onSetApiKey={handleSetApiKey}
               onPreviewCode={setPreviewSkill}
+              bulkDeleteMode={bulkDeleteMode}
+              selectedSkillKeys={selectedSkillKeysForDelete}
+              onToggleDeleteSelection={handleToggleDeleteSelection}
             />
           )}
           {grouped.bundled.length > 0 && (
@@ -2018,6 +2284,9 @@ export function SkillsTab() {
               onInstall={handleInstall}
               onSetApiKey={handleSetApiKey}
               onPreviewCode={setPreviewSkill}
+              bulkDeleteMode={bulkDeleteMode}
+              selectedSkillKeys={selectedSkillKeysForDelete}
+              onToggleDeleteSelection={handleToggleDeleteSelection}
             />
           )}
           {grouped.installed.length > 0 && (
@@ -2028,6 +2297,9 @@ export function SkillsTab() {
               onInstall={handleInstall}
               onSetApiKey={handleSetApiKey}
               onPreviewCode={setPreviewSkill}
+              bulkDeleteMode={bulkDeleteMode}
+              selectedSkillKeys={selectedSkillKeysForDelete}
+              onToggleDeleteSelection={handleToggleDeleteSelection}
             />
           )}
           {grouped.other.length > 0 && (
@@ -2038,6 +2310,9 @@ export function SkillsTab() {
               onInstall={handleInstall}
               onSetApiKey={handleSetApiKey}
               onPreviewCode={setPreviewSkill}
+              bulkDeleteMode={bulkDeleteMode}
+              selectedSkillKeys={selectedSkillKeysForDelete}
+              onToggleDeleteSelection={handleToggleDeleteSelection}
             />
           )}
         </div>
@@ -2078,6 +2353,19 @@ export function SkillsTab() {
         onConfirm={handleConfirmInstall}
         onCancel={() => setConfirmInstall(null)}
       />
+
+      <BulkDeleteConfirmDialog
+        open={confirmDeleteSkillKeys !== null}
+        skillKeys={confirmDeleteSkillKeys ?? []}
+        isDeleting={isDeletingSkills}
+        onConfirm={handleConfirmDeleteSkills}
+        onCancel={() => {
+          if (isDeletingSkills) {
+            return;
+          }
+          setConfirmDeleteSkillKeys(null);
+        }}
+      />
     </div>
   );
 }
@@ -2093,6 +2381,9 @@ function SkillGroup({
   onInstall,
   onSetApiKey,
   onPreviewCode,
+  bulkDeleteMode,
+  selectedSkillKeys,
+  onToggleDeleteSelection,
 }: {
   title: string;
   skills: SkillStatusEntry[];
@@ -2100,6 +2391,9 @@ function SkillGroup({
   onInstall: (skillName: string, installId: string) => void;
   onSetApiKey: (skillKey: string, envKey: string, value: string) => void;
   onPreviewCode: (skill: SkillStatusEntry) => void;
+  bulkDeleteMode: boolean;
+  selectedSkillKeys: string[];
+  onToggleDeleteSelection: (skillKey: string, selected: boolean) => void;
 }) {
   return (
     <div>
@@ -2115,6 +2409,9 @@ function SkillGroup({
             onInstall={onInstall}
             onSetApiKey={onSetApiKey}
             onPreviewCode={onPreviewCode}
+            bulkDeleteMode={bulkDeleteMode}
+            selectedForDelete={selectedSkillKeys.includes(skill.skillKey)}
+            onToggleDeleteSelection={onToggleDeleteSelection}
           />
         ))}
       </div>

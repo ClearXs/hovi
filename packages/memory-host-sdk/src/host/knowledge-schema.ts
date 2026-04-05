@@ -59,6 +59,10 @@ export function ensureKnowledgeSchema(db: DatabaseSync): void {
       description TEXT,
       icon TEXT,
       visibility TEXT NOT NULL,
+      source_type TEXT NOT NULL DEFAULT 'external',
+      source_config TEXT,
+      source_status TEXT NOT NULL DEFAULT 'connected',
+      pinned INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL,
       UNIQUE(owner_agent_id, name)
@@ -266,6 +270,10 @@ export function ensureKnowledgeSchema(db: DatabaseSync): void {
   );
 
   ensureColumn(db, "kb_documents", "kb_id", "TEXT");
+  ensureColumn(db, "kb_bases", "source_type", "TEXT NOT NULL DEFAULT 'external'");
+  ensureColumn(db, "kb_bases", "source_config", "TEXT");
+  ensureColumn(db, "kb_bases", "source_status", "TEXT NOT NULL DEFAULT 'connected'");
+  ensureColumn(db, "kb_bases", "pinned", "INTEGER NOT NULL DEFAULT 0");
   ensureColumn(
     db,
     "kb_base_settings",
@@ -286,7 +294,7 @@ export type KnowledgeDocument = {
   mimetype: string;
   size: number;
   hash: string;
-  source_type: "web_api" | "chat_attachment";
+  source_type: "web_api" | "chat_attachment" | "local_fs" | "smb" | "s3" | "webdav";
   source_metadata?: string; // JSON string
   uploaded_at: number;
   indexed_at?: number;
@@ -316,6 +324,10 @@ export type KnowledgeBaseEntry = {
   description?: string | null;
   icon?: string | null;
   visibility: "private" | "team" | "public";
+  source_type?: "external" | "local_fs" | "smb" | "s3" | "webdav";
+  source_config?: string | null;
+  source_status?: "connected" | "paused" | "syncing" | "error";
+  pinned?: number;
   created_at: number;
   updated_at: number;
 };
@@ -392,7 +404,13 @@ export type KnowledgeBaseSettingsEntry = {
 
 function ensureColumn(
   db: DatabaseSync,
-  table: "kb_documents" | "kb_base_settings" | "kg_entities" | "kg_relations" | "kg_build_tasks",
+  table:
+    | "kb_documents"
+    | "kb_bases"
+    | "kb_base_settings"
+    | "kg_entities"
+    | "kg_relations"
+    | "kg_build_tasks",
   column: string,
   definition: string,
 ): void {

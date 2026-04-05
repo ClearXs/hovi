@@ -3,17 +3,17 @@
 import { ChevronLeft, FileText, Network, Pencil, RefreshCw, Search, Settings2 } from "lucide-react";
 import { Loader2, Check, X } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
-import { KnowledgeDocumentsTab } from "@/components/knowledge/tabs/KnowledgeDocumentsTab";
 import { KnowledgeGraphTab } from "@/components/knowledge/tabs/KnowledgeGraphTab";
 import { KnowledgeRetrievalTab } from "@/components/knowledge/tabs/KnowledgeRetrievalTab";
 import { KnowledgeSettingsTab } from "@/components/knowledge/tabs/KnowledgeSettingsTab";
+import { KnowledgeTreeTab } from "@/components/knowledge/tabs/KnowledgeTreeTab";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { useKnowledgeBaseStore } from "@/stores/knowledgeBaseStore";
 
-type TabKey = "documents" | "graph" | "retrieval" | "settings";
+type TabKey = "tree" | "graph" | "retrieval" | "settings";
 
 interface KnowledgeDetailProps {
   activeDocumentId: string | null;
@@ -21,7 +21,7 @@ interface KnowledgeDetailProps {
 }
 
 export function KnowledgeDetail({ activeDocumentId, onBack }: KnowledgeDetailProps) {
-  const [tab, setTab] = useState<TabKey>("documents");
+  const [tab, setTab] = useState<TabKey>("tree");
   const [documentsMode, setDocumentsMode] = useState<"list" | "detail">("list");
   const [backToListSignal, setBackToListSignal] = useState(0);
   const [editOpen, setEditOpen] = useState(false);
@@ -38,7 +38,7 @@ export function KnowledgeDetail({ activeDocumentId, onBack }: KnowledgeDetailPro
   const rebuildProgress = useKnowledgeBaseStore((state) => state.rebuildProgress);
   const kbDetail = useKnowledgeBaseStore((state) => state.kbDetail);
   const currentDocument = useKnowledgeBaseStore((state) => state.detail);
-  const isDocumentDetail = tab === "documents" && documentsMode === "detail";
+  const isDocumentDetail = tab === "tree" && documentsMode === "detail";
   const canSaveEdit = useMemo(() => {
     return Boolean(currentDocument?.id && editFilename.trim());
   }, [currentDocument?.id, editFilename]);
@@ -56,7 +56,7 @@ export function KnowledgeDetail({ activeDocumentId, onBack }: KnowledgeDetailPro
         lines: "",
       });
       // 切换到文档标签页并显示详情
-      setTab("documents");
+      setTab("tree");
       setDocumentsMode("detail");
     },
     [navigateToSearchResult, activeKbId],
@@ -152,7 +152,7 @@ export function KnowledgeDetail({ activeDocumentId, onBack }: KnowledgeDetailPro
               </div>
             </div>
           </div>
-          {isDocumentDetail && (
+          {isDocumentDetail && currentDocument?.id && (
             <div className="flex items-center gap-xs">
               {/* Rebuild button with tooltip */}
               <div className="relative group">
@@ -231,7 +231,7 @@ export function KnowledgeDetail({ activeDocumentId, onBack }: KnowledgeDetailPro
           <div className="mt-md border-b border-border-light">
             {(
               [
-                { key: "documents", label: "文档", icon: FileText },
+                { key: "tree", label: "目录树", icon: FileText },
                 { key: "graph", label: "图谱", icon: Network },
                 { key: "retrieval", label: "检索测试", icon: Search },
                 { key: "settings", label: "设置", icon: Settings2 },
@@ -258,8 +258,8 @@ export function KnowledgeDetail({ activeDocumentId, onBack }: KnowledgeDetailPro
         )}
       </div>
       <div className="flex-1 min-h-0">
-        {tab === "documents" && (
-          <KnowledgeDocumentsTab
+        {tab === "tree" && (
+          <KnowledgeTreeTab
             activeDocumentId={activeDocumentId}
             backToListSignal={backToListSignal}
             onModeChange={setDocumentsMode}

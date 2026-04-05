@@ -13,7 +13,7 @@ import {
   KeyRound,
   RefreshCcw,
 } from "lucide-react";
-import { User, Settings, HelpCircle, Info, LogOut } from "lucide-react";
+import { User, Settings, HelpCircle, Info, LogOut, Puzzle } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ThemeSwitcher } from "@/components/theme/ThemeSwitcher";
 import { Button } from "@/components/ui/button";
@@ -462,6 +462,10 @@ export function TopBar({
             <DropdownMenuItem onClick={() => openSettings("skills")}>
               <Settings className="w-4 h-4 mr-2" />
               Skills 管理
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => openSettings("plugins")}>
+              <Puzzle className="w-4 h-4 mr-2" />
+              Plugins 管理
             </DropdownMenuItem>
             <DropdownMenuItem onClick={() => openSettings("connectors")}>
               <Settings className="w-4 h-4 mr-2" />

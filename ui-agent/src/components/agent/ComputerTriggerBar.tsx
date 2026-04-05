@@ -1,6 +1,6 @@
 "use client";
 
-import { Monitor, ChevronUp } from "lucide-react";
+import { FileText, ChevronUp } from "lucide-react";
 import { forwardRef } from "react";
 import { cn } from "@/lib/utils";
 
@@ -30,10 +30,10 @@ export const ComputerTriggerBar = forwardRef<HTMLButtonElement, ComputerTriggerB
           "hover:opacity-80",
           "px-md py-xs rounded-md bg-background-tertiary border border-border",
         )}
-        aria-label="查看 Hovi 虚拟机"
+        aria-label="查看文件列表"
       >
-        <Monitor className="w-3.5 h-3.5 text-primary flex-shrink-0" />
-        <span className="text-xs font-medium text-text-primary whitespace-nowrap">虚拟机</span>
+        <FileText className="w-3.5 h-3.5 text-primary flex-shrink-0" />
+        <span className="text-xs font-medium text-text-primary whitespace-nowrap">文件列表</span>
         <span className="text-xs text-text-tertiary">{fileCount}</span>
         <ChevronUp
           className={cn(

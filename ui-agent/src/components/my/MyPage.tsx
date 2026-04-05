@@ -23,6 +23,7 @@ import {
   KeyRound,
   RefreshCcw,
   Link2,
+  Puzzle,
 } from "lucide-react";
 import { memo, useState, useEffect, useCallback } from "react";
 import { AdvancedTab } from "@/components/settings/tabs/AdvancedTab";
@@ -31,6 +32,7 @@ import { AvatarTab } from "@/components/settings/tabs/AvatarTab";
 import { ConnectorsTab } from "@/components/settings/tabs/ConnectorsTab";
 import { GeneralSettingsTab } from "@/components/settings/tabs/GeneralSettingsTab";
 import { ModelsTab } from "@/components/settings/tabs/ModelsTab";
+import { PluginsTab } from "@/components/settings/tabs/PluginsTab";
 import { QuotaTab } from "@/components/settings/tabs/QuotaTab";
 import { ShortcutsTab } from "@/components/settings/tabs/ShortcutsTab";
 import { SkillsTab } from "@/components/settings/tabs/SkillsTab";
@@ -220,6 +222,7 @@ function SettingsContent({ onBack }: { onBack: () => void }) {
     { value: "general", label: "通用", icon: <Settings className="w-4 h-4" /> },
     { value: "shortcuts", label: "快捷键", icon: <Keyboard className="w-4 h-4" /> },
     { value: "skills", label: "Skills", icon: <Zap className="w-4 h-4" /> },
+    { value: "plugins", label: "Plugins", icon: <Puzzle className="w-4 h-4" /> },
     { value: "connectors", label: "连接器", icon: <Plug className="w-4 h-4" /> },
     { value: "models", label: "模型", icon: <Bot className="w-4 h-4" /> },
     { value: "appearance", label: "外观", icon: <Palette className="w-4 h-4" /> },
@@ -268,6 +271,7 @@ function SettingsContent({ onBack }: { onBack: () => void }) {
             {activeTab === "general" && <GeneralSettingsTab onClose={onBack} />}
             {activeTab === "shortcuts" && <ShortcutsTab />}
             {activeTab === "skills" && <SkillsTab />}
+            {activeTab === "plugins" && <PluginsTab />}
             {activeTab === "connectors" && <ConnectorsTab />}
             {activeTab === "models" && <ModelsTab onClose={onBack} />}
             {activeTab === "appearance" && <AppearanceTab onClose={onBack} />}

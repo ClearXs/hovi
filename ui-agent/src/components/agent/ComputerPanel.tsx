@@ -1,9 +1,9 @@
 "use client";
 
 import { Monitor, X } from "lucide-react";
-import { FileItemProps } from "@/components/files/FileList";
+import { FileItemProps, FileList } from "@/components/files/FileList";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
-import { FileListCompact } from "./FileListCompact";
 
 interface ComputerPanelProps {
   files: FileItemProps[];
@@ -18,10 +18,10 @@ export function ComputerPanel({ files, isOpen, onClose, fullscreen = false }: Co
   return (
     <div
       className={cn(
-        "flex flex-col",
+        "flex min-h-0 flex-col",
         fullscreen
           ? "bg-surface border border-border shadow-lg h-full w-full"
-          : "w-full max-h-[200px]",
+          : "w-full h-[240px] overflow-hidden",
       )}
     >
       {/* Panel Header - 仅全屏模式显示 */}
@@ -46,9 +46,12 @@ export function ComputerPanel({ files, isOpen, onClose, fullscreen = false }: Co
       {!fullscreen && <div className="border-t border-border" />}
 
       {/* File List */}
-      <div className="flex-1 overflow-hidden">
-        <FileListCompact files={files} />
-      </div>
+      <ScrollArea
+        className={cn("h-full min-h-0 flex-1 px-md pb-md", fullscreen ? "pt-md" : "pt-sm")}
+        viewportClassName="h-full"
+      >
+        <FileList files={files} />
+      </ScrollArea>
     </div>
   );
 }

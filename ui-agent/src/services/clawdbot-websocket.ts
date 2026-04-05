@@ -29,7 +29,15 @@ const LONG_RUNNING_RPC_TIMEOUT_BY_METHOD: Record<string, number> = {
   "knowledge.rebuild": 180_000,
   "knowledge.graph.build": 180_000,
   "knowledge.graph.buildAll": 180_000,
+  "knowledge.tree.materialize": 180_000,
+  "knowledge.source.sync": 180_000,
   "skills.install": 180_000,
+  "skills.delete": 180_000,
+  "plugins.install": 180_000,
+  "plugins.update": 180_000,
+  "plugins.uninstall": 180_000,
+  "plugins.batchUpdate": 180_000,
+  "plugins.batchUninstall": 180_000,
 };
 
 function readTimeoutMs(params?: Record<string, unknown> | ConnectParams): number | null {

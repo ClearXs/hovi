@@ -17,6 +17,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  deleteKnowledgeSource,
+  pauseKnowledgeSource,
+  resumeKnowledgeSource,
+  syncKnowledgeSource,
+  testKnowledgeSource,
+  updateKnowledgeSource,
+} from "@/services/knowledgeApi";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useKnowledgeBaseStore } from "@/stores/knowledgeBaseStore";
 import { useToastStore } from "@/stores/toastStore";
@@ -93,6 +101,8 @@ export function KnowledgeSettingsTab() {
     isUpdatingKb,
     deleteKb,
     isDeletingKb,
+    loadKbList,
+    selectKb,
   } = useKnowledgeBaseStore();
 
   const { addToast } = useToastStore();

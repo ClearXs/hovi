@@ -200,6 +200,22 @@ describe("EnhancedChatInput - Quick Actions", () => {
     expect(screen.getByText("生成Word")).toBeInTheDocument();
   });
 
+  test("renders auto-approve switch next to send button and toggles callback", async () => {
+    const onAutoApproveAlwaysChange = jest.fn();
+    render(
+      <EnhancedChatInput
+        onSend={mockOnSend}
+        autoApproveAlways={false}
+        onAutoApproveAlwaysChange={onAutoApproveAlwaysChange}
+      />,
+    );
+
+    const autoApproveSwitch = screen.getByRole("switch", { name: "是否始终允许（免审批）" });
+    await userEvent.click(autoApproveSwitch);
+
+    expect(onAutoApproveAlwaysChange).toHaveBeenCalledWith(true);
+  });
+
   test("sends uploaded attachment even before parent draftAttachments rerender", async () => {
     const onDraftAttachmentsChange = jest.fn();
     const { container } = render(
@@ -383,6 +399,7 @@ describe("EnhancedChatInput - Quick Actions", () => {
       caretTop: 140,
       panelHeight: 300,
       hostHeight: 200,
+      hostTop: 560,
       hostBottom: 760,
       viewportHeight: 800,
     });
@@ -391,12 +408,31 @@ describe("EnhancedChatInput - Quick Actions", () => {
     expect(placement.top).toBeLessThan(120);
   });
 
+  test("resolves slash panel upward when clipped by an overflow-hidden container", () => {
+    const placement = resolveSlashPanelPlacement({
+      rawTop: 64,
+      caretTop: 44,
+      panelHeight: 300,
+      hostHeight: 220,
+      hostTop: 280,
+      hostBottom: 500,
+      viewportHeight: 900,
+      // Simulate a clipping ancestor bottom lower than window.innerHeight.
+      visibleTop: 120,
+      visibleBottom: 560,
+    });
+
+    expect(placement.direction).toBe("up");
+    expect(placement.top).toBeLessThan(0);
+  });
+
   test("resolves slash panel to open downward when there is enough space below", () => {
     const placement = resolveSlashPanelPlacement({
       rawTop: 64,
       caretTop: 44,
       panelHeight: 300,
       hostHeight: 220,
+      hostTop: 200,
       hostBottom: 420,
       viewportHeight: 900,
     });

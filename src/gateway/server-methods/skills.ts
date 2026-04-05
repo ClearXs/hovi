@@ -23,11 +23,14 @@ import {
   errorShape,
   formatValidationErrors,
   validateSkillsBinsParams,
+  validateSkillsDeleteParams,
   validateSkillsInstallParams,
   validateSkillsStatusParams,
   validateSkillsUpdateParams,
 } from "../protocol/index.js";
 import type { GatewayRequestHandlers } from "./types.js";
+
+const REMOVABLE_SKILL_SOURCES = new Set(["openclaw-managed", "openclaw-installed"]);
 
 function collectSkillBins(entries: SkillEntry[]): string[] {
   const bins = new Set<string>();
@@ -195,6 +198,114 @@ export const skillsHandlers: GatewayRequestHandlers = {
       result.ok,
       result,
       result.ok ? undefined : errorShape(ErrorCodes.UNAVAILABLE, result.message),
+    );
+  },
+  "skills.delete": async ({ params, respond }) => {
+    if (!validateSkillsDeleteParams(params)) {
+      respond(
+        false,
+        undefined,
+        errorShape(
+          ErrorCodes.INVALID_REQUEST,
+          `invalid skills.delete params: ${formatValidationErrors(validateSkillsDeleteParams.errors)}`,
+        ),
+      );
+      return;
+    }
+    const p = params as { skillKeys: string[] };
+    const cfg = loadConfig();
+    const workspaceDir = resolveAgentWorkspaceDir(cfg, resolveDefaultAgentId(cfg));
+    const status = buildWorkspaceSkillStatus(workspaceDir, {
+      config: cfg,
+      eligibility: { remote: getRemoteSkillEligibility() },
+    });
+    const bySkillKey = new Map(status.skills.map((entry) => [entry.skillKey, entry]));
+    const managedSkillsRoot = path.resolve(status.managedSkillsDir);
+    const uniqueSkillKeys = Array.from(
+      new Set(
+        p.skillKeys.map((skillKey) => skillKey.trim()).filter((skillKey) => skillKey.length > 0),
+      ),
+    );
+
+    const nextEntries = cfg.skills?.entries ? { ...cfg.skills.entries } : {};
+    let configChanged = false;
+    const results: Array<{ skillKey: string; ok: boolean; source?: string; message: string }> = [];
+
+    for (const skillKey of uniqueSkillKeys) {
+      const entry = bySkillKey.get(skillKey);
+      if (!entry) {
+        results.push({ skillKey, ok: false, message: `skill not found: ${skillKey}` });
+        continue;
+      }
+      if (!REMOVABLE_SKILL_SOURCES.has(entry.source)) {
+        results.push({
+          skillKey,
+          source: entry.source,
+          ok: false,
+          message: `source "${entry.source}" is not removable`,
+        });
+        continue;
+      }
+      const targetDir = path.resolve(entry.baseDir);
+      if (!isWithinDir(managedSkillsRoot, targetDir)) {
+        results.push({
+          skillKey,
+          source: entry.source,
+          ok: false,
+          message: `refusing to delete outside managed skills directory: ${targetDir}`,
+        });
+        continue;
+      }
+      try {
+        await fs.rm(targetDir, { recursive: true, force: true });
+        if (Object.hasOwn(nextEntries, skillKey)) {
+          delete nextEntries[skillKey];
+          configChanged = true;
+        }
+        results.push({
+          skillKey,
+          source: entry.source,
+          ok: true,
+          message: `deleted ${skillKey}`,
+        });
+      } catch (err) {
+        results.push({
+          skillKey,
+          source: entry.source,
+          ok: false,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    if (configChanged) {
+      const nextSkills = cfg.skills
+        ? {
+            ...cfg.skills,
+            entries: nextEntries,
+          }
+        : { entries: nextEntries };
+      await writeConfigFile({
+        ...cfg,
+        skills: nextSkills,
+      });
+    }
+
+    const failures = results.filter((result) => !result.ok);
+    const ok = failures.length === 0;
+    respond(
+      ok,
+      {
+        ok,
+        removed: results.length - failures.length,
+        results,
+      },
+      ok
+        ? undefined
+        : errorShape(
+            ErrorCodes.UNAVAILABLE,
+            failures.map((result) => `${result.skillKey}: ${result.message}`).join("; "),
+          ),
     );
   },
   "skills.getCode": async ({ params, respond }) => {

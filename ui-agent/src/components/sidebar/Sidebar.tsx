@@ -23,6 +23,7 @@ import {
   Sparkles,
   Clock,
   Bot,
+  Compass,
 } from "lucide-react";
 import { useEffect, useRef, useState, useMemo } from "react";
 import { FiEdit3, FiSearch, FiBook } from "react-icons/fi";
@@ -68,6 +69,7 @@ interface SidebarProps {
   onToggleCollapse?: () => void;
   isLoading?: boolean;
   onOpenKnowledge?: () => void;
+  onOpenDiscover?: () => void;
   onOpenChannel?: () => void;
   onOpenPersonaSettings?: () => void;
   onOpenCronJobs?: () => void;
@@ -76,7 +78,7 @@ interface SidebarProps {
   onGoHome?: () => void;
   assistantVisible?: boolean;
   onToggleAssistantVisible?: () => void;
-  activeView?: "chat" | "channel" | "knowledge" | "persona" | "my";
+  activeView?: "chat" | "channel" | "discover" | "knowledge" | "persona" | "my";
   searchShortcutLabel?: string;
   newSessionShortcutLabel?: string;
 }
@@ -107,6 +109,7 @@ const Sidebar = ({
   onToggleCollapse = () => {},
   isLoading = false,
   onOpenKnowledge = () => {},
+  onOpenDiscover = () => {},
   onOpenChannel = () => {},
   onOpenPersonaSettings = () => {},
   onOpenCronJobs = () => {},
@@ -167,6 +170,9 @@ const Sidebar = ({
 
   const handleLibraryClick = () => {
     onOpenKnowledge();
+  };
+  const handleDiscoverClick = () => {
+    onOpenDiscover();
   };
   const handleChannelClick = () => {
     onOpenChannel();
@@ -630,78 +636,132 @@ const Sidebar = ({
 
           {/* 新建任务按钮 */}
           <div className="flex flex-col items-center pt-lg gap-md flex-shrink-0">
-            <button
-              onClick={onNewSession}
-              className={cn(
-                "group w-10 h-10 rounded-md flex items-center justify-center transition-all duration-fast cursor-pointer active:bg-surface-subtle",
-                activeView === "chat"
-                  ? "bg-primary/10 hover:bg-primary/20"
-                  : "hover:bg-background-secondary",
-              )}
-              title={`新建任务 (${newSessionShortcutLabel})`}
-            >
-              <Plus
-                className={cn(
-                  "w-5 h-5 transition-colors",
-                  activeView === "chat"
-                    ? "text-primary"
-                    : "text-text-secondary group-hover:text-text-primary",
-                )}
-              />
-            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={onNewSession}
+                  aria-label="新建任务"
+                  className={cn(
+                    "group w-10 h-10 rounded-md flex items-center justify-center transition-all duration-fast cursor-pointer active:bg-surface-subtle",
+                    activeView === "chat"
+                      ? "bg-primary/10 hover:bg-primary/20"
+                      : "hover:bg-background-secondary",
+                  )}
+                >
+                  <Plus
+                    className={cn(
+                      "w-5 h-5 transition-colors",
+                      activeView === "chat"
+                        ? "text-primary"
+                        : "text-text-secondary group-hover:text-text-primary",
+                    )}
+                  />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="text-xs">新建任务 ({newSessionShortcutLabel})</p>
+              </TooltipContent>
+            </Tooltip>
           </div>
 
           {/* 搜索按钮 */}
           <div className="flex flex-col items-center gap-md flex-shrink-0">
-            <button
-              onClick={handleSearchClick}
-              className="group w-10 h-10 rounded-md hover:bg-background-secondary active:bg-surface-subtle flex items-center justify-center transition-all duration-fast cursor-pointer"
-              title={`搜索 (${searchShortcutLabel})`}
-            >
-              <FiSearch className="w-5 h-5 text-text-secondary group-hover:text-text-primary transition-colors" />
-            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={handleSearchClick}
+                  aria-label="搜索"
+                  className="group w-10 h-10 rounded-md hover:bg-background-secondary active:bg-surface-subtle flex items-center justify-center transition-all duration-fast cursor-pointer"
+                >
+                  <FiSearch className="w-5 h-5 text-text-secondary group-hover:text-text-primary transition-colors" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="text-xs">搜索 ({searchShortcutLabel})</p>
+              </TooltipContent>
+            </Tooltip>
           </div>
 
           {/* 知识库按钮 */}
           <div className="flex flex-col items-center gap-md flex-shrink-0">
-            <button
-              onClick={handleLibraryClick}
-              className={cn(
-                "group w-10 h-10 rounded-md flex items-center justify-center transition-all duration-fast cursor-pointer active:bg-surface-subtle",
-                activeView === "knowledge"
-                  ? "bg-primary/10 hover:bg-primary/20"
-                  : "hover:bg-background-secondary",
-              )}
-              title="知识库"
-            >
-              <FiBook
-                className={cn(
-                  "w-5 h-5 transition-colors",
-                  activeView === "knowledge"
-                    ? "text-primary"
-                    : "text-text-secondary group-hover:text-text-primary",
-                )}
-              />
-            </button>
-            <button
-              onClick={handleChannelClick}
-              className={cn(
-                "group w-10 h-10 rounded-md flex items-center justify-center transition-all duration-fast cursor-pointer active:bg-surface-subtle",
-                activeView === "channel"
-                  ? "bg-primary/10 hover:bg-primary/20"
-                  : "hover:bg-background-secondary",
-              )}
-              title="频道"
-            >
-              <Box
-                className={cn(
-                  "w-5 h-5 transition-colors",
-                  activeView === "channel"
-                    ? "text-primary"
-                    : "text-text-secondary group-hover:text-text-primary",
-                )}
-              />
-            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={handleLibraryClick}
+                  aria-label="知识库"
+                  className={cn(
+                    "group w-10 h-10 rounded-md flex items-center justify-center transition-all duration-fast cursor-pointer active:bg-surface-subtle",
+                    activeView === "knowledge"
+                      ? "bg-primary/10 hover:bg-primary/20"
+                      : "hover:bg-background-secondary",
+                  )}
+                >
+                  <FiBook
+                    className={cn(
+                      "w-5 h-5 transition-colors",
+                      activeView === "knowledge"
+                        ? "text-primary"
+                        : "text-text-secondary group-hover:text-text-primary",
+                    )}
+                  />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="text-xs">知识库</p>
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={handleDiscoverClick}
+                  aria-label="动态"
+                  className={cn(
+                    "group w-10 h-10 rounded-md flex items-center justify-center transition-all duration-fast cursor-pointer active:bg-surface-subtle",
+                    activeView === "discover"
+                      ? "bg-primary/10 hover:bg-primary/20"
+                      : "hover:bg-background-secondary",
+                  )}
+                >
+                  <Compass
+                    className={cn(
+                      "w-5 h-5 transition-colors",
+                      activeView === "discover"
+                        ? "text-primary"
+                        : "text-text-secondary group-hover:text-text-primary",
+                    )}
+                  />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="text-xs">动态</p>
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={handleChannelClick}
+                  aria-label="频道"
+                  className={cn(
+                    "group w-10 h-10 rounded-md flex items-center justify-center transition-all duration-fast cursor-pointer active:bg-surface-subtle",
+                    activeView === "channel"
+                      ? "bg-primary/10 hover:bg-primary/20"
+                      : "hover:bg-background-secondary",
+                  )}
+                >
+                  <Box
+                    className={cn(
+                      "w-5 h-5 transition-colors",
+                      activeView === "channel"
+                        ? "text-primary"
+                        : "text-text-secondary group-hover:text-text-primary",
+                    )}
+                  />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="text-xs">频道</p>
+              </TooltipContent>
+            </Tooltip>
             {/* 虚拟助手设定按钮 */}
             <TooltipProvider delayDuration={300}>
               <Tooltip>
@@ -763,9 +823,10 @@ const Sidebar = ({
               <TooltipTrigger asChild>
                 <button
                   onClick={() => openSettings()}
+                  aria-label="设置"
                   className="group w-10 h-10 rounded-md hover:bg-background-secondary active:bg-surface-subtle flex items-center justify-center transition-all duration-fast cursor-pointer"
                 >
-                  <Settings className="w-4 h-4 text-text-secondary group-hover:text-text-primary transition-colors" />
+                  <Settings className="w-5 h-5 text-text-secondary group-hover:text-text-primary transition-colors" />
                 </button>
               </TooltipTrigger>
               <TooltipContent>
@@ -779,8 +840,9 @@ const Sidebar = ({
                 <button
                   className="group w-10 h-10 rounded-md hover:bg-background-secondary active:bg-surface-subtle flex items-center justify-center transition-all duration-fast cursor-pointer"
                   onClick={() => setAboutOpen(true)}
+                  aria-label="关于我"
                 >
-                  <Info className="w-4 h-4 text-text-secondary group-hover:text-text-primary transition-colors" />
+                  <Info className="w-5 h-5 text-text-secondary group-hover:text-text-primary transition-colors" />
                 </button>
               </TooltipTrigger>
               <TooltipContent>
@@ -906,6 +968,34 @@ const Sidebar = ({
               )}
             >
               知识库
+            </span>
+          </button>
+          <button
+            onClick={handleDiscoverClick}
+            className={cn(
+              "group w-full flex items-center gap-sm rounded-md px-lg py-sm transition-all duration-fast cursor-pointer active:bg-surface-subtle",
+              activeView === "discover"
+                ? "bg-primary/10 hover:bg-primary/20"
+                : "hover:bg-background-secondary",
+            )}
+          >
+            <Compass
+              className={cn(
+                "w-4 h-4 flex-shrink-0 transition-colors",
+                activeView === "discover"
+                  ? "text-primary"
+                  : "text-text-secondary group-hover:text-text-primary",
+              )}
+            />
+            <span
+              className={cn(
+                "text-xs font-medium transition-colors",
+                activeView === "discover"
+                  ? "text-text-primary"
+                  : "text-text-secondary group-hover:text-text-primary",
+              )}
+            >
+              动态
             </span>
           </button>
           {/* 频道 */}

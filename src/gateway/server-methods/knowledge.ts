@@ -118,6 +118,42 @@ interface KnowledgeSearchParams {
   limit?: number;
 }
 
+interface KnowledgeSourceUpdateParams {
+  kbId: string;
+  sourceType: "external" | "local_fs" | "smb" | "s3" | "webdav";
+  sourceConfig?: Record<string, unknown>;
+}
+
+interface KnowledgeSourceActionParams {
+  kbId: string;
+}
+
+interface KnowledgeTreeRootsParams {
+  kbId: string;
+}
+
+interface KnowledgeTreeChildrenParams {
+  kbId: string;
+  path: string;
+}
+
+interface KnowledgeTreeFileParams {
+  kbId: string;
+  path: string;
+}
+
+interface KnowledgeTreeFileSaveParams {
+  kbId: string;
+  path: string;
+  content: string;
+}
+
+interface KnowledgeTreeMaterializeParams {
+  kbId: string;
+  path: string;
+  mode: "vectorize" | "graphize";
+}
+
 // 辅助函数：解析 agentId
 function resolveAgentId(params: Record<string, unknown>, _context: { req?: unknown }): string {
   // 首先尝试从 params 获取
@@ -156,6 +192,10 @@ function formatKnowledgeBase(base: {
   description?: string | null;
   icon?: string | null;
   visibility: "private" | "team" | "public";
+  source_type?: "external" | "local_fs" | "smb" | "s3" | "webdav";
+  source_config?: string | null;
+  source_status?: "connected" | "paused" | "syncing" | "error";
+  pinned?: number;
   created_at: number;
   updated_at: number;
   tags?: Array<{ tagId: string; name: string; color: string | null }>;
@@ -168,6 +208,10 @@ function formatKnowledgeBase(base: {
     description: base.description ?? null,
     icon: base.icon ?? null,
     visibility: base.visibility,
+    sourceType: base.source_type ?? "external",
+    sourceStatus: base.source_status ?? "connected",
+    sourceConfig: safeParseJson(base.source_config),
+    pinned: Boolean(base.pinned),
     tags: base.tags ?? [],
     settings: base.settings,
     documentCount: base.documentCount ?? 0,
@@ -233,6 +277,17 @@ function formatTag(tag: { tagId: string; name: string; color: string | null }) {
     name: tag.name,
     color: tag.color,
   };
+}
+
+function safeParseJson(value?: string | null): Record<string, unknown> | null {
+  if (!value) {
+    return null;
+  }
+  try {
+    return JSON.parse(value) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
 }
 
 // 知识库 WebSocket 处理器
@@ -1078,6 +1133,326 @@ export const knowledgeHandlers: GatewayRequestHandlers = {
         false,
         undefined,
         errorShape(ErrorCodes.INTERNAL_ERROR, `设置更新失败: ${String(err)}`),
+      );
+    }
+  },
+
+  // ========== 数据源生命周期 ==========
+
+  "knowledge.source.update": async ({ params, respond }) => {
+    try {
+      const agentId = resolveAgentId(params, {});
+      const manager = getKnowledgeManager(agentId);
+      if (!manager.isEnabled(agentId)) {
+        respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, "知识库功能未启用"));
+        return;
+      }
+      const p = params as unknown as KnowledgeSourceUpdateParams;
+      if (!p.kbId || !p.sourceType) {
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.INVALID_REQUEST, "缺少 kbId 或 sourceType 参数"),
+        );
+        return;
+      }
+      const kb = manager.updateSourceConfig({
+        agentId,
+        kbId: p.kbId,
+        sourceType: p.sourceType,
+        sourceConfig: p.sourceConfig,
+      });
+      respond(true, formatKnowledgeBase(kb));
+    } catch (err) {
+      log.error(`knowledge.source.update failed: ${String(err)}`);
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INTERNAL_ERROR, `数据源更新失败: ${String(err)}`),
+      );
+    }
+  },
+
+  "knowledge.source.test": async ({ params, respond }) => {
+    try {
+      const agentId = resolveAgentId(params, {});
+      const manager = getKnowledgeManager(agentId);
+      if (!manager.isEnabled(agentId)) {
+        respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, "知识库功能未启用"));
+        return;
+      }
+      const p = params as unknown as KnowledgeSourceActionParams;
+      if (!p.kbId) {
+        respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "缺少 kbId 参数"));
+        return;
+      }
+      const result = manager.testSource({ agentId, kbId: p.kbId });
+      respond(true, result);
+    } catch (err) {
+      log.error(`knowledge.source.test failed: ${String(err)}`);
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INTERNAL_ERROR, `连接测试失败: ${String(err)}`),
+      );
+    }
+  },
+
+  "knowledge.source.sync": async ({ params, respond }) => {
+    try {
+      const agentId = resolveAgentId(params, {});
+      const manager = getKnowledgeManager(agentId);
+      if (!manager.isEnabled(agentId)) {
+        respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, "知识库功能未启用"));
+        return;
+      }
+      const p = params as unknown as KnowledgeSourceActionParams;
+      if (!p.kbId) {
+        respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "缺少 kbId 参数"));
+        return;
+      }
+      const result = manager.syncSource({ agentId, kbId: p.kbId });
+      respond(true, result);
+    } catch (err) {
+      log.error(`knowledge.source.sync failed: ${String(err)}`);
+      respond(false, undefined, errorShape(ErrorCodes.INTERNAL_ERROR, `同步失败: ${String(err)}`));
+    }
+  },
+
+  "knowledge.source.pause": async ({ params, respond }) => {
+    try {
+      const agentId = resolveAgentId(params, {});
+      const manager = getKnowledgeManager(agentId);
+      if (!manager.isEnabled(agentId)) {
+        respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, "知识库功能未启用"));
+        return;
+      }
+      const p = params as unknown as KnowledgeSourceActionParams;
+      if (!p.kbId) {
+        respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "缺少 kbId 参数"));
+        return;
+      }
+      const result = manager.pauseSource({ agentId, kbId: p.kbId });
+      respond(true, result);
+    } catch (err) {
+      log.error(`knowledge.source.pause failed: ${String(err)}`);
+      respond(false, undefined, errorShape(ErrorCodes.INTERNAL_ERROR, `暂停失败: ${String(err)}`));
+    }
+  },
+
+  "knowledge.source.resume": async ({ params, respond }) => {
+    try {
+      const agentId = resolveAgentId(params, {});
+      const manager = getKnowledgeManager(agentId);
+      if (!manager.isEnabled(agentId)) {
+        respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, "知识库功能未启用"));
+        return;
+      }
+      const p = params as unknown as KnowledgeSourceActionParams;
+      if (!p.kbId) {
+        respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "缺少 kbId 参数"));
+        return;
+      }
+      const result = manager.resumeSource({ agentId, kbId: p.kbId });
+      respond(true, result);
+    } catch (err) {
+      log.error(`knowledge.source.resume failed: ${String(err)}`);
+      respond(false, undefined, errorShape(ErrorCodes.INTERNAL_ERROR, `恢复失败: ${String(err)}`));
+    }
+  },
+
+  "knowledge.source.delete": async ({ params, respond }) => {
+    try {
+      const agentId = resolveAgentId(params, {});
+      const manager = getKnowledgeManager(agentId);
+      if (!manager.isEnabled(agentId)) {
+        respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, "知识库功能未启用"));
+        return;
+      }
+      const p = params as unknown as KnowledgeSourceActionParams;
+      if (!p.kbId) {
+        respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "缺少 kbId 参数"));
+        return;
+      }
+
+      const docs = manager.listDocuments({
+        agentId,
+        kbId: p.kbId,
+        limit: 10_000,
+        offset: 0,
+      });
+      for (const doc of docs) {
+        await manager.deleteDocument({
+          documentId: doc.id,
+          agentId,
+          kbId: p.kbId,
+        });
+      }
+      const result = manager.deleteBase({ agentId, kbId: p.kbId });
+      if (!result.success) {
+        respond(false, undefined, errorShape(ErrorCodes.NOT_FOUND, "知识库不存在"));
+        return;
+      }
+      respond(true, { success: true });
+    } catch (err) {
+      log.error(`knowledge.source.delete failed: ${String(err)}`);
+      respond(false, undefined, errorShape(ErrorCodes.INTERNAL_ERROR, `删除失败: ${String(err)}`));
+    }
+  },
+
+  // ========== 目录树 ==========
+
+  "knowledge.tree.roots": async ({ params, respond }) => {
+    try {
+      const agentId = resolveAgentId(params, {});
+      const manager = getKnowledgeManager(agentId);
+      if (!manager.isEnabled(agentId)) {
+        respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, "知识库功能未启用"));
+        return;
+      }
+      const p = params as unknown as KnowledgeTreeRootsParams;
+      if (!p.kbId) {
+        respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "缺少 kbId 参数"));
+        return;
+      }
+      const roots = await manager.listTreeRoots({ agentId, kbId: p.kbId });
+      respond(true, { roots });
+    } catch (err) {
+      log.error(`knowledge.tree.roots failed: ${String(err)}`);
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INTERNAL_ERROR, `目录根加载失败: ${String(err)}`),
+      );
+    }
+  },
+
+  "knowledge.tree.children": async ({ params, respond }) => {
+    try {
+      const agentId = resolveAgentId(params, {});
+      const manager = getKnowledgeManager(agentId);
+      if (!manager.isEnabled(agentId)) {
+        respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, "知识库功能未启用"));
+        return;
+      }
+      const p = params as unknown as KnowledgeTreeChildrenParams;
+      if (!p.kbId || !p.path) {
+        respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "缺少 kbId 或 path 参数"));
+        return;
+      }
+      const entries = await manager.listTreeChildren({
+        agentId,
+        kbId: p.kbId,
+        path: p.path,
+      });
+      respond(true, { entries });
+    } catch (err) {
+      log.error(`knowledge.tree.children failed: ${String(err)}`);
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INTERNAL_ERROR, `目录子项加载失败: ${String(err)}`),
+      );
+    }
+  },
+
+  "knowledge.tree.file.get": async ({ params, respond }) => {
+    try {
+      const agentId = resolveAgentId(params, {});
+      const manager = getKnowledgeManager(agentId);
+      if (!manager.isEnabled(agentId)) {
+        respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, "知识库功能未启用"));
+        return;
+      }
+      const p = params as unknown as KnowledgeTreeFileParams;
+      if (!p.kbId || !p.path) {
+        respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "缺少 kbId 或 path 参数"));
+        return;
+      }
+      const file = await manager.getTreeFile({
+        agentId,
+        kbId: p.kbId,
+        path: p.path,
+      });
+      respond(true, file);
+    } catch (err) {
+      log.error(`knowledge.tree.file.get failed: ${String(err)}`);
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INTERNAL_ERROR, `读取文件失败: ${String(err)}`),
+      );
+    }
+  },
+
+  "knowledge.tree.file.save": async ({ params, respond }) => {
+    try {
+      const agentId = resolveAgentId(params, {});
+      const manager = getKnowledgeManager(agentId);
+      if (!manager.isEnabled(agentId)) {
+        respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, "知识库功能未启用"));
+        return;
+      }
+      const p = params as unknown as KnowledgeTreeFileSaveParams;
+      if (!p.kbId || !p.path || typeof p.content !== "string") {
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.INVALID_REQUEST, "缺少 kbId/path/content 参数"),
+        );
+        return;
+      }
+      const result = await manager.saveTreeFile({
+        agentId,
+        kbId: p.kbId,
+        path: p.path,
+        content: p.content,
+      });
+      respond(true, result);
+    } catch (err) {
+      log.error(`knowledge.tree.file.save failed: ${String(err)}`);
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INTERNAL_ERROR, `保存文件失败: ${String(err)}`),
+      );
+    }
+  },
+
+  "knowledge.tree.materialize": async ({ params, respond }) => {
+    try {
+      const agentId = resolveAgentId(params, {});
+      const manager = getKnowledgeManager(agentId);
+      if (!manager.isEnabled(agentId)) {
+        respond(false, undefined, errorShape(ErrorCodes.UNAVAILABLE, "知识库功能未启用"));
+        return;
+      }
+      const p = params as unknown as KnowledgeTreeMaterializeParams;
+      if (!p.kbId || !p.path || !p.mode) {
+        respond(
+          false,
+          undefined,
+          errorShape(ErrorCodes.INVALID_REQUEST, "缺少 kbId/path/mode 参数"),
+        );
+        return;
+      }
+      if (p.mode !== "vectorize" && p.mode !== "graphize") {
+        respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "mode 参数非法"));
+        return;
+      }
+      const result = await manager.materializeTreeFile({
+        agentId,
+        kbId: p.kbId,
+        path: p.path,
+        mode: p.mode,
+      });
+      respond(true, result);
+    } catch (err) {
+      log.error(`knowledge.tree.materialize failed: ${String(err)}`);
+      respond(
+        false,
+        undefined,
+        errorShape(ErrorCodes.INTERNAL_ERROR, `目录文件入库失败: ${String(err)}`),
       );
     }
   },

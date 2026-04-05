@@ -133,6 +133,10 @@ export type KnowledgeBase = {
   description?: string;
   icon?: string;
   visibility?: "private" | "team" | "public";
+  sourceType?: "external" | "local_fs" | "smb" | "s3" | "webdav";
+  sourceStatus?: "connected" | "paused" | "syncing" | "error";
+  sourceConfig?: Record<string, unknown> | null;
+  pinned?: boolean;
   tags?: KnowledgeBaseTag[];
   settings?: KnowledgeBaseRuntimeSettings;
   documentCount?: number;
@@ -194,6 +198,9 @@ export type KnowledgeBaseCreateParams = {
   description?: string;
   icon?: string;
   visibility?: "private" | "team" | "public";
+  sourceType?: "external" | "local_fs" | "smb" | "s3" | "webdav";
+  sourceConfig?: Record<string, unknown>;
+  pinned?: boolean;
   tags?: KnowledgeBaseTagInput[];
   settings?: Partial<KnowledgeBaseRuntimeSettings>;
 };
@@ -205,6 +212,33 @@ export type KnowledgeBaseUpdateParams = {
   icon?: string;
   visibility?: "private" | "team" | "public";
   tags?: KnowledgeBaseTagInput[];
+};
+
+export type KnowledgeSourceTestResult = {
+  success: boolean;
+  message: string;
+};
+
+export type KnowledgeTreeRoot = {
+  id: string;
+  name: string;
+  path: string;
+  sourceType: "local_fs";
+};
+
+export type KnowledgeTreeEntry = {
+  id: string;
+  name: string;
+  path: string;
+  kind: "file" | "directory";
+  extension?: string | null;
+  size?: number | null;
+  mtimeMs?: number | null;
+  sourceType: "local_fs";
+  materialized: boolean;
+  vectorized: boolean;
+  graphBuilt: boolean;
+  documentId?: string | null;
 };
 
 export type KnowledgeSearchResponse = {
@@ -244,6 +278,9 @@ export async function createKnowledgeBase(
     description: params.description,
     icon: params.icon,
     visibility: params.visibility,
+    sourceType: params.sourceType,
+    sourceConfig: params.sourceConfig,
+    pinned: params.pinned,
     tags: params.tags,
     settings: params.settings,
   });
@@ -542,6 +579,72 @@ export async function updateKnowledgeDocumentContent(params: {
       content: params.content,
     },
   );
+}
+
+export async function updateKnowledgeSource(params: {
+  kbId: string;
+  sourceType: "external" | "local_fs" | "smb" | "s3" | "webdav";
+  sourceConfig?: Record<string, unknown>;
+}): Promise<KnowledgeBase> {
+  return callKnowledgeWs<KnowledgeBase>("knowledge.source.update", params);
+}
+
+export async function testKnowledgeSource(kbId: string): Promise<KnowledgeSourceTestResult> {
+  return callKnowledgeWs<KnowledgeSourceTestResult>("knowledge.source.test", { kbId });
+}
+
+export async function syncKnowledgeSource(
+  kbId: string,
+): Promise<{ success: boolean; startedAt: string }> {
+  return callKnowledgeWs("knowledge.source.sync", { kbId });
+}
+
+export async function pauseKnowledgeSource(kbId: string): Promise<{ success: boolean }> {
+  return callKnowledgeWs("knowledge.source.pause", { kbId });
+}
+
+export async function resumeKnowledgeSource(kbId: string): Promise<{ success: boolean }> {
+  return callKnowledgeWs("knowledge.source.resume", { kbId });
+}
+
+export async function deleteKnowledgeSource(kbId: string): Promise<{ success: boolean }> {
+  return callKnowledgeWs("knowledge.source.delete", { kbId });
+}
+
+export async function listKnowledgeTreeRoots(
+  kbId: string,
+): Promise<{ roots: KnowledgeTreeRoot[] }> {
+  return callKnowledgeWs("knowledge.tree.roots", { kbId });
+}
+
+export async function listKnowledgeTreeChildren(params: {
+  kbId: string;
+  path: string;
+}): Promise<{ entries: KnowledgeTreeEntry[] }> {
+  return callKnowledgeWs("knowledge.tree.children", params);
+}
+
+export async function getKnowledgeTreeFile(params: {
+  kbId: string;
+  path: string;
+}): Promise<{ content: string; mimetype: string; filename: string; documentId?: string | null }> {
+  return callKnowledgeWs("knowledge.tree.file.get", params);
+}
+
+export async function saveKnowledgeTreeFile(params: {
+  kbId: string;
+  path: string;
+  content: string;
+}): Promise<{ success: boolean; updatedAt: string; documentId?: string | null }> {
+  return callKnowledgeWs("knowledge.tree.file.save", params);
+}
+
+export async function materializeKnowledgeTreeFile(params: {
+  kbId: string;
+  path: string;
+  mode: "vectorize" | "graphize";
+}): Promise<{ documentId: string; vectorized: boolean; graphBuilt: boolean }> {
+  return callKnowledgeWs("knowledge.tree.materialize", params);
 }
 
 export async function uploadKnowledgeWithProgress(

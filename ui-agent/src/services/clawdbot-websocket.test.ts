@@ -5,6 +5,10 @@ describe("resolveRpcRequestTimeoutMs", () => {
     expect(resolveRpcRequestTimeoutMs("skills.install", undefined)).toBe(180000);
   });
 
+  it("uses long-running timeout for skills.delete", () => {
+    expect(resolveRpcRequestTimeoutMs("skills.delete", undefined)).toBe(180000);
+  });
+
   it("honors timeoutMs params when larger than method default", () => {
     expect(resolveRpcRequestTimeoutMs("skills.install", { timeoutMs: 240000 })).toBe(245000);
   });

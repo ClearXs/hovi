@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, Plus, Settings2, Tag, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { KnowledgeBaseList } from "@/components/knowledge/KnowledgeBaseList";
 import { KnowledgeDetail } from "@/components/knowledge/KnowledgeDetail";
 import { KnowledgeIconPicker } from "@/components/knowledge/KnowledgeIconPicker";
@@ -59,10 +59,19 @@ export function KnowledgeBasePage() {
   const [manageTagsOpen, setManageTagsOpen] = useState(false);
   const [newTagName, setNewTagName] = useState("");
   const [newTagColor, setNewTagColor] = useState("#64748b");
+  const hasAutoSelectedRef = useRef(false);
 
   useEffect(() => {
     void loadKbList({ offset: 0 });
   }, [loadKbList]);
+
+  useEffect(() => {
+    if (hasAutoSelectedRef.current) return;
+    if (isLoadingKbList) return;
+    if (kbIds.length === 0) return;
+    hasAutoSelectedRef.current = true;
+    handleOpenDetail(kbIds[0]);
+  }, [kbIds, isLoadingKbList]);
 
   useEffect(() => {
     void loadAvailableTags();

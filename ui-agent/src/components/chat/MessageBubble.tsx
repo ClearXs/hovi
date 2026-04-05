@@ -19,10 +19,13 @@ import type { Message, SessionAttachmentMeta } from "@/components/chat/MessageLi
 import { FileList, FileItemProps } from "@/components/files/FileList";
 import { useStreamingReplay } from "@/contexts/StreamingReplayContext";
 import { useResponsive } from "@/hooks/useResponsive";
+import { ApprovalDecision, parseApprovalCommandFromText } from "@/lib/approval-command";
+import { openPathInSystem } from "@/services/desktop-file-actions";
 import type { KnowledgeDetail } from "@/services/knowledgeApi";
 import { getKnowledge } from "@/services/knowledgeApi";
 import { resolveSessionKnowledgeDocumentRef, uploadSessionDocument } from "@/services/pageindexApi";
 import { useConnectionStore } from "@/stores/connectionStore";
+import { useToastStore } from "@/stores/toastStore";
 
 const LazyDocPreview = dynamic(
   () => import("@/components/knowledge/preview/DocPreview").then((mod) => mod.DocPreview),
@@ -105,6 +108,7 @@ interface MessageBubbleProps {
   onCopy?: (content: string) => void;
   isEditing?: boolean;
   messageIndex?: number; // Index of this message in the list
+  autoApproveAlways?: boolean;
 }
 
 interface SkillStatusReport {
@@ -117,6 +121,12 @@ interface SkillStatusReport {
 
 type SkillStatusWsClient = {
   sendRequest: <T>(method: string, params: unknown) => Promise<T>;
+};
+
+const APPROVAL_DECISION_LABELS: Record<ApprovalDecision, string> = {
+  "allow-once": "允许一次",
+  "allow-always": "始终允许",
+  deny: "拒绝",
 };
 
 const SKILL_KEY_CACHE_TTL_MS = 60_000;
@@ -212,12 +222,14 @@ export function MessageBubble({
   onCopy,
   isEditing = false,
   messageIndex = 0,
+  autoApproveAlways = false,
 }: MessageBubbleProps) {
   const isUser = role === "user";
   const isWaiting = status === "waiting";
   const isCancelled = status === "cancelled";
   const { isStreaming, getDisplayedText, currentMessageIndex } = useStreamingReplay();
   const { isMobile } = useResponsive();
+  const { addToast } = useToastStore();
   const wsClient = useConnectionStore((s) => s.wsClient as SkillStatusWsClient | undefined);
   const [toolsOpen, setToolsOpen] = useState(false);
   const [editContent, setEditContent] = useState("");
@@ -255,6 +267,11 @@ export function MessageBubble({
   } | null>(null);
   const previewPdfRenderingRef = useRef(false);
   const editInputRef = useRef<HTMLTextAreaElement>(null);
+  const [approvalSubmittingDecision, setApprovalSubmittingDecision] =
+    useState<ApprovalDecision | null>(null);
+  const [approvalSubmittedDecision, setApprovalSubmittedDecision] =
+    useState<ApprovalDecision | null>(null);
+  const [approvalSubmitError, setApprovalSubmitError] = useState<string | null>(null);
 
   // 当进入编辑模式时，加载原内容
   useEffect(() => {
@@ -288,6 +305,10 @@ export function MessageBubble({
   // Get displayed content (full for non-streaming or user messages, streamed for assistant during replay)
   const displayedContent =
     isUser || !isStreaming ? content : getDisplayedText(messageIndex, "summary", content);
+  const parsedApprovalCommand = useMemo(() => {
+    if (isUser) return null;
+    return parseApprovalCommandFromText(displayedContent);
+  }, [displayedContent, isUser]);
 
   // Hide assistant messages that haven't been reached yet during streaming
   if (!isUser && isStreaming && messageIndex > currentMessageIndex) {
@@ -299,6 +320,8 @@ export function MessageBubble({
   const shouldShowFiles = isFullyDisplayed;
   const shouldShowMeta = isFullyDisplayed;
   const hasToolInfo = toolCalls.length > 0 || toolResults.length > 0;
+  const approvalCommands = parsedApprovalCommand?.decisions ?? [];
+  const canAutoApproveAlways = approvalCommands.includes("allow-always");
   const formatDuration = (durationMs?: number) => {
     if (durationMs == null) return null;
     if (durationMs < 1000) return `${durationMs}ms`;
@@ -596,6 +619,50 @@ export function MessageBubble({
     void renderPdfPage();
   }, [previewAttachmentIsPdf, previewPdfPage, previewPdfZoom, previewPdfRenderKey]);
 
+  const handlePreviewFileCard = (file: FileItemProps) => {
+    if (file.source !== "detected-path") {
+      window.open(file.path, "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (file.kind === "directory") {
+      addToast({
+        title: "目录不支持预览",
+        description: file.resolvedPath ?? file.path,
+        variant: "warning",
+      });
+      return;
+    }
+    if (!file.previewable) {
+      addToast({
+        title: "当前路径暂不支持预览",
+        description: file.resolvedPath ?? file.path,
+        variant: "warning",
+      });
+      return;
+    }
+    if (!file.previewUrl) {
+      addToast({
+        title: "路径不可预览",
+        description: file.resolvedPath ?? file.path,
+        variant: "warning",
+      });
+      return;
+    }
+    window.open(file.previewUrl, "_blank", "noopener,noreferrer");
+  };
+
+  const handleSystemOpenFileCard = async (file: FileItemProps) => {
+    const path = file.resolvedPath ?? file.rawPath ?? file.path;
+    const result = await openPathInSystem(path);
+    if (!result.ok) {
+      addToast({
+        title: "系统打开失败",
+        description: result.message,
+        variant: "error",
+      });
+    }
+  };
+
   const hasPreviewModal =
     previewAttachment != null ||
     previewAttachmentLabel != null ||
@@ -612,6 +679,71 @@ export function MessageBubble({
     () => sessionAttachments.filter((attachment) => !localAttachmentNames.has(attachment.name)),
     [localAttachmentNames, sessionAttachments],
   );
+
+  const submitApprovalDecision = async (decision: ApprovalDecision) => {
+    if (!parsedApprovalCommand) return;
+    if (!wsClient) {
+      const message = "当前未连接到网关，无法提交审批。";
+      setApprovalSubmitError(message);
+      addToast({
+        title: "审批提交失败",
+        description: message,
+        variant: "error",
+      });
+      return;
+    }
+
+    setApprovalSubmittingDecision(decision);
+    setApprovalSubmitError(null);
+    try {
+      const methodOrder = parsedApprovalCommand.id.startsWith("plugin:")
+        ? ["plugin.approval.resolve", "exec.approval.resolve"]
+        : ["exec.approval.resolve", "plugin.approval.resolve"];
+      let lastError: unknown = null;
+      for (const method of methodOrder) {
+        try {
+          await wsClient.sendRequest(method, {
+            id: parsedApprovalCommand.id,
+            decision,
+          });
+          setApprovalSubmittedDecision(decision);
+          setApprovalSubmitError(null);
+          addToast({
+            title: "审批已提交",
+            description: `${parsedApprovalCommand.id} -> ${decision}`,
+            variant: "success",
+          });
+          return;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+      throw lastError;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "审批请求失败";
+      setApprovalSubmitError(message);
+      addToast({
+        title: "审批提交失败",
+        description: message,
+        variant: "error",
+      });
+    } finally {
+      setApprovalSubmittingDecision(null);
+    }
+  };
+
+  useEffect(() => {
+    if (!autoApproveAlways || !parsedApprovalCommand || !canAutoApproveAlways) return;
+    if (approvalSubmittingDecision || approvalSubmittedDecision || approvalSubmitError) return;
+    void submitApprovalDecision("allow-always");
+  }, [
+    autoApproveAlways,
+    parsedApprovalCommand,
+    canAutoApproveAlways,
+    approvalSubmittingDecision,
+    approvalSubmittedDecision,
+    approvalSubmitError,
+  ]);
 
   return (
     <>
@@ -825,6 +957,59 @@ export function MessageBubble({
               )}
             </div>
 
+            {!isUser && parsedApprovalCommand && approvalCommands.length > 0 && (
+              <div className="rounded-md border border-warning/30 bg-warning/5 p-sm">
+                <div className="text-xs font-medium text-text-primary">需要您的审批</div>
+                <div className="mt-xs text-[11px] text-text-tertiary break-all">
+                  审批 ID：<span className="font-mono">{parsedApprovalCommand.id}</span>
+                </div>
+                <div className="mt-xs text-[11px] text-text-tertiary">
+                  审批 ID 用于标识本次高权限操作，提交决策时会携带这个 ID。
+                </div>
+                {!(autoApproveAlways && canAutoApproveAlways && !approvalSubmitError) && (
+                  <div className="mt-sm flex flex-wrap gap-xs">
+                    {approvalCommands.map((decision) => {
+                      const isSubmitting = approvalSubmittingDecision === decision;
+                      const disabled =
+                        approvalSubmittingDecision != null || approvalSubmittedDecision != null;
+                      return (
+                        <button
+                          key={decision}
+                          type="button"
+                          disabled={disabled}
+                          onClick={() => {
+                            void submitApprovalDecision(decision);
+                          }}
+                          className={`rounded border px-sm py-xs text-xs transition-colors ${
+                            decision === "deny"
+                              ? "border-error/40 text-error hover:bg-error/10 disabled:opacity-50"
+                              : "border-primary/40 text-primary hover:bg-primary/10 disabled:opacity-50"
+                          }`}
+                        >
+                          {isSubmitting ? "提交中..." : APPROVAL_DECISION_LABELS[decision]}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {autoApproveAlways && canAutoApproveAlways && (
+                  <div className="mt-xs text-[11px] text-text-tertiary">
+                    已开启自动允许，系统会自动提交“始终允许”。
+                  </div>
+                )}
+                {approvalSubmittedDecision && (
+                  <div className="mt-xs text-[11px] text-success">
+                    已提交：{APPROVAL_DECISION_LABELS[approvalSubmittedDecision]}
+                  </div>
+                )}
+                {approvalSubmitError && (
+                  <div className="mt-xs text-[11px] text-error break-all">
+                    {approvalSubmitError}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* 用户附件 - 挂载在消息气泡下方 */}
             {hasUserAttachments && shouldShowMeta && (
               <div className="mt-xs flex flex-wrap gap-xs">
@@ -861,7 +1046,14 @@ export function MessageBubble({
 
             {/* 文件列表 - 只在内容完全显示后才显示 */}
             {files && files.length > 0 && shouldShowFiles && (
-              <FileList files={files} title="生成的文档" />
+              <FileList
+                files={files}
+                title={
+                  files.every((item) => item.source === "detected-path") ? "相关路径" : "生成的文档"
+                }
+                onPreviewFile={handlePreviewFileCard}
+                onSystemOpenFile={handleSystemOpenFileCard}
+              />
             )}
 
             {/* 知识库引用来源 - 只在助手消息中显示 */}

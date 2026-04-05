@@ -62,6 +62,8 @@ import {
   buildHeaders,
   getGatewayBaseUrl,
   getKnowledgeFile,
+  getKnowledgeTreeFile,
+  saveKnowledgeTreeFile,
   updateKnowledgeDocumentContent,
 } from "@/services/knowledgeApi";
 import { useConnectionStore } from "@/stores/connectionStore";
@@ -70,6 +72,10 @@ import { useToastStore } from "@/stores/toastStore";
 interface DocPreviewProps {
   detail: KnowledgeDetail | null;
   highlightKeywords?: string[];
+  treeContext?: {
+    kbId: string;
+    path: string;
+  };
 }
 
 const UniverDocPreview = dynamic(
@@ -200,7 +206,7 @@ function highlightText(text: string, keywords: string[]) {
   });
 }
 
-export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) {
+export function DocPreview({ detail, highlightKeywords = [], treeContext }: DocPreviewProps) {
   const { addToast } = useToastStore();
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [textContent, setTextContent] = useState<string>("");
@@ -371,7 +377,7 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
 
   // JSON 编辑器处理函数
   const handleSaveJson = async () => {
-    if (!detail || !detail.kbId) {
+    if (!detail) {
       addToast({ title: "缺少知识库信息", variant: "error" });
       return;
     }
@@ -381,11 +387,22 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
       const formatted = JSON.stringify(JSON.parse(editedJsonContent), null, 2);
 
       // 调用保存 API
-      await updateKnowledgeDocumentContent({
-        kbId: detail.kbId,
-        documentId: detail.id,
-        content: formatted,
-      });
+      if (treeContext) {
+        await saveKnowledgeTreeFile({
+          kbId: treeContext.kbId,
+          path: treeContext.path,
+          content: formatted,
+        });
+      } else {
+        if (!detail.kbId) {
+          throw new Error("缺少知识库信息");
+        }
+        await updateKnowledgeDocumentContent({
+          kbId: detail.kbId,
+          documentId: detail.id,
+          content: formatted,
+        });
+      }
 
       // 更新原始内容
       setTextContent(formatted);
@@ -408,17 +425,28 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
   };
 
   const handleSaveText = async () => {
-    if (!detail || !detail.kbId) {
+    if (!detail) {
       addToast({ title: "缺少知识库信息", variant: "error" });
       return;
     }
     try {
       setIsSavingText(true);
-      await updateKnowledgeDocumentContent({
-        kbId: detail.kbId,
-        documentId: detail.id,
-        content: editedTextContent,
-      });
+      if (treeContext) {
+        await saveKnowledgeTreeFile({
+          kbId: treeContext.kbId,
+          path: treeContext.path,
+          content: editedTextContent,
+        });
+      } else {
+        if (!detail.kbId) {
+          throw new Error("缺少知识库信息");
+        }
+        await updateKnowledgeDocumentContent({
+          kbId: detail.kbId,
+          documentId: detail.id,
+          content: editedTextContent,
+        });
+      }
       setTextContent(editedTextContent);
       addToast({ title: "保存成功", variant: "success" });
     } catch (err) {
@@ -429,17 +457,28 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
   };
 
   const handleSaveMarkdown = async () => {
-    if (!detail || !detail.kbId) {
+    if (!detail) {
       addToast({ title: "缺少知识库信息", variant: "error" });
       return;
     }
     try {
       setIsSavingMarkdown(true);
-      await updateKnowledgeDocumentContent({
-        kbId: detail.kbId,
-        documentId: detail.id,
-        content: editedMarkdownContent,
-      });
+      if (treeContext) {
+        await saveKnowledgeTreeFile({
+          kbId: treeContext.kbId,
+          path: treeContext.path,
+          content: editedMarkdownContent,
+        });
+      } else {
+        if (!detail.kbId) {
+          throw new Error("缺少知识库信息");
+        }
+        await updateKnowledgeDocumentContent({
+          kbId: detail.kbId,
+          documentId: detail.id,
+          content: editedMarkdownContent,
+        });
+      }
       setTextContent(editedMarkdownContent);
       addToast({ title: "保存成功", variant: "success" });
     } catch (err) {
@@ -469,10 +508,15 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
       setIsLoading(true);
 
       try {
-        const fileData = await getKnowledgeFile({
-          documentId: detail.id,
-          kbId: detail.kbId,
-        });
+        const fileData = treeContext
+          ? await getKnowledgeTreeFile({
+              kbId: treeContext.kbId,
+              path: treeContext.path,
+            })
+          : await getKnowledgeFile({
+              documentId: detail.id,
+              kbId: detail.kbId,
+            });
 
         if (!isActive) return;
 
@@ -528,7 +572,7 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
       isActive = false;
       if (nextUrl) URL.revokeObjectURL(nextUrl);
     };
-  }, [detail]);
+  }, [detail, treeContext]);
 
   // 加载 PDF.js - 完全从 CDN 加载，绕过 webpack
   // 使用计数器强制触发重新渲染
@@ -646,7 +690,7 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
   }, [keywords, mime]);
 
   useEffect(() => {
-    if (!detail || !isPptx) return;
+    if (!detail || !isPptx || treeContext) return;
     let active = true;
     let objectUrl: string | null = null;
 
@@ -683,7 +727,7 @@ export function DocPreview({ detail, highlightKeywords = [] }: DocPreviewProps) 
       active = false;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [detail, isPptx]);
+  }, [detail, isPptx, treeContext]);
 
   useEffect(() => {
     if (!(mime === "application/json" || filename.endsWith(".json"))) return;

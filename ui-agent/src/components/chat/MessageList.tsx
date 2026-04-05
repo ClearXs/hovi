@@ -73,6 +73,7 @@ interface MessageListProps {
   onCancelEdit?: (message: Message) => void;
   onCopy?: (content: string) => void;
   editingMessageId?: string | null;
+  autoApproveAlways?: boolean;
 }
 
 export function MessageList({
@@ -91,6 +92,7 @@ export function MessageList({
   onCancelEdit,
   onCopy,
   editingMessageId,
+  autoApproveAlways = false,
 }: MessageListProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -177,6 +179,7 @@ export function MessageList({
                 onCopy={onCopy ? (content: string) => onCopy(content) : undefined}
                 isEditing={editingMessageId === message.id}
                 messageIndex={index}
+                autoApproveAlways={autoApproveAlways}
               />
             </div>
           );

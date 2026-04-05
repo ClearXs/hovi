@@ -223,6 +223,14 @@ export const SkillsInstallParamsSchema = Type.Union([
   ),
 ]);
 
+export const SkillsDeleteParamsSchema = Type.Object(
+  {
+    skillKeys: Type.Array(NonEmptyString, { minItems: 1, maxItems: 200 }),
+    timeoutMs: Type.Optional(Type.Integer({ minimum: 1000 })),
+  },
+  { additionalProperties: false },
+);
+
 export const SkillsUpdateParamsSchema = Type.Union([
   Type.Object(
     {

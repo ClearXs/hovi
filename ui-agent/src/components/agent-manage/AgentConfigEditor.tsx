@@ -18,6 +18,7 @@ interface AgentConfigEditorProps {
   agentId: string;
   agentName?: string;
   onClose: () => void;
+  mobile?: boolean;
 }
 
 // Get file icon based on filename
@@ -39,7 +40,12 @@ function getFileLanguage(filename: string): string {
   return "json";
 }
 
-export function AgentConfigEditor({ agentId, agentName, onClose }: AgentConfigEditorProps) {
+export function AgentConfigEditor({
+  agentId,
+  agentName,
+  onClose,
+  mobile = false,
+}: AgentConfigEditorProps) {
   const wsClient = useConnectionStore((s) => s.wsClient);
   const [activeFile, setActiveFile] = useState<AgentConfigFileName>("SOUL.md");
   const [content, setContent] = useState("");
@@ -85,34 +91,57 @@ export function AgentConfigEditor({ agentId, agentName, onClose }: AgentConfigEd
   };
 
   return (
-    <div className="flex flex-col h-[65vh]">
-      {/* 主体布局：左侧文件列表 + 右侧编辑器 */}
-      <div className="flex flex-1 min-h-0">
-        {/* 左侧文件列表 */}
-        <div className="w-48 flex-shrink-0 border-r border-border-light pr-4 mr-4">
-          <ScrollArea className="h-full">
-            <div className="space-y-1">
-              {AGENT_CONFIG_FILES.map((file) => (
-                <button
-                  key={file}
-                  onClick={() => setActiveFile(file)}
-                  className={cn(
-                    "w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors text-left",
-                    activeFile === file
-                      ? "bg-primary/10 text-primary"
-                      : "text-text-secondary hover:bg-surface-hover hover:text-text-primary",
-                  )}
-                >
-                  {getFileIcon(file)}
-                  <span className="truncate">{AGENT_CONFIG_FILE_LABELS[file]}</span>
-                </button>
-              ))}
-            </div>
-          </ScrollArea>
-        </div>
+    <div className={cn("flex flex-col min-h-0", mobile ? "h-full" : "h-[72vh]")}>
+      {/* 主体布局：桌面左侧文件列表；移动端顶部文件条 */}
+      <div className={cn("flex flex-1 min-h-0", mobile ? "flex-col gap-3" : "")}>
+        {mobile ? (
+          <div className="border border-border-light rounded-md p-2">
+            <ScrollArea className="w-full">
+              <div className="flex items-center gap-2 pr-2">
+                {AGENT_CONFIG_FILES.map((file) => (
+                  <button
+                    key={file}
+                    onClick={() => setActiveFile(file)}
+                    className={cn(
+                      "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs whitespace-nowrap transition-colors",
+                      activeFile === file
+                        ? "bg-primary/10 text-primary"
+                        : "text-text-secondary hover:bg-surface-hover hover:text-text-primary",
+                    )}
+                  >
+                    {getFileIcon(file)}
+                    <span>{AGENT_CONFIG_FILE_LABELS[file]}</span>
+                  </button>
+                ))}
+              </div>
+            </ScrollArea>
+          </div>
+        ) : (
+          <div className="w-48 flex-shrink-0 border-r border-border-light pr-4 mr-4">
+            <ScrollArea className="h-full">
+              <div className="space-y-1">
+                {AGENT_CONFIG_FILES.map((file) => (
+                  <button
+                    key={file}
+                    onClick={() => setActiveFile(file)}
+                    className={cn(
+                      "w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors text-left",
+                      activeFile === file
+                        ? "bg-primary/10 text-primary"
+                        : "text-text-secondary hover:bg-surface-hover hover:text-text-primary",
+                    )}
+                  >
+                    {getFileIcon(file)}
+                    <span className="truncate">{AGENT_CONFIG_FILE_LABELS[file]}</span>
+                  </button>
+                ))}
+              </div>
+            </ScrollArea>
+          </div>
+        )}
 
         {/* 右侧编辑器 + 底部保存按钮 */}
-        <div className="flex-1 flex flex-col min-w-0">
+        <div className="flex-1 flex flex-col min-w-0 min-h-0">
           <div className="flex-1 border border-border-light rounded-md overflow-hidden">
             {loading ? (
               <div className="flex items-center justify-center h-full">
@@ -139,7 +168,7 @@ export function AgentConfigEditor({ agentId, agentName, onClose }: AgentConfigEd
           </div>
 
           {/* 底部保存按钮 */}
-          <div className="flex justify-end gap-2 pt-4">
+          <div className={cn("flex gap-2 pt-3", mobile ? "justify-between" : "justify-end pt-4")}>
             <Button variant="outline" onClick={onClose} size="sm">
               关闭
             </Button>

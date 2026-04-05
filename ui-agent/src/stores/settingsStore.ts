@@ -5,6 +5,7 @@ export type SettingsTab =
   | "general"
   | "shortcuts"
   | "skills"
+  | "plugins"
   | "connectors"
   | "models"
   | "appearance"
@@ -58,6 +59,7 @@ export interface OpenClawConfigPartial {
   };
   agents?: {
     defaults?: {
+      workspace?: string;
       model?: string | { primary?: string; fallbacks?: string[] };
       maxConcurrent?: number;
       humanDelay?: {

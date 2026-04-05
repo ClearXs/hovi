@@ -52,6 +52,7 @@ interface MainLayoutProps {
   showTopBar?: boolean;
   showSidebar?: boolean;
   onOpenKnowledge?: () => void;
+  onOpenDiscover?: () => void;
   onOpenChannel?: () => void;
   onOpenPersonaSettings?: () => void;
   onOpenCronJobs?: () => void;
@@ -60,7 +61,7 @@ interface MainLayoutProps {
   onGoHome?: () => void;
   assistantVisible?: boolean;
   onToggleAssistantVisible?: () => void;
-  activeView?: "chat" | "channel" | "knowledge" | "persona" | "my";
+  activeView?: "chat" | "channel" | "discover" | "knowledge" | "persona" | "my";
   searchShortcutLabel?: string;
   newSessionShortcutLabel?: string;
   onOpenChat?: () => void;
@@ -101,6 +102,7 @@ const MainLayout = ({
   showTopBar = true,
   showSidebar = true,
   onOpenKnowledge = () => {},
+  onOpenDiscover = () => {},
   onOpenChannel = () => {},
   onOpenPersonaSettings = () => {},
   onOpenCronJobs = () => {},
@@ -116,7 +118,7 @@ const MainLayout = ({
   onStartVoiceChat = () => {},
   onOpenTasks = () => {},
 }: MainLayoutProps) => {
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true);
   const { isDesktop, isHydrated } = useResponsive();
 
   return (
@@ -152,6 +154,7 @@ const MainLayout = ({
             isCollapsed={isSidebarCollapsed}
             onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
             onOpenKnowledge={onOpenKnowledge}
+            onOpenDiscover={onOpenDiscover}
             onOpenChannel={onOpenChannel}
             onOpenPersonaSettings={onOpenPersonaSettings}
             onOpenCronJobs={onOpenCronJobs}
@@ -193,7 +196,16 @@ const MainLayout = ({
       {/* Mobile/Tablet: Bottom Tab Bar */}
       {!isDesktop && (
         <MobileTabBar
-          activeTab={activeView as "chat" | "channel" | "personas" | "knowledge" | "my" | undefined}
+          activeTab={
+            activeView as
+              | "chat"
+              | "channel"
+              | "discover"
+              | "personas"
+              | "knowledge"
+              | "my"
+              | undefined
+          }
         />
       )}
 
