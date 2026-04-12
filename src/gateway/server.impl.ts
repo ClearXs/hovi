@@ -64,7 +64,10 @@ import { createPluginRuntime } from "../plugins/runtime/index.js";
 import type { PluginServicesHandle } from "../plugins/services.js";
 import { getTotalQueueSize } from "../process/command-queue.js";
 import type { RuntimeEnv } from "../runtime.js";
-import type { CommandSecretAssignment } from "../secrets/command-config.js";
+import {
+  collectCommandSecretAssignmentsFromSnapshot,
+  type CommandSecretAssignment,
+} from "../secrets/command-config.js";
 import {
   GATEWAY_AUTH_SURFACE_PATHS,
   evaluateGatewayAuthSurfaceStates,
@@ -74,7 +77,6 @@ import {
   clearSecretsRuntimeSnapshot,
   getActiveSecretsRuntimeSnapshot,
   prepareSecretsRuntimeSnapshot,
-  resolveCommandSecretsFromActiveRuntimeSnapshot,
 } from "../secrets/runtime.js";
 import { onSessionLifecycleEvent } from "../sessions/session-lifecycle-events.js";
 import { onSessionTranscriptUpdate } from "../sessions/transcript-events.js";
@@ -233,6 +235,38 @@ function logGatewayAuthSurfaceDiagnostics(prepared: {
     const details = inactiveDetails ?? state.reason;
     logSecrets.info(`[SECRETS_GATEWAY_AUTH_SURFACE] ${path} is ${stateLabel}. ${details}`);
   }
+}
+
+function resolveCommandSecretsFromActiveRuntimeSnapshotCompat(params: {
+  commandName: string;
+  targetIds: ReadonlySet<string>;
+}): { assignments: CommandSecretAssignment[]; diagnostics: string[]; inactiveRefPaths: string[] } {
+  const snapshot = getActiveSecretsRuntimeSnapshot();
+  if (!snapshot) {
+    throw new Error("Secrets runtime snapshot is not active.");
+  }
+  if (params.targetIds.size === 0) {
+    return { assignments: [], diagnostics: [], inactiveRefPaths: [] };
+  }
+  const inactiveRefPaths = [
+    ...new Set(
+      snapshot.warnings
+        .filter((warning) => warning.code === "SECRETS_REF_IGNORED_INACTIVE_SURFACE")
+        .map((warning) => warning.path),
+    ),
+  ];
+  const resolved = collectCommandSecretAssignmentsFromSnapshot({
+    sourceConfig: snapshot.sourceConfig,
+    resolvedConfig: snapshot.config,
+    commandName: params.commandName,
+    targetIds: params.targetIds,
+    inactiveRefPaths: new Set(inactiveRefPaths),
+  });
+  return {
+    assignments: resolved.assignments,
+    diagnostics: resolved.diagnostics,
+    inactiveRefPaths,
+  };
 }
 
 function applyGatewayAuthOverridesForStartupPreflight(
@@ -1201,7 +1235,7 @@ export async function startGatewayServer(
       },
       resolveSecrets: async ({ commandName, targetIds }) => {
         const { assignments, diagnostics, inactiveRefPaths } =
-          resolveCommandSecretsFromActiveRuntimeSnapshot({
+          resolveCommandSecretsFromActiveRuntimeSnapshotCompat({
             commandName,
             targetIds: new Set(targetIds),
           });

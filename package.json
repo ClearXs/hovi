@@ -1062,7 +1062,19 @@
       "default": "./dist/plugin-sdk/zod.js"
     },
     "./extension-api": "./dist/extensionAPI.js",
-    "./cli-entry": "./openclaw.mjs"
+    "./cli-entry": "./openclaw.mjs",
+    "./plugin-sdk/provider-moonshot": {
+      "types": "./dist/plugin-sdk/provider-moonshot.d.ts",
+      "default": "./dist/plugin-sdk/provider-moonshot.js"
+    },
+    "./plugin-sdk/telegram-core": {
+      "types": "./dist/plugin-sdk/telegram-core.d.ts",
+      "default": "./dist/plugin-sdk/telegram-core.js"
+    },
+    "./plugin-sdk/slack": {
+      "types": "./dist/plugin-sdk/slack.d.ts",
+      "default": "./dist/plugin-sdk/slack.js"
+    }
   },
   "scripts": {
     "android:assemble": "cd apps/android && ./gradlew :app:assemblePlayDebug",

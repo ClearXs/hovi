@@ -1,4 +1,5 @@
 import type { IncomingMessage } from "node:http";
+import fs from "node:fs";
 import net from "node:net";
 import {
   pickMatchingExternalInterfaceAddress,
@@ -12,6 +13,27 @@ import {
   isPrivateOrLoopbackIpAddress,
   normalizeIpAddress,
 } from "../shared/net/ip.js";
+
+export function isContainerEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (
+    env.OPENCLAW_CONTAINER?.trim() ||
+    env.CONTAINER?.trim() ||
+    env.KUBERNETES_SERVICE_HOST?.trim() ||
+    env.DOCKER_CONTAINER?.trim()
+  ) {
+    return true;
+  }
+  return fs.existsSync("/.dockerenv") || fs.existsSync("/run/.containerenv");
+}
+
+export function defaultGatewayBindMode(
+  tailscaleMode: import("../config/config.js").GatewayTailscaleMode | undefined,
+): import("../config/config.js").GatewayBindMode {
+  if (tailscaleMode && tailscaleMode !== "off") {
+    return "loopback";
+  }
+  return isContainerEnvironment() ? "auto" : "loopback";
+}
 
 /**
  * Pick the primary non-internal IPv4 address (LAN IP).

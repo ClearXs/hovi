@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { collectBundledChannelConfigs } from "./bundled-channel-config-metadata.js";
+export { resolveBundledPluginPublicSurfacePath } from "./public-surface-runtime.js";
 import {
   collectBundledPluginPublicSurfaceArtifacts,
   collectBundledPluginRuntimeSidecarArtifacts,

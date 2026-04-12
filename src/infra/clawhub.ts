@@ -407,6 +407,43 @@ export function formatSha256Integrity(bytes: Uint8Array): string {
   return `sha256-${digest}`;
 }
 
+export function normalizeClawHubSha256Hex(value: string): string | null {
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) {
+    return null;
+  }
+  const withoutPrefix = trimmed.replace(/^sha256:/u, "");
+  return /^[a-f0-9]{64}$/u.test(withoutPrefix) ? withoutPrefix : null;
+}
+
+export function normalizeClawHubSha256Integrity(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const normalizedHex = normalizeClawHubSha256Hex(trimmed);
+  if (normalizedHex) {
+    const bytes = Buffer.from(normalizedHex, "hex");
+    return formatSha256Integrity(bytes);
+  }
+
+  const match = /^sha256-([A-Za-z0-9+/=]+)$/u.exec(trimmed);
+  if (!match?.[1]) {
+    return null;
+  }
+
+  try {
+    const bytes = Buffer.from(match[1], "base64");
+    if (bytes.length !== 32) {
+      return null;
+    }
+    return `sha256-${bytes.toString("base64")}`;
+  } catch {
+    return null;
+  }
+}
+
 export function parseClawHubPluginSpec(raw: string): {
   name: string;
   version?: string;

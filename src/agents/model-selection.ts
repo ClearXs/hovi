@@ -211,6 +211,22 @@ export function parseModelRef(
   return normalizeModelRef(providerRaw, model, options);
 }
 
+export function resolvePersistedOverrideModelRef(params: {
+  defaultProvider: string;
+  overrideProvider?: string | null;
+  overrideModel?: string | null;
+}): ModelRef | null {
+  const model = params.overrideModel?.trim();
+  if (!model) {
+    return null;
+  }
+  const provider = params.overrideProvider?.trim() || params.defaultProvider.trim();
+  if (!provider) {
+    return null;
+  }
+  return normalizeModelRef(provider, model);
+}
+
 export function inferUniqueProviderFromConfiguredModels(params: {
   cfg: OpenClawConfig;
   model: string;

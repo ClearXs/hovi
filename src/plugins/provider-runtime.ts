@@ -219,6 +219,18 @@ export function resolveProviderRuntimePlugin(params: {
   }).find((plugin) => matchesProviderId(plugin, params.provider));
 }
 
+export function resolveProviderCapabilitiesWithPlugin(params: {
+  provider: string;
+  config?: OpenClawConfig;
+  workspaceDir?: string;
+  env?: NodeJS.ProcessEnv;
+}): Record<string, unknown> | undefined {
+  const capabilities = resolveProviderRuntimePlugin(params)?.capabilities;
+  return capabilities && typeof capabilities === "object"
+    ? (capabilities as Record<string, unknown>)
+    : undefined;
+}
+
 export function runProviderDynamicModel(params: {
   provider: string;
   config?: OpenClawConfig;

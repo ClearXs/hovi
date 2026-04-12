@@ -220,3 +220,33 @@ export function loadBundledPluginPublicSurfaceModuleSync<T extends object>(param
 
   return sentinel;
 }
+
+export function listImportedBundledPluginFacadeIds(): string[] {
+  const imported = new Set<string>();
+  for (const modulePath of loadedFacadeModules.keys()) {
+    const normalized = modulePath.replaceAll("\\", "/");
+    const match = /\/extensions\/([^/]+)\//u.exec(normalized);
+    if (match?.[1]) {
+      imported.add(match[1]);
+    }
+  }
+  return [...imported].toSorted((left, right) => left.localeCompare(right));
+}
+
+export function loadActivatedBundledPluginPublicSurfaceModuleSync<T extends object>(params: {
+  dirName: string;
+  artifactBasename: string;
+}): T {
+  return loadBundledPluginPublicSurfaceModuleSync<T>(params);
+}
+
+export function tryLoadActivatedBundledPluginPublicSurfaceModuleSync<T extends object>(params: {
+  dirName: string;
+  artifactBasename: string;
+}): T | undefined {
+  try {
+    return loadActivatedBundledPluginPublicSurfaceModuleSync<T>(params);
+  } catch {
+    return undefined;
+  }
+}
