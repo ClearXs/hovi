@@ -1,5 +1,4 @@
 import type { FileItemProps } from "@/components/files/FileList";
-import { buildGatewayUrl } from "@/lib/runtime/desktop-env";
 
 const WRAPPER_PREFIX_RE = /^[("'`[{<]+/;
 const WRAPPER_SUFFIX_RE = /[)"'`\]}>.,;:!?，。；：！？]+$/;
@@ -141,9 +140,35 @@ const KNOWN_SINGLE_SEGMENT_ROOT_PATHS = new Set([
   "library",
   "applications",
   "workspace",
+  "data",
+  "system",
+  "documents",
+  "downloads",
+  "desktop",
+]);
+const KNOWN_PLAIN_SLASH_COMMANDS = new Set([
+  "approve",
+  "landpr",
+  "plan",
+  "help",
+  "status",
+  "review",
+  "fix",
+  "run",
+  "test",
+  "build",
+  "deploy",
+  "doctor",
+  "command",
+  "commands",
+  "cmd",
+  "skill",
+  "skills",
 ]);
 const CONTROL_CHAR_RE = /[\u0000-\u001F]/;
 const WINDOWS_ILLEGAL_SEGMENT_RE = /[<>:"|?*]/;
+const POSIX_PSEUDO_PATH_RE =
+  /^\/dev\/(?:null|zero|stdin|stdout|stderr|tty\d*|tty|random|urandom|fd(?:\/\d+)?)\/?$/i;
 
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"]);
 const TEXT_EXTENSIONS = new Set([
@@ -322,6 +347,9 @@ function isLikelyPath(candidate: string): boolean {
   if (!candidate || candidate.length < 3) {
     return false;
   }
+  if (POSIX_PSEUDO_PATH_RE.test(candidate)) {
+    return false;
+  }
   if (URL_SCHEME_RE.test(candidate)) {
     return false;
   }
@@ -474,36 +502,49 @@ function isSlashCommandLike(candidate: string): boolean {
   if (normalized.indexOf("/", 1) !== -1) {
     return false;
   }
-
-  const commandWithArgsMatch = /^\/([a-z][a-z0-9-]{1,31})(?:\s+.+)?$/i.exec(normalized);
-  if (!commandWithArgsMatch?.[1]) {
+  const commandHead = normalized.slice(1).split(/\s+/)[0] ?? "";
+  if (!commandHead) {
     return false;
   }
-
-  const command = commandWithArgsMatch[1].toLowerCase();
+  if (!/^[a-z][a-z0-9._:-]{1,63}$/i.test(commandHead)) {
+    return false;
+  }
+  const command = commandHead.toLowerCase();
   if (KNOWN_SINGLE_SEGMENT_ROOT_PATHS.has(command)) {
     return false;
   }
 
   if (/\s+/.test(normalized)) {
-    return true;
+    return /[._:-]/.test(command) || KNOWN_PLAIN_SLASH_COMMANDS.has(command);
   }
 
-  const segments = normalized.split("/").filter(Boolean);
-  if (segments.length !== 1) {
-    return false;
-  }
-  const segment = (segments[0] ?? "").toLowerCase();
-  if (!/^[a-z][a-z0-9-]{1,31}$/.test(segment)) {
-    return false;
-  }
-  if (KNOWN_SINGLE_SEGMENT_ROOT_PATHS.has(segment)) {
-    return false;
-  }
-  if (segment.includes("-")) {
+  if (/[._:-]/.test(command)) {
     return true;
   }
-  return segment.length >= 4;
+  return KNOWN_PLAIN_SLASH_COMMANDS.has(command);
+}
+
+function hasSlashCommandContext(
+  content: string,
+  candidateIndex: number,
+  candidate: string,
+): boolean {
+  const normalized = candidate.replace(/\\/g, "/").trim();
+  if (!normalized.startsWith("/") || normalized.indexOf("/", 1) !== -1) {
+    return false;
+  }
+  const commandHead = normalized.slice(1).split(/\s+/)[0]?.toLowerCase() ?? "";
+  if (!commandHead || KNOWN_SINGLE_SEGMENT_ROOT_PATHS.has(commandHead)) {
+    return false;
+  }
+  if (!/^[a-z][a-z0-9._:-]{1,63}$/i.test(commandHead)) {
+    return false;
+  }
+  const start = Math.max(0, candidateIndex - 64);
+  const prefix = content.slice(start, candidateIndex).toLowerCase();
+  return /(?:^|\s)(?:执行|运行|调用|输入|键入|命令|指令|try|run|execute|invoke|command|slash)\s*$/.test(
+    prefix,
+  );
 }
 
 function isRelativePath(candidate: string): boolean {
@@ -629,15 +670,6 @@ function joinWorkspacePath(workspaceDir: string, relativePath: string): string {
   return `${ws}/${relUnix}`;
 }
 
-function buildWorkspacePreviewUrl(agentId: string, relativePath: string): string {
-  const safeRelative = toWorkspaceRelative(relativePath);
-  const encodedSegments = safeRelative
-    .split("/")
-    .filter((segment) => segment.length > 0)
-    .map((segment) => encodeURIComponent(segment));
-  return buildGatewayUrl(`/files/${encodeURIComponent(agentId)}/${encodedSegments.join("/")}`);
-}
-
 export function parseAgentIdFromSessionKey(sessionKey?: string | null): string {
   if (!sessionKey) return "main";
   const match = /^agent:([^:]+):/.exec(sessionKey.trim());
@@ -667,7 +699,8 @@ export function detectPathCardsFromAssistantMessage(
     const cleaned = stripWrappers(candidateMatch.raw);
     if (!cleaned) continue;
     const decoded = decodeFileUri(cleaned);
-    if (isSlashCommandLike(decoded)) continue;
+    if (isSlashCommandLike(decoded) || hasSlashCommandContext(text, candidateMatch.index, decoded))
+      continue;
     if (isBlacklistedSlashTerm(decoded)) continue;
     if (isBlacklistedByNearbyContext(text, candidateMatch.index, decoded)) continue;
     if (!isLikelyPath(decoded)) continue;
@@ -690,26 +723,25 @@ export function detectPathCardsFromAssistantMessage(
       !workspaceRelative.startsWith("..\\")
         ? joinWorkspacePath(options.workspaceDir, workspaceRelative)
         : normalized;
-    const previewUrl =
-      previewable &&
+    const workspaceRelativePath =
       workspaceRelative &&
       !workspaceRelative.startsWith("../") &&
       !workspaceRelative.startsWith("..\\")
-        ? buildWorkspacePreviewUrl(agentId, workspaceRelative)
+        ? workspaceRelative
         : undefined;
 
     cards.push({
       name: splitBasename(resolvedPath),
-      path: previewUrl ?? resolvedPath,
+      path: resolvedPath,
       type: inferFileType(normalized, kind),
       description: normalized,
       source: "detected-path",
       rawPath: cleaned,
       resolvedPath,
+      workspaceRelativePath,
       kind,
       access: "unknown",
       previewable,
-      previewUrl,
       agentId,
     });
   }

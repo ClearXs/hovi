@@ -25,6 +25,13 @@ type ResponseHandler = (response: WSResponse) => void;
 const DEFAULT_RPC_TIMEOUT_MS = 30_000;
 const REQUEST_TIMEOUT_BUFFER_MS = 5_000;
 const MAX_RPC_TIMEOUT_MS = 900_000;
+export const OPERATOR_CONNECT_SCOPES = [
+  "operator.read",
+  "operator.write",
+  "operator.admin",
+  "operator.approvals",
+  "operator.pairing",
+] as const;
 const LONG_RUNNING_RPC_TIMEOUT_BY_METHOD: Record<string, number> = {
   "knowledge.rebuild": 180_000,
   "knowledge.graph.build": 180_000,
@@ -249,7 +256,7 @@ export class ClawdbotWebSocketClient {
    */
   private async sendConnectRequest(): Promise<void> {
     const role = "operator";
-    const scopes = ["operator.read", "operator.write", "operator.admin"];
+    const scopes = [...OPERATOR_CONNECT_SCOPES];
     const params: ConnectParams = {
       minProtocol: 3,
       maxProtocol: 3,

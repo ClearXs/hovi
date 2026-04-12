@@ -102,6 +102,7 @@ const BASE_RELOAD_RULES_TAIL: ReloadRule[] = [
 ];
 
 let cachedReloadRules: ReloadRule[] | null = null;
+// eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
 let cachedRegistry: ReturnType<typeof getActivePluginRegistry> | null = null;
 
 function listReloadRules(): ReloadRule[] {

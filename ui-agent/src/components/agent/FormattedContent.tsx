@@ -8,6 +8,45 @@ interface FormattedContentProps {
   enableMarkdown?: boolean; // 是否启用 Markdown 渲染
 }
 
+const COMMAND_PREFIXES = [
+  "ls",
+  "cd",
+  "pwd",
+  "cat",
+  "cp",
+  "mv",
+  "rm",
+  "mkdir",
+  "find",
+  "grep",
+  "rg",
+  "git",
+  "npm",
+  "pnpm",
+  "bun",
+  "node",
+  "python",
+  "python3",
+  "bash",
+  "zsh",
+  "sh",
+] as const;
+
+function isStandaloneCommandLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed || /\s{2,}/.test(trimmed)) {
+    return false;
+  }
+  const firstToken = trimmed.split(/\s+/, 1)[0]?.toLowerCase();
+  if (!firstToken || !COMMAND_PREFIXES.includes(firstToken as (typeof COMMAND_PREFIXES)[number])) {
+    return false;
+  }
+  if (/[，。！？；：]/.test(trimmed)) {
+    return false;
+  }
+  return true;
+}
+
 /**
  * 格式化显示内容，支持：
  * 1. Markdown 渲染（可选）
@@ -49,6 +88,17 @@ export function FormattedContent({
     const lines = content.split("\n");
 
     return lines.map((line, index) => {
+      if (isStandaloneCommandLine(line)) {
+        return (
+          <pre
+            key={index}
+            className="my-xs overflow-x-auto rounded-md bg-background-tertiary px-sm py-xs"
+          >
+            <code className="font-mono text-xs text-primary">{line.trim()}</code>
+          </pre>
+        );
+      }
+
       // 检查是否是工具调用行（以Searching, Reading, Creating等开头）
       const isToolCall =
         /^(Searching|Reading|Creating|Running|Connecting|Fetching|Querying)\s/.test(line);
@@ -82,8 +132,8 @@ export function FormattedContent({
   };
 
   return (
-    <p className={`whitespace-pre-wrap break-all leading-relaxed ${className}`}>
+    <div className={`whitespace-pre-wrap break-all leading-relaxed ${className}`}>
       {renderContent()}
-    </p>
+    </div>
   );
 }

@@ -91,6 +91,13 @@ export type UpdateKnowledgeDocumentMetadataParams = {
   tags?: string[];
 };
 
+export type RenameKnowledgeTreeFileParams = {
+  kbId: string;
+  agentId: string;
+  path: string;
+  filename: string;
+};
+
 export type DeleteKnowledgeDocumentResult = {
   success: boolean;
 };
@@ -183,8 +190,11 @@ export type KnowledgeTreeEntry = {
   path: string;
   kind: "file" | "directory";
   extension?: string | null;
+  typeLabel: string;
   size?: number | null;
+  createdAtMs?: number | null;
   mtimeMs?: number | null;
+  permissions?: string | null;
   sourceType: "local_fs";
   materialized: boolean;
   vectorized: boolean;
@@ -1039,7 +1049,9 @@ export class KnowledgeManager {
     };
   }
 
-  updateDocumentMetadata(params: UpdateKnowledgeDocumentMetadataParams): KnowledgeDocumentWithTags {
+  async updateDocumentMetadata(
+    params: UpdateKnowledgeDocumentMetadataParams,
+  ): Promise<KnowledgeDocumentWithTags> {
     const config = this.getConfig(params.agentId);
     if (!config) {
       throw new Error(`Knowledge base is disabled for agent ${params.agentId}`);
@@ -1060,11 +1072,30 @@ export class KnowledgeManager {
       throw new Error("Document does not belong to this knowledge base");
     }
 
+    let nextFilepath: string | undefined;
+    let nextSourceMetadata: Record<string, unknown> | null | undefined;
+    const requestedFilename = params.filename?.trim();
+
+    if (doc.source_type === "local_fs" && requestedFilename && requestedFilename !== doc.filename) {
+      const sourcePath = normalizeTreePath(extractSourcePath(doc.source_metadata) ?? doc.filepath);
+      const renamedPath = await this.renameLocalFileSource({
+        currentPath: sourcePath,
+        filename: requestedFilename,
+      });
+      nextFilepath = renamedPath;
+      nextSourceMetadata = {
+        ...parseSourceMetadataRecord(doc.source_metadata),
+        sourcePath: renamedPath,
+      };
+    }
+
     this.storage.updateDocumentMetadata({
       documentId: params.documentId,
       filename: params.filename,
       description: params.description,
       tags: params.tags,
+      filepath: nextFilepath,
+      sourceMetadata: nextSourceMetadata,
     });
 
     const updated = this.storage.getDocument(params.documentId);
@@ -1372,10 +1403,15 @@ export class KnowledgeManager {
     content: string;
     settings: KnowledgeGraphSettingsState;
     kbId: string;
-  }): Promise<void> {
+  }): Promise<number> {
     const kbId = params.kbId;
     const runId = hashText(`${kbId}:${params.documentId}`);
     const now = Date.now();
+    this.deleteGraphEntries({
+      agentId: params.agentId,
+      documentId: params.documentId,
+      kbId,
+    });
     this.db
       .prepare(
         `INSERT INTO knowledge_graph_runs
@@ -1420,11 +1456,16 @@ export class KnowledgeManager {
         `${params.documentId}.jsonl`,
       );
       await writeTriplesJsonl({ filePath: triplesPath, triples });
-      this.deleteGraphEntries({
-        agentId: params.agentId,
-        documentId: params.documentId,
-        kbId,
-      });
+      if (triples.length === 0) {
+        this.db
+          .prepare(
+            `UPDATE knowledge_graph_runs
+             SET status = ?, error = ?, triples_path = ?, updated_at = ?
+             WHERE id = ?`,
+          )
+          .run("failed", "No graph triples extracted", triplesPath, Date.now(), runId);
+        return 0;
+      }
       const insertTriple = this.db.prepare(
         `INSERT INTO knowledge_graph_triples (id, kb_id, document_id, h, r, t, props_json, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1513,6 +1554,7 @@ export class KnowledgeManager {
            WHERE id = ?`,
         )
         .run("success", triplesPath, Date.now(), runId);
+      return triples.length;
     } catch (err) {
       this.db
         .prepare(
@@ -1861,14 +1903,29 @@ export class KnowledgeManager {
     return this.getBaseWithMetaById(params.agentId, params.kbId) as KnowledgeBaseWithMeta;
   }
 
-  testSource(params: { agentId: string; kbId: string }): { success: boolean; message: string } {
+  async testSource(params: {
+    agentId: string;
+    kbId: string;
+  }): Promise<{ success: boolean; message: string }> {
     const base = this.getBaseById(params.agentId, params.kbId);
     if (!base) {
       throw new Error("Knowledge base not found");
     }
     const sourceType = base.source_type ?? "external";
     if (sourceType === "local_fs") {
-      return { success: true, message: "本地目录可访问" };
+      const roots = await this.listTreeRoots(params);
+      if (roots.length === 0) {
+        return { success: false, message: "未发现可访问的本机根目录" };
+      }
+      try {
+        await fs.access(roots[0].path);
+        return { success: true, message: "本地目录可访问" };
+      } catch {
+        return { success: false, message: "本地目录不可访问" };
+      }
+    }
+    if (sourceType === "external") {
+      return { success: true, message: "外部知识库无需连接测试" };
     }
     const parsedConfig = safeParseSourceConfig(base.source_config);
     if (
@@ -1877,11 +1934,25 @@ export class KnowledgeManager {
     ) {
       return { success: false, message: "缺少远程源配置" };
     }
-    return { success: true, message: "连接测试通过（配置有效）" };
+    return {
+      success: false,
+      message: `${sourceType} 数据源连接测试暂未实现，请先完成目录树适配`,
+    };
   }
 
-  syncSource(params: { agentId: string; kbId: string }): { success: boolean; startedAt: string } {
+  async syncSource(params: { agentId: string; kbId: string }): Promise<{
+    success: boolean;
+    startedAt: string;
+    checkedDocuments?: number;
+    removedDocuments?: number;
+    message?: string;
+  }> {
     this.resolveBaseIdForAgent({ agentId: params.agentId, kbId: params.kbId });
+    const base = this.getBaseById(params.agentId, params.kbId);
+    if (!base) {
+      throw new Error("Knowledge base not found");
+    }
+    const startedAt = new Date().toISOString();
     this.db
       .prepare(
         `UPDATE kb_bases
@@ -1889,7 +1960,81 @@ export class KnowledgeManager {
          WHERE owner_agent_id = ? AND id = ?`,
       )
       .run("syncing", Date.now(), params.agentId, params.kbId);
-    return { success: true, startedAt: new Date().toISOString() };
+    const sourceType = base.source_type ?? "external";
+
+    if (sourceType === "external") {
+      this.db
+        .prepare(
+          `UPDATE kb_bases
+           SET source_status = ?, updated_at = ?
+           WHERE owner_agent_id = ? AND id = ?`,
+        )
+        .run("connected", Date.now(), params.agentId, params.kbId);
+      return { success: true, startedAt, message: "外部知识库无需同步目录源" };
+    }
+
+    if (sourceType !== "local_fs") {
+      this.db
+        .prepare(
+          `UPDATE kb_bases
+           SET source_status = ?, updated_at = ?
+           WHERE owner_agent_id = ? AND id = ?`,
+        )
+        .run("error", Date.now(), params.agentId, params.kbId);
+      return {
+        success: false,
+        startedAt,
+        message: `${sourceType} 数据源同步暂未实现，请先完成目录树适配`,
+      };
+    }
+
+    const docs = this.db
+      .prepare(
+        `SELECT id, filepath, source_metadata
+         FROM kb_documents
+         WHERE owner_agent_id = ? AND kb_id = ? AND source_type = 'local_fs'`,
+      )
+      .all(params.agentId, params.kbId) as Array<{
+      id: string;
+      filepath: string;
+      source_metadata?: string | null;
+    }>;
+
+    let removedDocuments = 0;
+    for (const doc of docs) {
+      const rawPath = extractSourcePath(doc.source_metadata ?? undefined) ?? doc.filepath;
+      try {
+        await fs.access(normalizeTreePath(rawPath));
+      } catch {
+        const removed = await this.deleteDocument({
+          documentId: doc.id,
+          agentId: params.agentId,
+          kbId: params.kbId,
+        });
+        if (removed.success) {
+          removedDocuments += 1;
+        }
+      }
+    }
+
+    this.db
+      .prepare(
+        `UPDATE kb_bases
+         SET source_status = ?, updated_at = ?
+         WHERE owner_agent_id = ? AND id = ?`,
+      )
+      .run("connected", Date.now(), params.agentId, params.kbId);
+
+    return {
+      success: true,
+      startedAt,
+      checkedDocuments: docs.length,
+      removedDocuments,
+      message:
+        removedDocuments > 0
+          ? `同步完成，已移除 ${removedDocuments} 个失效文件`
+          : "同步完成，未发现失效文件",
+    };
   }
 
   pauseSource(params: { agentId: string; kbId: string }): { success: boolean } {
@@ -1914,6 +2059,46 @@ export class KnowledgeManager {
       )
       .run("connected", Date.now(), params.agentId, params.kbId);
     return { success: true };
+  }
+
+  async deleteSource(params: {
+    agentId: string;
+    kbId: string;
+  }): Promise<{ success: boolean; deletedDocuments: number }> {
+    this.resolveBaseIdForAgent({ agentId: params.agentId, kbId: params.kbId });
+    const base = this.getBaseById(params.agentId, params.kbId);
+    if (!base) {
+      throw new Error("Knowledge base not found");
+    }
+    const sourceType = base.source_type ?? "external";
+    let deletedDocuments = 0;
+    if (sourceType !== "external") {
+      const docs = this.db
+        .prepare(
+          `SELECT id
+           FROM kb_documents
+           WHERE owner_agent_id = ? AND kb_id = ? AND source_type = ?`,
+        )
+        .all(params.agentId, params.kbId, sourceType) as Array<{ id: string }>;
+      for (const doc of docs) {
+        const result = await this.deleteDocument({
+          documentId: doc.id,
+          agentId: params.agentId,
+          kbId: params.kbId,
+        });
+        if (result.success) {
+          deletedDocuments += 1;
+        }
+      }
+    }
+    this.db
+      .prepare(
+        `UPDATE kb_bases
+         SET source_config = ?, source_status = ?, updated_at = ?
+         WHERE owner_agent_id = ? AND id = ?`,
+      )
+      .run(null, "paused", Date.now(), params.agentId, params.kbId);
+    return { success: true, deletedDocuments };
   }
 
   async listTreeRoots(params: {
@@ -1983,8 +2168,11 @@ export class KnowledgeManager {
         path: absPath,
         kind: isDirectory ? "directory" : "file",
         extension,
+        typeLabel: isDirectory ? "目录" : getTreeEntryTypeLabel(extension),
         size: isDirectory ? null : stat.size,
+        createdAtMs: Number.isFinite(stat.birthtimeMs) ? stat.birthtimeMs : stat.ctimeMs,
         mtimeMs: stat.mtimeMs,
+        permissions: formatTreePermissions(stat.mode),
         sourceType: "local_fs",
         materialized: Boolean(materialized),
         vectorized: Boolean(materialized?.indexed_at),
@@ -2064,6 +2252,40 @@ export class KnowledgeManager {
     };
   }
 
+  async renameTreeFile(
+    params: RenameKnowledgeTreeFileParams,
+  ): Promise<{ filename: string; path: string; documentId: string | null }> {
+    this.resolveBaseIdForAgent({ agentId: params.agentId, kbId: params.kbId });
+    const currentPath = normalizeTreePath(params.path);
+    const existingDoc = this.getLocalMaterializedDocumentByPath(
+      params.agentId,
+      params.kbId,
+      currentPath,
+    );
+    const nextPath = await this.renameLocalFileSource({
+      currentPath,
+      filename: params.filename,
+    });
+
+    if (existingDoc) {
+      this.storage.updateDocumentMetadata({
+        documentId: existingDoc.id,
+        filename: path.basename(nextPath),
+        filepath: nextPath,
+        sourceMetadata: {
+          ...parseSourceMetadataRecord(existingDoc.source_metadata),
+          sourcePath: nextPath,
+        },
+      });
+    }
+
+    return {
+      filename: path.basename(nextPath),
+      path: nextPath,
+      documentId: existingDoc?.id ?? null,
+    };
+  }
+
   async materializeTreeFile(params: {
     agentId: string;
     kbId: string;
@@ -2080,7 +2302,13 @@ export class KnowledgeManager {
     const stat = await fs.stat(filePath);
     const filename = path.basename(filePath);
     const mimetype = inferMimeFromPath(filePath);
-    const documentId = hashText(`local:${params.agentId}:${params.kbId}:${filePath}`);
+    const existingDoc = this.getLocalMaterializedDocumentByPath(
+      params.agentId,
+      params.kbId,
+      filePath,
+    );
+    const documentId =
+      existingDoc?.id ?? hashText(`local:${params.agentId}:${params.kbId}:${filePath}`);
     const now = Date.now();
     const hash = createHash("sha256").update(buffer).update("\n").update(filePath).digest("hex");
 
@@ -2121,10 +2349,11 @@ export class KnowledgeManager {
       filePath,
     });
     const settings = this.getSettings(params.agentId);
-    let vectorized = false;
-    let graphBuilt = false;
+    const persistedDoc = this.storage.getDocument(documentId);
+    let vectorized = Boolean(persistedDoc?.indexed_at);
+    let graphBuilt = this.getGraphBuiltDocumentSet(params.kbId).has(documentId);
 
-    if (extractedText) {
+    if (params.mode === "vectorize" && extractedText) {
       try {
         const memoryManager = await MemoryIndexManager.get({
           cfg: this.cfg,
@@ -2149,6 +2378,7 @@ export class KnowledgeManager {
     }
 
     if (params.mode === "graphize" && extractedText) {
+      graphBuilt = false;
       try {
         this.deleteGraphEntries({
           agentId: params.agentId,
@@ -2159,20 +2389,44 @@ export class KnowledgeManager {
         // ignore cleanup errors
       }
       try {
-        await this.extractGraphForDocument({
+        const tripleCount = await this.extractGraphForDocument({
           agentId: params.agentId,
           documentId,
           content: extractedText,
           settings: settings.graph,
           kbId: params.kbId,
         });
-        graphBuilt = true;
+        graphBuilt = tripleCount > 0;
       } catch (err) {
         log.warn(`knowledge: tree graphization failed for ${filePath}: ${String(err)}`);
       }
     }
 
     return { documentId, vectorized, graphBuilt };
+  }
+
+  private async renameLocalFileSource(params: {
+    currentPath: string;
+    filename: string;
+  }): Promise<string> {
+    const nextFilename = normalizeLocalFilename(params.filename);
+    const nextPath = path.join(path.dirname(params.currentPath), nextFilename);
+
+    if (normalizeTreePath(nextPath) === normalizeTreePath(params.currentPath)) {
+      return normalizeTreePath(params.currentPath);
+    }
+
+    try {
+      await fs.access(nextPath);
+      throw new Error("目标文件已存在");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw err;
+      }
+    }
+
+    await fs.rename(params.currentPath, nextPath);
+    return normalizeTreePath(nextPath);
   }
 
   private async extractTextForMaterialize(params: {
@@ -2269,8 +2523,11 @@ export class KnowledgeManager {
     if (!doc) {
       throw new Error(`Document not found: ${params.documentId}`);
     }
+    const absPath = path.isAbsolute(doc.filepath)
+      ? doc.filepath
+      : path.join(this.baseDir, doc.filepath);
     return {
-      absPath: path.join(this.baseDir, doc.filepath),
+      absPath,
       mimetype: doc.mimetype,
     };
   }
@@ -3115,15 +3372,17 @@ export class KnowledgeManager {
     );
     if (baseSettings.graph.enabled && extractedText) {
       try {
-        await this.extractGraphForDocument({
+        const tripleCount = await this.extractGraphForDocument({
           agentId: params.agentId,
           documentId: doc.id,
           content: extractedText,
           settings: settings.graph,
           kbId,
         });
-        graphBuilt = true;
-        log.info(`knowledge: rebuild graph extraction succeeded for doc ${doc.id}`);
+        graphBuilt = tripleCount > 0;
+        log.info(
+          `knowledge: rebuild graph extraction ${graphBuilt ? "succeeded" : "produced no triples"} for doc ${doc.id}`,
+        );
       } catch (err) {
         log.warn(`knowledge: failed to re-build graph: ${String(err)}`);
       }
@@ -3157,6 +3416,32 @@ function extractSourcePath(sourceMetadata?: string): string | null {
   } catch {
     return null;
   }
+}
+
+function parseSourceMetadataRecord(sourceMetadata?: string): Record<string, unknown> {
+  if (!sourceMetadata) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(sourceMetadata) as Record<string, unknown>;
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function normalizeLocalFilename(filename: string): string {
+  const trimmed = filename.trim();
+  if (!trimmed) {
+    throw new Error("filename is required");
+  }
+  if (trimmed.includes("/") || trimmed.includes("\\")) {
+    throw new Error("文件名不能包含路径分隔符");
+  }
+  if (path.basename(trimmed) !== trimmed) {
+    throw new Error("文件名不合法");
+  }
+  return trimmed;
 }
 
 function safeParseSourceConfig(sourceConfig?: string | null): KnowledgeSourceConfig | null {
@@ -3235,6 +3520,19 @@ function inferMimeFromPath(filePath: string): string {
     ".mov": "video/quicktime",
   };
   return mimeByExt[ext] ?? "application/octet-stream";
+}
+
+function formatTreePermissions(mode: number): string {
+  const masks = [0o400, 0o200, 0o100, 0o040, 0o020, 0o010, 0o004, 0o002, 0o001];
+  const symbols = ["r", "w", "x", "r", "w", "x", "r", "w", "x"];
+  return masks.map((mask, index) => (mode & mask ? symbols[index] : "-")).join("");
+}
+
+function getTreeEntryTypeLabel(extension?: string | null): string {
+  if (!extension) {
+    return "文件";
+  }
+  return extension.replace(/^\./, "").toLowerCase();
 }
 
 function normalizeTripleOrNull(

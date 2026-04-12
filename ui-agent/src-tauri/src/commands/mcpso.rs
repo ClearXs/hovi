@@ -50,7 +50,8 @@ fn decode_json_string(raw: &str) -> String {
 }
 
 fn extract_nearby_field(source: &str, key: &str) -> Option<String> {
-    let plain_regex = Regex::new(&format!(r#""{}":"((?:\\.|[^"\\])*)""#, regex::escape(key))).ok()?;
+    let plain_regex =
+        Regex::new(&format!(r#""{}":"((?:\\.|[^"\\])*)""#, regex::escape(key))).ok()?;
     let escaped_regex = Regex::new(&format!(
         r#"\\"{}\\":\\"((?:\\\\.|[^"\\])*)\\""#,
         regex::escape(key)
@@ -60,7 +61,9 @@ fn extract_nearby_field(source: &str, key: &str) -> Option<String> {
     let captures = plain_regex
         .captures(source)
         .or_else(|| escaped_regex.captures(source))?;
-    let decoded = decode_json_string(captures.get(1)?.as_str()).trim().to_string();
+    let decoded = decode_json_string(captures.get(1)?.as_str())
+        .trim()
+        .to_string();
     if decoded.is_empty() {
         None
     } else {
@@ -157,10 +160,13 @@ fn unique_by_url(items: Vec<McpSoItem>) -> Vec<McpSoItem> {
     let mut deduped = Vec::new();
 
     for item in items {
-        let key = item
-            .server_page_url
-            .clone()
-            .unwrap_or_else(|| format!("{}:{}", item.name, item.repo_url.clone().unwrap_or_default()));
+        let key = item.server_page_url.clone().unwrap_or_else(|| {
+            format!(
+                "{}:{}",
+                item.name,
+                item.repo_url.clone().unwrap_or_default()
+            )
+        });
         if seen.insert(key) {
             deduped.push(item);
         }
@@ -178,9 +184,18 @@ fn collect_search_entries(
     let mut parsed = Vec::new();
 
     for captures in regex.captures_iter(html) {
-        let raw_name = captures.get(1).map(|value| value.as_str()).unwrap_or_default();
-        let raw_title = captures.get(2).map(|value| value.as_str()).unwrap_or_default();
-        let raw_desc = captures.get(3).map(|value| value.as_str()).unwrap_or_default();
+        let raw_name = captures
+            .get(1)
+            .map(|value| value.as_str())
+            .unwrap_or_default();
+        let raw_title = captures
+            .get(2)
+            .map(|value| value.as_str())
+            .unwrap_or_default();
+        let raw_desc = captures
+            .get(3)
+            .map(|value| value.as_str())
+            .unwrap_or_default();
 
         let raw_name = if unescape_slash {
             raw_name.replace("\\\\", "\\")
@@ -255,7 +270,11 @@ fn assert_server_page_url(raw_url: &str) -> Result<Url, String> {
 }
 
 #[tauri::command]
-pub async fn mcpso_search(query: String, limit: u32, page: u32) -> Result<McpSoSearchResult, String> {
+pub async fn mcpso_search(
+    query: String,
+    limit: u32,
+    page: u32,
+) -> Result<McpSoSearchResult, String> {
     let query = query.trim().to_string();
     let limit = limit.clamp(1, 100);
     let page = page.max(1);
@@ -265,16 +284,25 @@ pub async fn mcpso_search(query: String, limit: u32, page: u32) -> Result<McpSoS
         page_url.query_pairs_mut().append_pair("q", &query);
     }
     if page > 1 {
-        page_url.query_pairs_mut().append_pair("page", &page.to_string());
+        page_url
+            .query_pairs_mut()
+            .append_pair("page", &page.to_string());
     }
 
     let html = fetch_html(page_url.as_str(), "OpenClaw-MCP-Search/1.0").await?;
 
     let mut server_page_by_name = HashMap::new();
-    let page_path_regex = Regex::new(r#"/server/([^"/<]+)/([^"/<]+)"#).map_err(|error| error.to_string())?;
+    let page_path_regex =
+        Regex::new(r#"/server/([^"/<]+)/([^"/<]+)"#).map_err(|error| error.to_string())?;
     for captures in page_path_regex.captures_iter(&html) {
-        let slug = captures.get(1).map(|value| value.as_str()).unwrap_or_default();
-        let author = captures.get(2).map(|value| value.as_str()).unwrap_or_default();
+        let slug = captures
+            .get(1)
+            .map(|value| value.as_str())
+            .unwrap_or_default();
+        let author = captures
+            .get(2)
+            .map(|value| value.as_str())
+            .unwrap_or_default();
         server_page_by_name
             .entry(slug.to_string())
             .or_insert_with(|| format!("https://mcp.so/server/{slug}/{author}"));
@@ -339,8 +367,8 @@ pub async fn mcpso_search(query: String, limit: u32, page: u32) -> Result<McpSoS
     };
 
     let deduped = unique_by_url(filtered);
-    let total_pages_regex =
-        Regex::new(r#""totalPages":\s*(\d+)|\\?"totalPages\\?":\s*(\d+)"#).map_err(|error| error.to_string())?;
+    let total_pages_regex = Regex::new(r#""totalPages":\s*(\d+)|\\?"totalPages\\?":\s*(\d+)"#)
+        .map_err(|error| error.to_string())?;
     let total_pages = total_pages_regex
         .captures(&html)
         .and_then(|captures| captures.get(1).or_else(|| captures.get(2)))
@@ -364,8 +392,8 @@ pub async fn mcpso_detail(url: String) -> Result<McpSoDetailItem, String> {
     let html = fetch_html(parsed.as_str(), "OpenClaw-MCP-Detail/1.0").await?;
 
     let title_regex = Regex::new(r#"<title>([^<]+)</title>"#).map_err(|error| error.to_string())?;
-    let meta_desc_regex =
-        Regex::new(r#"<meta name="description" content="([^"]*)""#).map_err(|error| error.to_string())?;
+    let meta_desc_regex = Regex::new(r#"<meta name="description" content="([^"]*)""#)
+        .map_err(|error| error.to_string())?;
     let summary_ref_regex =
         Regex::new(r#""summary":"\$([0-9a-z]+)"|\\"summary\\":\\"\$([0-9a-z]+)\\""#)
             .map_err(|error| error.to_string())?;
@@ -396,8 +424,12 @@ pub async fn mcpso_detail(url: String) -> Result<McpSoDetailItem, String> {
     Ok(McpSoDetailItem {
         title,
         description,
-        summary: summary_ref.as_deref().and_then(|reference| extract_token_text(&html, reference)),
-        content: content_ref.as_deref().and_then(|reference| extract_token_text(&html, reference)),
+        summary: summary_ref
+            .as_deref()
+            .and_then(|reference| extract_token_text(&html, reference)),
+        content: content_ref
+            .as_deref()
+            .and_then(|reference| extract_token_text(&html, reference)),
         server_config_text: build_server_config_text(&html),
         author_name: extract_nearby_field(&html, "author_name"),
         repo_url: extract_nearby_field(&html, "url"),
@@ -410,8 +442,8 @@ pub async fn mcpso_import(url: String) -> Result<McpSoImportResult, String> {
     let parsed = assert_server_page_url(url.trim())?;
     let html = fetch_html(parsed.as_str(), "OpenClaw-Connector-Importer/1.0").await?;
     let title_regex = Regex::new(r#"<title>([^<]+)</title>"#).map_err(|error| error.to_string())?;
-    let meta_desc_regex =
-        Regex::new(r#"<meta name="description" content="([^"]*)""#).map_err(|error| error.to_string())?;
+    let meta_desc_regex = Regex::new(r#"<meta name="description" content="([^"]*)""#)
+        .map_err(|error| error.to_string())?;
 
     let name = title_regex
         .captures(&html)
@@ -420,7 +452,12 @@ pub async fn mcpso_import(url: String) -> Result<McpSoImportResult, String> {
         .filter(|value| !value.is_empty())
         .or_else(|| extract_nearby_field(&html, "title"))
         .or_else(|| extract_nearby_field(&html, "name"))
-        .or_else(|| parsed.path_segments().and_then(|segments| segments.into_iter().nth(1)).map(str::to_string))
+        .or_else(|| {
+            parsed
+                .path_segments()
+                .and_then(|segments| segments.into_iter().nth(1))
+                .map(str::to_string)
+        })
         .unwrap_or_else(|| "Imported MCP".into());
 
     let description = meta_desc_regex

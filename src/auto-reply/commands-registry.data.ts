@@ -24,8 +24,10 @@ function defineDockCommand(plugin: ChannelPlugin): ChatCommandDefinition {
 }
 
 let cachedCommands: ChatCommandDefinition[] | null = null;
+// eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
 let cachedRegistry: ReturnType<typeof getActivePluginRegistry> | null = null;
 let cachedNativeCommandSurfaces: Set<string> | null = null;
+// eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
 let cachedNativeRegistry: ReturnType<typeof getActivePluginRegistry> | null = null;
 
 function buildChatCommands(): ChatCommandDefinition[] {

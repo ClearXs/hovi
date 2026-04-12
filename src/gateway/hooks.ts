@@ -222,6 +222,7 @@ export type HookAgentDispatchPayload = Omit<HookAgentPayload, "sessionKey"> & {
 
 const listHookChannelValues = () => ["last", ...listChannelPlugins().map((plugin) => plugin.id)];
 
+// eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
 export type HookMessageChannel = ChannelId | "last";
 
 const getHookChannelSet = () => new Set<string>(listHookChannelValues());

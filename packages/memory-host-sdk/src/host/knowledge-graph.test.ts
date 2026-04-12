@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../../../src/config/config.js";
 import {
   computeTargetTriples,
@@ -9,20 +9,29 @@ import {
   type KnowledgeGraphSettings,
 } from "./knowledge-graph.js";
 
-vi.mock("../agents/pi-embedded.js", () => ({
-  runEmbeddedPiAgent: vi.fn(async () => ({
-    payloads: [
-      {
-        text:
-          `entity${TUPLE_DELIMITER}实体A${TUPLE_DELIMITER}Concept${TUPLE_DELIMITER}概念A${COMPLETION_DELIMITER}\n` +
-          `entity${TUPLE_DELIMITER}实体B${TUPLE_DELIMITER}Concept${TUPLE_DELIMITER}概念B${COMPLETION_DELIMITER}\n` +
-          `relation${TUPLE_DELIMITER}实体A${TUPLE_DELIMITER}实体B${TUPLE_DELIMITER}相关${TUPLE_DELIMITER}关系描述${COMPLETION_DELIMITER}\n`,
-      },
-    ],
-  })),
+const { runEmbeddedPiAgentMock } = vi.hoisted(() => ({
+  runEmbeddedPiAgentMock: vi.fn(),
+}));
+
+vi.mock("../../../../src/agents/pi-embedded.js", () => ({
+  runEmbeddedPiAgent: runEmbeddedPiAgentMock,
 }));
 
 describe("knowledge-graph", () => {
+  beforeEach(() => {
+    runEmbeddedPiAgentMock.mockClear();
+    runEmbeddedPiAgentMock.mockResolvedValue({
+      payloads: [
+        {
+          text:
+            `entity${TUPLE_DELIMITER}实体A${TUPLE_DELIMITER}Concept${TUPLE_DELIMITER}概念A${COMPLETION_DELIMITER}\n` +
+            `entity${TUPLE_DELIMITER}实体B${TUPLE_DELIMITER}Concept${TUPLE_DELIMITER}概念B${COMPLETION_DELIMITER}\n` +
+            `relation${TUPLE_DELIMITER}实体A${TUPLE_DELIMITER}实体B${TUPLE_DELIMITER}相关${TUPLE_DELIMITER}关系描述${COMPLETION_DELIMITER}\n`,
+        },
+      ],
+    });
+  });
+
   const settings: KnowledgeGraphSettings = {
     enabled: true,
     extractor: "llm",
@@ -55,6 +64,25 @@ describe("knowledge-graph", () => {
     expect(result.triples[0]).toHaveProperty("h");
     expect(result.triples[0]).toHaveProperty("r");
     expect(result.triples[0]).toHaveProperty("t");
+  });
+
+  it("uses agents.defaults.timeoutSeconds for graph extraction runs", async () => {
+    const cfg = { agents: { defaults: { timeoutSeconds: 123 } } } as OpenClawConfig;
+
+    await extractTriplesViaLlm({
+      text: "alpha beta gamma",
+      settings,
+      cfg,
+      agentId: "agent-1",
+      workspaceDir: "/tmp",
+      agentDir: "/tmp",
+    });
+
+    expect(runEmbeddedPiAgentMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        timeoutMs: 123_000,
+      }),
+    );
   });
 
   describe("parseTriplesOutput", () => {

@@ -53,6 +53,7 @@ interface MainLayoutProps {
   showSidebar?: boolean;
   onOpenKnowledge?: () => void;
   onOpenDiscover?: () => void;
+  onOpenCli?: () => void;
   onOpenChannel?: () => void;
   onOpenPersonaSettings?: () => void;
   onOpenCronJobs?: () => void;
@@ -61,7 +62,7 @@ interface MainLayoutProps {
   onGoHome?: () => void;
   assistantVisible?: boolean;
   onToggleAssistantVisible?: () => void;
-  activeView?: "chat" | "channel" | "discover" | "knowledge" | "persona" | "my";
+  activeView?: "chat" | "channel" | "cli" | "discover" | "knowledge" | "persona" | "my";
   searchShortcutLabel?: string;
   newSessionShortcutLabel?: string;
   onOpenChat?: () => void;
@@ -103,6 +104,7 @@ const MainLayout = ({
   showSidebar = true,
   onOpenKnowledge = () => {},
   onOpenDiscover = () => {},
+  onOpenCli = () => {},
   onOpenChannel = () => {},
   onOpenPersonaSettings = () => {},
   onOpenCronJobs = () => {},
@@ -155,6 +157,7 @@ const MainLayout = ({
             onToggleCollapse={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
             onOpenKnowledge={onOpenKnowledge}
             onOpenDiscover={onOpenDiscover}
+            onOpenCli={onOpenCli}
             onOpenChannel={onOpenChannel}
             onOpenPersonaSettings={onOpenPersonaSettings}
             onOpenCronJobs={onOpenCronJobs}
@@ -200,6 +203,7 @@ const MainLayout = ({
             activeView as
               | "chat"
               | "channel"
+              | "cli"
               | "discover"
               | "personas"
               | "knowledge"

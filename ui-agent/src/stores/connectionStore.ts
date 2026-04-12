@@ -4,10 +4,11 @@
  */
 
 import { create } from "zustand";
+import { setSharedApprovalSubmitted } from "../lib/approval-state";
 import { normalizeGatewayClientId } from "../lib/gateway/client-info";
 import { getGatewayWsBaseUrl } from "../lib/runtime/desktop-env";
 import { ClawdbotWebSocketClient } from "../services/clawdbot-websocket";
-import type { ConnectionStatus, DevicePairRequestedPayload } from "../types/clawdbot";
+import type { ConnectionStatus } from "../types/clawdbot";
 
 interface ConnectionStore {
   // State
@@ -31,6 +32,7 @@ interface ConnectionStore {
   resetReconnectAttempts: () => void;
   setGatewayUrl: (url: string) => void;
   setGatewayToken: (token: string) => void;
+  approvePairingRequest: (requestId?: string) => Promise<void>;
   clearPairingRequest: () => void;
 }
 
@@ -112,6 +114,13 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
               pairingRequestId: null,
               pairingDeviceId: null,
             });
+            if (client) {
+              void client.sendRequest("sessions.subscribe", {}).catch((error) => {
+                set({
+                  lastError: error instanceof Error ? error.message : "sessions.subscribe failed",
+                });
+              });
+            }
           },
 
           onDisconnected: () => {
@@ -131,13 +140,27 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
           },
         });
 
-        client.addEventListener("device.pair.requested", (payload) => {
-          const data = payload as DevicePairRequestedPayload;
-          if (data?.requestId) {
-            set({
-              pairingRequestId: data.requestId,
-              pairingDeviceId: data.deviceId ?? null,
-            });
+        client.addEventListener("exec.approval.resolved", (payload) => {
+          const data = payload as { id?: string; decision?: string };
+          if (
+            typeof data?.id === "string" &&
+            (data.decision === "allow-once" ||
+              data.decision === "allow-always" ||
+              data.decision === "deny")
+          ) {
+            setSharedApprovalSubmitted(data.id, data.decision);
+          }
+        });
+
+        client.addEventListener("plugin.approval.resolved", (payload) => {
+          const data = payload as { id?: string; decision?: string };
+          if (
+            typeof data?.id === "string" &&
+            (data.decision === "allow-once" ||
+              data.decision === "allow-always" ||
+              data.decision === "deny")
+          ) {
+            setSharedApprovalSubmitted(data.id, data.decision);
           }
         });
 
@@ -244,6 +267,23 @@ export const useConnectionStore = create<ConnectionStore>((set, get) => ({
       lastError: null,
       reconnectAttempts: 0,
     });
+  },
+
+  approvePairingRequest: async (requestId) => {
+    const { wsClient, pairingRequestId } = get();
+    const targetRequestId = (requestId ?? pairingRequestId ?? "").trim();
+    if (!targetRequestId) {
+      throw new Error("缺少配对请求 ID");
+    }
+    if (!wsClient || !wsClient.isConnected()) {
+      throw new Error("当前未连接到网关");
+    }
+
+    await wsClient.sendRequest("device.pair.approve", { requestId: targetRequestId });
+
+    if (pairingRequestId === targetRequestId) {
+      set({ pairingRequestId: null, pairingDeviceId: null });
+    }
   },
 
   clearPairingRequest: () => {

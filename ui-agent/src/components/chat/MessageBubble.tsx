@@ -15,15 +15,28 @@ import dynamic from "next/dynamic";
 import { memo, useMemo, useState, useRef, useEffect } from "react";
 import { FormattedContent } from "@/components/agent/FormattedContent";
 import { CitationBlock, Citation } from "@/components/chat/CitationBlock";
-import type { Message, SessionAttachmentMeta } from "@/components/chat/MessageList";
+import type { AssistantRichPart, SessionAttachmentMeta } from "@/components/chat/MessageList";
+import { resolveDisplayType, type DisplayFileType } from "@/components/files/file-type-registry";
 import { FileList, FileItemProps } from "@/components/files/FileList";
 import { useStreamingReplay } from "@/contexts/StreamingReplayContext";
 import { useResponsive } from "@/hooks/useResponsive";
 import { ApprovalDecision, parseApprovalCommandFromText } from "@/lib/approval-command";
+import {
+  getSharedApprovalState,
+  isUnknownOrExpiredApprovalError,
+  setSharedApprovalStale,
+  setSharedApprovalSubmitted,
+  setSharedApprovalSubmitting,
+} from "@/lib/approval-state";
 import { openPathInSystem } from "@/services/desktop-file-actions";
 import type { KnowledgeDetail } from "@/services/knowledgeApi";
 import { getKnowledge } from "@/services/knowledgeApi";
 import { resolveSessionKnowledgeDocumentRef, uploadSessionDocument } from "@/services/pageindexApi";
+import {
+  createBlobFromBase64,
+  decodeBase64ToText,
+  readAgentWorkspaceFile,
+} from "@/services/workspaceFileApi";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useToastStore } from "@/stores/toastStore";
 
@@ -71,6 +84,8 @@ declare global {
 interface MessageBubbleProps {
   role: "user" | "assistant";
   content: string;
+  richParts?: AssistantRichPart[];
+  messageId?: string;
   timestamp?: Date;
   sessionKey?: string | null;
   attachments?: File[];
@@ -124,15 +139,105 @@ type SkillStatusWsClient = {
 };
 
 const APPROVAL_DECISION_LABELS: Record<ApprovalDecision, string> = {
-  "allow-once": "允许一次",
-  "allow-always": "始终允许",
+  "allow-once": "本次同意",
+  "allow-always": "始终同意",
   deny: "拒绝",
 };
+
+const APPROVAL_LINE_RE =
+  /^\s*\/?approve(?:@[^\s]+)?\s+[A-Za-z0-9][A-Za-z0-9._:-]*\s+(?:allow-once|allow-always|always|deny)(?:\|allow-always\|deny)?\s*$/i;
+const DEVICE_PAIR_LINE_RE =
+  /^\s*(?:openclaw|moltbot)\s+devices\s+approve\s+[A-Za-z0-9][A-Za-z0-9-]*\s*$/i;
+const INLINE_APPROVAL_COMMAND_RE =
+  /\/?approve(?:@[^\s]+)?\s+[A-Za-z0-9][A-Za-z0-9._:-]*\s+(?:allow-once\|allow-always\|deny|allow-once|allow-always|always|deny)\b/gi;
+const APPROVAL_DESCRIPTION_PREFIXES = [
+  /^(?:需要你批准一下这个操作|需要您批准一下这个操作|请审批|需要审批|请批准|请确认|操作需要确认|请先审批|审批请求|待审批操作)\s*[:：]?\s*/i,
+  /^(?:approval required(?:\.?\s*reply with)?|please approve|approval request|requires approval|approve this operation)\s*[:：]?\s*/i,
+];
+const FALLBACK_APPROVAL_OPERATION = "助手请求执行一项需要确认的操作";
+
+function stripControlLines(content: string): string {
+  return content
+    .split("\n")
+    .filter((line) => !APPROVAL_LINE_RE.test(line) && !DEVICE_PAIR_LINE_RE.test(line))
+    .join("\n")
+    .trim();
+}
+
+function normalizeApprovalDescriptionLine(line: string): string {
+  let normalized = line.replace(INLINE_APPROVAL_COMMAND_RE, " ").replace(/\s+/g, " ").trim();
+  for (const prefix of APPROVAL_DESCRIPTION_PREFIXES) {
+    normalized = normalized.replace(prefix, "").trim();
+  }
+  if (/^[.:：-]+$/.test(normalized)) {
+    return "";
+  }
+  return normalized;
+}
+
+function deriveApprovalOperationSummary(content: string): string {
+  const cleanedLines = content
+    .split("\n")
+    .map((line) => normalizeApprovalDescriptionLine(line))
+    .filter(Boolean);
+  if (cleanedLines.length === 0) {
+    return FALLBACK_APPROVAL_OPERATION;
+  }
+  return cleanedLines.join(" ");
+}
+
+function getApprovalScopeSummary(decisions: ApprovalDecision[]): string {
+  const supportsAllowOnce = decisions.includes("allow-once");
+  const supportsAllowAlways = decisions.includes("allow-always");
+  if (supportsAllowOnce && supportsAllowAlways) {
+    return "可选“仅本次”或“始终允许”";
+  }
+  if (supportsAllowAlways) {
+    return "始终允许";
+  }
+  if (supportsAllowOnce) {
+    return "仅本次";
+  }
+  return "请按下方按钮确认";
+}
 
 const SKILL_KEY_CACHE_TTL_MS = 60_000;
 let cachedSkillKeys: Set<string> | null = null;
 let cachedSkillKeysAt = 0;
 let inflightSkillKeysRequest: Promise<Set<string>> | null = null;
+
+function isBlobUrl(value: string | null): boolean {
+  return value?.startsWith("blob:") ?? false;
+}
+
+function isTextLikeDisplayType(displayType: DisplayFileType): boolean {
+  return (
+    displayType === "markdown" ||
+    displayType === "json" ||
+    displayType === "yaml" ||
+    displayType === "xml" ||
+    displayType === "csv" ||
+    displayType === "sql" ||
+    displayType === "log" ||
+    displayType === "shell" ||
+    displayType === "code" ||
+    displayType === "text"
+  );
+}
+
+function resolveFileCardPreviewMode(file: FileItemProps): "image" | "pdf" | "text" | null {
+  const displayType = resolveDisplayType({
+    name: file.name,
+    resolvedPath: file.resolvedPath,
+    type: file.type,
+    kind: file.kind,
+  });
+
+  if (displayType === "image") return "image";
+  if (displayType === "pdf") return "pdf";
+  if (isTextLikeDisplayType(displayType)) return "text";
+  return null;
+}
 
 async function loadAvailableSkillKeys(wsClient?: SkillStatusWsClient | null): Promise<Set<string>> {
   if (!wsClient) {
@@ -201,6 +306,8 @@ function renderUserMessageWithSkillHighlight(
 export function MessageBubble({
   role,
   content,
+  richParts = [],
+  messageId,
   timestamp,
   sessionKey = null,
   attachments = [],
@@ -309,6 +416,21 @@ export function MessageBubble({
     if (isUser) return null;
     return parseApprovalCommandFromText(displayedContent);
   }, [displayedContent, isUser]);
+  const approvalId = parsedApprovalCommand?.id ?? null;
+  const isHistoricalApprovalRecord = Boolean(
+    !isUser && parsedApprovalCommand && messageId?.startsWith("history-"),
+  );
+  const visibleAssistantContent = useMemo(
+    () => (isUser ? displayedContent : stripControlLines(displayedContent)),
+    [displayedContent, isUser],
+  );
+  const approvalOperationSummary = useMemo(
+    () =>
+      parsedApprovalCommand && !isUser
+        ? deriveApprovalOperationSummary(visibleAssistantContent)
+        : FALLBACK_APPROVAL_OPERATION,
+    [isUser, parsedApprovalCommand, visibleAssistantContent],
+  );
 
   // Hide assistant messages that haven't been reached yet during streaming
   if (!isUser && isStreaming && messageIndex > currentMessageIndex) {
@@ -321,7 +443,23 @@ export function MessageBubble({
   const shouldShowMeta = isFullyDisplayed;
   const hasToolInfo = toolCalls.length > 0 || toolResults.length > 0;
   const approvalCommands = parsedApprovalCommand?.decisions ?? [];
+  const approvalScopeSummary = useMemo(
+    () => getApprovalScopeSummary(approvalCommands),
+    [approvalCommands],
+  );
   const canAutoApproveAlways = approvalCommands.includes("allow-always");
+  const approvalIsTerminal =
+    approvalSubmittedDecision != null ||
+    approvalSubmitError === "该审批已处理或已过期。" ||
+    isHistoricalApprovalRecord;
+  const approvalIsBusy = approvalSubmittingDecision != null;
+  const autoApprovalDecision: ApprovalDecision | null = autoApproveAlways
+    ? canAutoApproveAlways
+      ? "allow-always"
+      : approvalCommands.includes("allow-once")
+        ? "allow-once"
+        : null
+    : null;
   const formatDuration = (durationMs?: number) => {
     if (durationMs == null) return null;
     if (durationMs < 1000) return `${durationMs}ms`;
@@ -345,7 +483,13 @@ export function MessageBubble({
   }, [usage]);
 
   const hasUserAttachments = isUser && (attachments.length > 0 || sessionAttachments.length > 0);
+  const assistantRichParts = !isUser ? richParts : [];
   const previewAttachmentIsPdf = previewAttachment ? isPdf(previewAttachment) : false;
+  const previewDisplayType = useMemo(() => {
+    const label = previewAttachment?.name ?? previewAttachmentLabel;
+    if (!label) return null;
+    return resolveDisplayType({ name: label, kind: "file" });
+  }, [previewAttachment, previewAttachmentLabel]);
 
   const resetPreviewPdfState = () => {
     setPreviewPdfPages(0);
@@ -357,7 +501,7 @@ export function MessageBubble({
   };
 
   const releasePreviewUrl = () => {
-    if (previewUrl) {
+    if (previewUrl && isBlobUrl(previewUrl)) {
       URL.revokeObjectURL(previewUrl);
     }
   };
@@ -535,7 +679,7 @@ export function MessageBubble({
 
   useEffect(() => {
     return () => {
-      if (previewUrl) {
+      if (previewUrl && isBlobUrl(previewUrl)) {
         URL.revokeObjectURL(previewUrl);
       }
     };
@@ -619,11 +763,7 @@ export function MessageBubble({
     void renderPdfPage();
   }, [previewAttachmentIsPdf, previewPdfPage, previewPdfZoom, previewPdfRenderKey]);
 
-  const handlePreviewFileCard = (file: FileItemProps) => {
-    if (file.source !== "detected-path") {
-      window.open(file.path, "_blank", "noopener,noreferrer");
-      return;
-    }
+  const handlePreviewFileCard = async (file: FileItemProps) => {
     if (file.kind === "directory") {
       addToast({
         title: "目录不支持预览",
@@ -632,7 +772,7 @@ export function MessageBubble({
       });
       return;
     }
-    if (!file.previewable) {
+    if (file.source === "detected-path" && !file.previewable) {
       addToast({
         title: "当前路径暂不支持预览",
         description: file.resolvedPath ?? file.path,
@@ -640,15 +780,71 @@ export function MessageBubble({
       });
       return;
     }
-    if (!file.previewUrl) {
+    const previewMode = resolveFileCardPreviewMode(file);
+    if (!previewMode) {
       addToast({
-        title: "路径不可预览",
+        title: "当前文件暂不支持预览",
         description: file.resolvedPath ?? file.path,
         variant: "warning",
       });
       return;
     }
-    window.open(file.previewUrl, "_blank", "noopener,noreferrer");
+
+    releasePreviewUrl();
+    setPreviewAttachment(null);
+    setPreviewAttachmentLabel(file.name);
+    setPreviewText(null);
+    setPreviewError(null);
+    setPreviewUrl(null);
+    setPreviewKnowledgeDetail(null);
+    setPreviewKnowledgeLoading(false);
+    resetPreviewPdfState();
+
+    try {
+      if (file.source === "detected-path") {
+        const agentId = file.agentId ?? "main";
+        const name = file.workspaceRelativePath;
+        if (!name) {
+          throw new Error("当前路径不在工作区内，无法通过 gateway 预览");
+        }
+        const previewFile = await readAgentWorkspaceFile({ agentId, name });
+        if (previewFile.missing) {
+          throw new Error("文件不存在或已被移动");
+        }
+        const content = previewFile.content;
+        const mimetype = previewFile.mimetype ?? "application/octet-stream";
+        if (!content) {
+          throw new Error("文件内容为空，无法预览");
+        }
+
+        if (previewMode === "image" || previewMode === "pdf") {
+          const blob = createBlobFromBase64(content, mimetype);
+          setPreviewUrl(URL.createObjectURL(blob));
+          return;
+        }
+
+        setPreviewText(decodeBase64ToText(content));
+        return;
+      }
+
+      const previewTarget = file.previewUrl ?? file.path;
+      if (!previewTarget) {
+        throw new Error("路径不可预览");
+      }
+      if (previewMode === "image" || previewMode === "pdf") {
+        setPreviewUrl(previewTarget);
+        return;
+      }
+
+      const response = await fetch(previewTarget, { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error("读取预览内容失败");
+      }
+      const text = await response.text();
+      setPreviewText(text);
+    } catch (error) {
+      setPreviewError(error instanceof Error ? error.message : "读取预览内容失败");
+    }
   };
 
   const handleSystemOpenFileCard = async (file: FileItemProps) => {
@@ -682,6 +878,24 @@ export function MessageBubble({
 
   const submitApprovalDecision = async (decision: ApprovalDecision) => {
     if (!parsedApprovalCommand) return;
+    const sharedState = getSharedApprovalState(parsedApprovalCommand.id);
+    if (sharedState.status === "submitting") {
+      setApprovalSubmittingDecision(sharedState.decision);
+      setApprovalSubmitError(null);
+      return;
+    }
+    if (sharedState.status === "submitted") {
+      setApprovalSubmittedDecision(sharedState.decision);
+      setApprovalSubmittingDecision(null);
+      setApprovalSubmitError(null);
+      return;
+    }
+    if (sharedState.status === "stale") {
+      setApprovalSubmittingDecision(null);
+      setApprovalSubmittedDecision(null);
+      setApprovalSubmitError(sharedState.message);
+      return;
+    }
     if (!wsClient) {
       const message = "当前未连接到网关，无法提交审批。";
       setApprovalSubmitError(message);
@@ -695,6 +909,7 @@ export function MessageBubble({
 
     setApprovalSubmittingDecision(decision);
     setApprovalSubmitError(null);
+    setSharedApprovalSubmitting(parsedApprovalCommand.id, decision);
     try {
       const methodOrder = parsedApprovalCommand.id.startsWith("plugin:")
         ? ["plugin.approval.resolve", "exec.approval.resolve"]
@@ -706,6 +921,7 @@ export function MessageBubble({
             id: parsedApprovalCommand.id,
             decision,
           });
+          setSharedApprovalSubmitted(parsedApprovalCommand.id, decision);
           setApprovalSubmittedDecision(decision);
           setApprovalSubmitError(null);
           addToast({
@@ -716,15 +932,26 @@ export function MessageBubble({
           return;
         } catch (error) {
           lastError = error;
+          const message = error instanceof Error ? error.message : String(error);
+          if (isUnknownOrExpiredApprovalError(message)) {
+            break;
+          }
         }
       }
       throw lastError;
     } catch (error) {
       const message = error instanceof Error ? error.message : "审批请求失败";
-      setApprovalSubmitError(message);
+      if (isUnknownOrExpiredApprovalError(message)) {
+        const friendlyMessage = "该审批已处理或已过期。";
+        setSharedApprovalStale(parsedApprovalCommand.id, friendlyMessage);
+        setApprovalSubmittedDecision(null);
+        setApprovalSubmitError(friendlyMessage);
+      } else {
+        setApprovalSubmitError(message);
+      }
       addToast({
         title: "审批提交失败",
-        description: message,
+        description: isUnknownOrExpiredApprovalError(message) ? "该审批已处理或已过期。" : message,
         variant: "error",
       });
     } finally {
@@ -733,13 +960,42 @@ export function MessageBubble({
   };
 
   useEffect(() => {
-    if (!autoApproveAlways || !parsedApprovalCommand || !canAutoApproveAlways) return;
+    if (!approvalId) return;
+    if (isHistoricalApprovalRecord) {
+      setApprovalSubmittingDecision(null);
+      setApprovalSubmittedDecision(null);
+      setApprovalSubmitError(null);
+      return;
+    }
+    const sharedState = getSharedApprovalState(approvalId);
+    if (sharedState.status === "submitting") {
+      setApprovalSubmittingDecision(sharedState.decision);
+      setApprovalSubmittedDecision(null);
+      setApprovalSubmitError(null);
+      return;
+    }
+    if (sharedState.status === "submitted") {
+      setApprovalSubmittingDecision(null);
+      setApprovalSubmittedDecision(sharedState.decision);
+      setApprovalSubmitError(null);
+      return;
+    }
+    if (sharedState.status === "stale") {
+      setApprovalSubmittingDecision(null);
+      setApprovalSubmittedDecision(null);
+      setApprovalSubmitError(sharedState.message);
+    }
+  }, [approvalId, isHistoricalApprovalRecord]);
+
+  useEffect(() => {
+    if (isHistoricalApprovalRecord) return;
+    if (!autoApprovalDecision || !parsedApprovalCommand) return;
     if (approvalSubmittingDecision || approvalSubmittedDecision || approvalSubmitError) return;
-    void submitApprovalDecision("allow-always");
+    void submitApprovalDecision(autoApprovalDecision);
   }, [
-    autoApproveAlways,
+    isHistoricalApprovalRecord,
+    autoApprovalDecision,
     parsedApprovalCommand,
-    canAutoApproveAlways,
     approvalSubmittingDecision,
     approvalSubmittedDecision,
     approvalSubmitError,
@@ -780,7 +1036,8 @@ export function MessageBubble({
               )}
             </div>
             <div className="flex-1 overflow-auto scrollbar-default bg-background-secondary p-md">
-              {previewUrl && previewAttachment?.type.startsWith("image/") ? (
+              {previewUrl &&
+              (previewAttachment?.type.startsWith("image/") || previewDisplayType === "image") ? (
                 <div className="rounded-lg border border-border-light bg-background p-md">
                   <img
                     src={previewUrl}
@@ -788,7 +1045,7 @@ export function MessageBubble({
                     className="mx-auto max-h-[78vh] w-auto max-w-full object-contain"
                   />
                 </div>
-              ) : previewAttachmentIsPdf && previewUrl ? (
+              ) : previewUrl && (previewAttachmentIsPdf || previewDisplayType === "pdf") ? (
                 <div
                   key={previewPdfRenderKey}
                   className="rounded-lg border border-border-light bg-background p-sm"
@@ -904,102 +1161,194 @@ export function MessageBubble({
 
           {/* 消息内容 */}
           <div className={`flex flex-col gap-xs ${isMobile ? "min-w-[100px]" : "min-w-[150px]"}`}>
-            <div
-              className={`px-lg py-md rounded-lg ${
-                isUser
-                  ? "bg-primary text-white rounded-tr-sm"
-                  : "bg-surface text-text-primary rounded-tl-sm"
-              }`}
-            >
-              {isWaiting ? (
-                <div className="flex items-center justify-between gap-sm text-sm text-text-tertiary">
-                  <span className="animate-pulse">正在输入...</span>
-                  {onCancel && (
-                    <button
-                      type="button"
-                      onClick={onCancel}
-                      className="px-2 py-1 text-xs rounded border border-border-light text-text-secondary hover:bg-background-secondary transition-colors"
+            {(isUser || isWaiting || isCancelled || isEditing || visibleAssistantContent) && (
+              <div
+                className={`px-lg py-md rounded-lg ${
+                  isUser
+                    ? "bg-primary text-white rounded-tr-sm"
+                    : "bg-surface text-text-primary rounded-tl-sm"
+                }`}
+              >
+                {isWaiting ? (
+                  <div className="flex items-center justify-between gap-sm text-sm text-text-tertiary">
+                    <span className="animate-pulse">正在输入...</span>
+                    {onCancel && (
+                      <button
+                        type="button"
+                        onClick={onCancel}
+                        className="px-2 py-1 text-xs rounded border border-border-light text-text-secondary hover:bg-background-secondary transition-colors"
+                      >
+                        停止生成
+                      </button>
+                    )}
+                  </div>
+                ) : isCancelled ? (
+                  <div className="flex flex-col gap-xs">
+                    <div className="text-xs text-text-tertiary">已取消</div>
+                    {content && (
+                      <FormattedContent
+                        content={content}
+                        className="text-sm max-w-full opacity-70"
+                        enableMarkdown={true}
+                      />
+                    )}
+                  </div>
+                ) : isEditing && isUser ? (
+                  <textarea
+                    ref={editInputRef}
+                    value={editContent}
+                    onChange={(e) => setEditContent(e.target.value)}
+                    className="w-full min-w-[300px] bg-transparent text-sm text-white resize-none outline-none scrollbar-default"
+                    rows={Math.max(2, editContent.split("\n").length)}
+                    autoFocus
+                  />
+                ) : isUser ? (
+                  <p className="text-sm whitespace-pre-wrap leading-relaxed break-all min-w-[100px]">
+                    {renderUserMessageWithSkillHighlight(displayedContent, availableSkillKeys)}
+                  </p>
+                ) : (
+                  <FormattedContent
+                    content={visibleAssistantContent}
+                    className="text-sm max-w-full"
+                    enableMarkdown={true}
+                  />
+                )}
+              </div>
+            )}
+
+            {!isUser && assistantRichParts.length > 0 && (
+              <div className="flex flex-col gap-sm">
+                {assistantRichParts.map((part, index) => {
+                  if (part.type === "image") {
+                    return (
+                      <button
+                        key={`${part.type}:${part.url}:${index}`}
+                        type="button"
+                        className="overflow-hidden rounded-lg border border-border-light bg-background p-xs text-left"
+                        onClick={() => {
+                          setPreviewAttachment(null);
+                          setPreviewAttachmentLabel(part.fileName ?? "图片");
+                          setPreviewText(null);
+                          setPreviewError(null);
+                          setPreviewKnowledgeDetail(null);
+                          setPreviewKnowledgeLoading(false);
+                          resetPreviewPdfState();
+                          setPreviewUrl(part.url);
+                        }}
+                      >
+                        <img
+                          src={part.url}
+                          alt={part.fileName ?? "assistant image"}
+                          className="max-h-[320px] w-auto max-w-full rounded object-contain"
+                        />
+                      </button>
+                    );
+                  }
+                  if (part.type === "audio") {
+                    return (
+                      <div
+                        key={`${part.type}:${part.url}:${index}`}
+                        className="rounded-lg border border-border-light bg-background px-sm py-sm"
+                      >
+                        <div className="mb-xs text-xs text-text-tertiary">
+                          {part.fileName ?? "音频回复"}
+                        </div>
+                        <audio
+                          data-testid="assistant-audio"
+                          controls
+                          src={part.url}
+                          className="w-full"
+                        />
+                      </div>
+                    );
+                  }
+                  return (
+                    <div
+                      key={`${part.type}:${part.url}:${index}`}
+                      className="rounded-lg border border-border-light bg-background px-sm py-sm"
                     >
-                      停止生成
-                    </button>
-                  )}
-                </div>
-              ) : isCancelled ? (
-                <div className="flex flex-col gap-xs">
-                  <div className="text-xs text-text-tertiary">已取消</div>
-                  {content && (
-                    <FormattedContent
-                      content={content}
-                      className="text-sm max-w-full opacity-70"
-                      enableMarkdown={true}
-                    />
-                  )}
-                </div>
-              ) : isEditing && isUser ? (
-                <textarea
-                  ref={editInputRef}
-                  value={editContent}
-                  onChange={(e) => setEditContent(e.target.value)}
-                  className="w-full min-w-[300px] bg-transparent text-sm text-white resize-none outline-none scrollbar-default"
-                  rows={Math.max(2, editContent.split("\n").length)}
-                  autoFocus
-                />
-              ) : isUser ? (
-                <p className="text-sm whitespace-pre-wrap leading-relaxed break-all min-w-[100px]">
-                  {renderUserMessageWithSkillHighlight(displayedContent, availableSkillKeys)}
-                </p>
-              ) : (
-                <FormattedContent
-                  content={displayedContent}
-                  className="text-sm max-w-full"
-                  enableMarkdown={true}
-                />
-              )}
-            </div>
+                      <a
+                        href={part.url}
+                        download={part.fileName}
+                        className="inline-flex items-center gap-xs text-sm text-primary hover:underline"
+                      >
+                        <Paperclip className="h-3.5 w-3.5 shrink-0" />
+                        <span>{part.fileName ?? "下载文件"}</span>
+                      </a>
+                      {part.mimeType && (
+                        <div className="mt-xs text-[11px] text-text-tertiary">{part.mimeType}</div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
 
             {!isUser && parsedApprovalCommand && approvalCommands.length > 0 && (
               <div className="rounded-md border border-warning/30 bg-warning/5 p-sm">
-                <div className="text-xs font-medium text-text-primary">需要您的审批</div>
-                <div className="mt-xs text-[11px] text-text-tertiary break-all">
-                  审批 ID：<span className="font-mono">{parsedApprovalCommand.id}</span>
+                <div className="flex items-center gap-xs">
+                  <span className="rounded-full border border-primary/20 bg-primary/10 px-2 py-[2px] text-[10px] font-medium text-primary">
+                    确认
+                  </span>
+                  <div className="text-xs font-medium text-text-primary">
+                    {isHistoricalApprovalRecord ? "历史确认记录" : "待您确认"}
+                  </div>
                 </div>
                 <div className="mt-xs text-[11px] text-text-tertiary">
-                  审批 ID 用于标识本次高权限操作，提交决策时会携带这个 ID。
+                  <span className="font-medium text-text-primary">请求操作：</span>
+                  {approvalOperationSummary}
                 </div>
-                {!(autoApproveAlways && canAutoApproveAlways && !approvalSubmitError) && (
-                  <div className="mt-sm flex flex-wrap gap-xs">
-                    {approvalCommands.map((decision) => {
-                      const isSubmitting = approvalSubmittingDecision === decision;
-                      const disabled =
-                        approvalSubmittingDecision != null || approvalSubmittedDecision != null;
-                      return (
-                        <button
-                          key={decision}
-                          type="button"
-                          disabled={disabled}
-                          onClick={() => {
-                            void submitApprovalDecision(decision);
-                          }}
-                          className={`rounded border px-sm py-xs text-xs transition-colors ${
-                            decision === "deny"
-                              ? "border-error/40 text-error hover:bg-error/10 disabled:opacity-50"
-                              : "border-primary/40 text-primary hover:bg-primary/10 disabled:opacity-50"
-                          }`}
-                        >
-                          {isSubmitting ? "提交中..." : APPROVAL_DECISION_LABELS[decision]}
-                        </button>
-                      );
-                    })}
+                <div className="mt-xs text-[11px] text-text-tertiary">
+                  <span className="font-medium text-text-primary">授权范围：</span>
+                  {approvalScopeSummary}
+                </div>
+                <div className="mt-xs text-[11px] text-text-tertiary break-all">
+                  <span className="font-medium text-text-primary">确认编号：</span>
+                  <span className="font-mono">{parsedApprovalCommand.id}</span>
+                </div>
+                {!isHistoricalApprovalRecord &&
+                  !(
+                    approvalIsTerminal ||
+                    approvalIsBusy ||
+                    (autoApprovalDecision && !approvalSubmitError)
+                  ) && (
+                    <div className="mt-sm flex flex-wrap gap-xs">
+                      {approvalCommands.map((decision) => {
+                        const isSubmitting = approvalSubmittingDecision === decision;
+                        const disabled = approvalIsBusy || approvalIsTerminal;
+                        return (
+                          <button
+                            key={decision}
+                            type="button"
+                            disabled={disabled}
+                            onClick={() => {
+                              void submitApprovalDecision(decision);
+                            }}
+                            className={`rounded-full border px-sm py-xs text-xs transition-colors ${
+                              decision === "deny"
+                                ? "border-error/40 text-error hover:bg-error/10 disabled:opacity-50"
+                                : "border-primary/40 text-primary hover:bg-primary/10 disabled:opacity-50"
+                            }`}
+                          >
+                            {isSubmitting ? "提交中..." : APPROVAL_DECISION_LABELS[decision]}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                {!isHistoricalApprovalRecord && autoApprovalDecision === "allow-always" && (
+                  <div className="mt-xs text-[11px] text-text-tertiary">
+                    已开启自动同意，当前已自动选择“始终允许”。
                   </div>
                 )}
-                {autoApproveAlways && canAutoApproveAlways && (
+                {!isHistoricalApprovalRecord && autoApprovalDecision === "allow-once" && (
                   <div className="mt-xs text-[11px] text-text-tertiary">
-                    已开启自动允许，系统会自动提交“始终允许”。
+                    已开启自动同意，当前请求仅支持“仅本次”，系统已自动提交。
                   </div>
                 )}
                 {approvalSubmittedDecision && (
                   <div className="mt-xs text-[11px] text-success">
-                    已提交：{APPROVAL_DECISION_LABELS[approvalSubmittedDecision]}
+                    已处理：{APPROVAL_DECISION_LABELS[approvalSubmittedDecision]}
                   </div>
                 )}
                 {approvalSubmitError && (

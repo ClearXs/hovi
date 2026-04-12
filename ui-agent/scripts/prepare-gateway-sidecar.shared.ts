@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   chmod,
   cp,
@@ -8,6 +9,7 @@ import {
   readFile,
   readlink,
   readdir,
+  rename,
   rm,
   stat,
   writeFile,
@@ -15,6 +17,7 @@ import {
 import { builtinModules } from "node:module";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -28,6 +31,13 @@ const BAILEYS_LIBSIGNAL_DEPLOY_OVERRIDE_VALUE =
   "https://codeload.github.com/whiskeysockets/libsignal-node/tar.gz/1c30d7d7e76a3b0aa120b04dc6a26f5a12dccf67";
 const GATEWAY_SIDECAR_ENTRY_BASENAME = "gateway-sidecar-entry.js";
 const GATEWAY_SIDECAR_BOOTSTRAP = `#!/usr/bin/env node\nimport "./dist/${GATEWAY_SIDECAR_ENTRY_BASENAME}";\n`;
+const GATEWAY_SIDECAR_RUNTIME_LAYOUT_VERSION = 2;
+const PREPARED_RUNTIME_HASH_BASENAME = ".prepare-gateway-sidecar.hash";
+const PREPARED_UI_AGENT_HASH_BASENAME = ".prepare-gateway-sidecar.ui.hash";
+const PREPARED_RUNTIME_HASH_IGNORED_RELATIVE_PATHS = new Set([
+  "repo/dist/.buildstamp",
+  "repo/dist/build-info.json",
+]);
 const SIDEcar_RUNTIME_PRUNE_PATHS = [
   "assets",
   "docs",
@@ -45,6 +55,12 @@ const NODE_BUILTIN_MODULES = new Set<string>(
     name.startsWith("node:") ? [name, name.slice(5)] : [name, `node:${name}`],
   ),
 );
+
+function debugPrepareGatewaySidecar(message: string): void {
+  if (process.env.OPENCLAW_DEBUG_PREPARE_GATEWAY_SIDECAR === "1") {
+    console.error(`[prepare-gateway-sidecar] ${message}`);
+  }
+}
 
 // Bun exposes "undici" as builtin, but the gateway runtime (Node) loads it from node_modules.
 NODE_BUILTIN_MODULES.delete("undici");
@@ -113,6 +129,18 @@ export function assertSupportedSidecarNodeVersion(version: string): void {
 
 export function resolveRuntimeResourceDir(uiAgentRoot: string): string {
   return path.join(uiAgentRoot, "src-tauri", "resources", "runtime");
+}
+
+export function isDirectScriptExecution(
+  importMetaUrl: string,
+  entryArg: string | undefined,
+  currentWorkingDir: string = process.cwd(),
+): boolean {
+  if (!entryArg) {
+    return false;
+  }
+
+  return importMetaUrl === pathToFileURL(path.resolve(currentWorkingDir, entryArg)).href;
 }
 
 export function resolveBundledNodeRelativePath(platform: NodeJS.Platform): string {
@@ -260,6 +288,27 @@ type ExecFileLike = (
   },
 ) => Promise<{ stdout: string; stderr: string }>;
 
+type RenameLike = (from: string, to: string) => Promise<void>;
+
+type CopyDirLike = (
+  source: string,
+  destination: string,
+  options: {
+    force: boolean;
+    recursive: boolean;
+  },
+) => Promise<void>;
+
+type DeployPortableOpenClawRuntimeLike = (options: {
+  repoRoot: string;
+  openclawRuntimeDir: string;
+  execFileImpl?: ExecFileLike;
+  renameImpl?: RenameLike;
+  copyImpl?: CopyDirLike;
+}) => Promise<void>;
+
+type PrepareGatewaySidecarLike = typeof prepareGatewaySidecar;
+
 function asNonEmptyText(value: unknown): string | null {
   if (typeof value === "string") {
     const trimmed = value.trim();
@@ -291,10 +340,21 @@ function formatDeployFailure(error: unknown): Error {
 }
 
 type RootPackageJsonLike = {
+  dependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>;
   pnpm?: {
     overrides?: Record<string, string>;
   };
 };
+
+function collectRootRuntimeDependencyNames(rootPackageJson: RootPackageJsonLike): string[] {
+  return [
+    ...new Set([
+      ...Object.keys(rootPackageJson.dependencies ?? {}),
+      ...Object.keys(rootPackageJson.optionalDependencies ?? {}),
+    ]),
+  ].sort((left, right) => left.localeCompare(right));
+}
 
 function parseJsonRecord(value: string | undefined): Record<string, string> {
   if (!value) {
@@ -341,42 +401,230 @@ async function resolveDeployOverridesArg(
   return `--config.overrides=${JSON.stringify(overrides)}`;
 }
 
+async function hashPathMetadata(
+  hash: ReturnType<typeof createHash>,
+  absolutePath: string,
+  relativePath: string,
+): Promise<void> {
+  if (PREPARED_RUNTIME_HASH_IGNORED_RELATIVE_PATHS.has(relativePath)) {
+    return;
+  }
+
+  const entry = await lstat(absolutePath).catch(() => null);
+  if (!entry) {
+    hash.update(relativePath);
+    hash.update("\0missing\0");
+    return;
+  }
+
+  if (entry.isSymbolicLink()) {
+    hash.update(relativePath);
+    hash.update("\0symlink\0");
+    hash.update((await readlink(absolutePath).catch(() => "")) || "");
+    hash.update("\0");
+    return;
+  }
+
+  if (entry.isDirectory()) {
+    hash.update(relativePath);
+    hash.update("\0dir\0");
+    const entries = await readdir(absolutePath);
+    entries.sort((left, right) => left.localeCompare(right));
+    for (const child of entries) {
+      await hashPathMetadata(hash, path.join(absolutePath, child), `${relativePath}/${child}`);
+    }
+    return;
+  }
+
+  hash.update(relativePath);
+  hash.update("\0file\0");
+  hash.update(await readFile(absolutePath));
+  hash.update("\0");
+}
+
+async function computePreparedOpenClawRuntimeHash(options: {
+  repoRoot: string;
+  targetPlatform: NodeJS.Platform;
+}): Promise<string> {
+  const hash = createHash("sha256");
+  hash.update(`target:${options.targetPlatform}\0`);
+  hash.update(`node:${TARGET_NODE_VERSION}\0`);
+  hash.update(`runtime-layout:${GATEWAY_SIDECAR_RUNTIME_LAYOUT_VERSION}\0`);
+
+  const inputs = [
+    {
+      absolutePath: path.join(options.repoRoot, "package.json"),
+      relativePath: "repo/package.json",
+    },
+    {
+      absolutePath: path.join(options.repoRoot, "pnpm-lock.yaml"),
+      relativePath: "repo/pnpm-lock.yaml",
+    },
+    {
+      absolutePath: path.join(options.repoRoot, "dist"),
+      relativePath: "repo/dist",
+    },
+  ];
+
+  for (const input of inputs) {
+    await hashPathMetadata(hash, input.absolutePath, input.relativePath);
+  }
+
+  return hash.digest("hex");
+}
+
+async function computePreparedUiAgentHash(options: { uiAgentRoot: string }): Promise<string> {
+  const hash = createHash("sha256");
+  await hashPathMetadata(hash, path.join(options.uiAgentRoot, "out"), "ui-agent/out");
+  return hash.digest("hex");
+}
+
+async function checkPreparedOpenClawRuntimeUpToDate(options: {
+  runtimeDir: string;
+  openclawRuntimeDir: string;
+  bundledNodePath: string;
+  bundledEntryPath: string;
+  expectedHash: string;
+}): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const hashPath = path.join(options.runtimeDir, PREPARED_RUNTIME_HASH_BASENAME);
+  const storedHash = (await readFile(hashPath, "utf8").catch(() => "")).trim();
+  if (!storedHash || storedHash !== options.expectedHash) {
+    return { ok: false, reason: `hash-mismatch:${storedHash || "missing"}` };
+  }
+
+  const requiredPaths = [
+    options.openclawRuntimeDir,
+    options.bundledNodePath,
+    options.bundledEntryPath,
+  ];
+  for (const requiredPath of requiredPaths) {
+    const exists = await stat(requiredPath)
+      .then(() => true)
+      .catch(() => false);
+    if (!exists) {
+      return { ok: false, reason: `missing:${requiredPath}` };
+    }
+  }
+
+  const bootstrap = await readFile(
+    path.join(options.openclawRuntimeDir, "openclaw.mjs"),
+    "utf8",
+  ).catch(() => null);
+  if (bootstrap !== GATEWAY_SIDECAR_BOOTSTRAP) {
+    return { ok: false, reason: "bootstrap-mismatch" };
+  }
+
+  return { ok: true };
+}
+
+async function checkPreparedUiAgentUpToDate(options: {
+  runtimeDir: string;
+  bundledUiAgentRoot: string;
+  uiAgentOutDir: string;
+  expectedHash: string;
+}): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const uiAgentOutExists = await stat(options.uiAgentOutDir)
+    .then(() => true)
+    .catch(() => false);
+  if (!uiAgentOutExists) {
+    return { ok: true };
+  }
+
+  const hashPath = path.join(options.runtimeDir, PREPARED_UI_AGENT_HASH_BASENAME);
+  const storedHash = (await readFile(hashPath, "utf8").catch(() => "")).trim();
+  if (!storedHash || storedHash !== options.expectedHash) {
+    return { ok: false, reason: `ui-hash-mismatch:${storedHash || "missing"}` };
+  }
+
+  return stat(options.bundledUiAgentRoot)
+    .then(() => ({ ok: true }) as const)
+    .catch(() => ({ ok: false, reason: `missing:${options.bundledUiAgentRoot}` }) as const);
+}
+
 export async function deployPortableOpenClawRuntime(options: {
   repoRoot: string;
   openclawRuntimeDir: string;
   execFileImpl?: ExecFileLike;
+  renameImpl?: RenameLike;
+  copyImpl?: CopyDirLike;
 }): Promise<void> {
   const execFileImpl = options.execFileImpl ?? execFileAsync;
+  const renameImpl = options.renameImpl ?? rename;
+  const copyImpl = options.copyImpl ?? cp;
   const tempDeployDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-deploy-"));
-  const deployOverridesArg = await resolveDeployOverridesArg(options.repoRoot, process.env);
+  let stagedFromInstalledNodeModules = false;
 
   try {
-    try {
-      await execFileImpl(
-        resolvePnpmExecutable(process.platform),
-        [
-          `--config.virtual-store-dir-max-length=${PNPM_VIRTUAL_STORE_MAX_LENGTH}`,
-          deployOverridesArg,
-          "--filter",
-          ".",
-          "deploy",
-          "--prod",
-          "--offline",
-          tempDeployDir,
-        ],
-        {
-          cwd: options.repoRoot,
-          env: process.env,
-        },
-      );
-    } catch (error) {
-      throw formatDeployFailure(error);
+    const sourceRootPackageJsonRaw = await readFile(
+      path.join(options.repoRoot, "package.json"),
+      "utf8",
+    ).catch(() => null);
+    const sourceRootPackageJson = sourceRootPackageJsonRaw
+      ? (JSON.parse(sourceRootPackageJsonRaw) as RootPackageJsonLike)
+      : null;
+    const sourceNodeModulesDir = path.join(options.repoRoot, "node_modules");
+    const sourceDistDir = path.join(options.repoRoot, "dist");
+    const canStageFromInstalledNodeModules =
+      process.env.OPENCLAW_FORCE_PNPM_DEPLOY !== "1" &&
+      !!sourceRootPackageJson &&
+      (await stat(sourceNodeModulesDir)
+        .then((entry) => entry.isDirectory())
+        .catch(() => false)) &&
+      (await stat(sourceDistDir)
+        .then((entry) => entry.isDirectory())
+        .catch(() => false));
+
+    if (canStageFromInstalledNodeModules && sourceRootPackageJson) {
+      debugPrepareGatewaySidecar("staging runtime from installed node_modules");
+      stagedFromInstalledNodeModules = true;
+      await stageRuntimeFromInstalledNodeModules({
+        repoRoot: options.repoRoot,
+        tempDeployDir,
+        rootPackageJson: sourceRootPackageJson,
+        sourceNodeModulesDir,
+        copyImpl,
+      });
+    } else {
+      stagedFromInstalledNodeModules = false;
+      debugPrepareGatewaySidecar("falling back to pnpm deploy");
+      const deployOverridesArg = await resolveDeployOverridesArg(options.repoRoot, process.env);
+      try {
+        await execFileImpl(
+          resolvePnpmExecutable(process.platform),
+          [
+            `--config.virtual-store-dir-max-length=${PNPM_VIRTUAL_STORE_MAX_LENGTH}`,
+            deployOverridesArg,
+            "--filter",
+            ".",
+            "deploy",
+            "--prod",
+            "--offline",
+            tempDeployDir,
+          ],
+          {
+            cwd: options.repoRoot,
+            env: process.env,
+          },
+        );
+      } catch (error) {
+        throw formatDeployFailure(error);
+      }
     }
-    await cp(tempDeployDir, options.openclawRuntimeDir, {
-      force: true,
-      recursive: true,
+    await mkdir(path.dirname(options.openclawRuntimeDir), { recursive: true });
+    try {
+      await renameImpl(tempDeployDir, options.openclawRuntimeDir);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException | undefined)?.code !== "EXDEV") {
+        throw error;
+      }
+      await copyImpl(tempDeployDir, options.openclawRuntimeDir, {
+        force: true,
+        recursive: true,
+      });
+    }
+    await prunePortableOpenClawRuntime(options.openclawRuntimeDir, {
+      skipRuntimeDependencyMaterialization: stagedFromInstalledNodeModules,
     });
-    await prunePortableOpenClawRuntime(options.openclawRuntimeDir);
     await writeGatewaySidecarBootstrap(options.openclawRuntimeDir);
   } finally {
     await rm(tempDeployDir, { force: true, recursive: true });
@@ -598,14 +846,74 @@ async function resolvePackagePathFromSourceNodeModulesDir(
   return resolvePackagePathInVirtualStore(rootNodeModulesDir, packageName);
 }
 
+async function stageRuntimeFromInstalledNodeModules(options: {
+  repoRoot: string;
+  tempDeployDir: string;
+  rootPackageJson: RootPackageJsonLike;
+  sourceNodeModulesDir: string;
+  copyImpl?: CopyDirLike;
+}): Promise<void> {
+  const copyImpl = options.copyImpl ?? cp;
+  const sourceDistDir = path.join(options.repoRoot, "dist");
+  await copyImpl(sourceDistDir, path.join(options.tempDeployDir, "dist"), {
+    force: true,
+    recursive: true,
+  });
+  await writeFile(
+    path.join(options.tempDeployDir, "package.json"),
+    JSON.stringify(options.rootPackageJson, null, 2),
+    "utf8",
+  );
+
+  const targetNodeModulesDir = path.join(options.tempDeployDir, "node_modules");
+  await mkdir(targetNodeModulesDir, { recursive: true });
+  const seen = new Set<string>();
+
+  for (const dependencyName of collectRootRuntimeDependencyNames(options.rootPackageJson)) {
+    if (
+      NODE_BUILTIN_MODULES.has(dependencyName) ||
+      isSidecarPrunedOptionalPackage(dependencyName)
+    ) {
+      continue;
+    }
+
+    await materializePackageDependencyTree(
+      options.sourceNodeModulesDir,
+      options.sourceNodeModulesDir,
+      targetNodeModulesDir,
+      dependencyName,
+      seen,
+    );
+  }
+}
+
+async function copyPackageWithoutNestedNodeModules(
+  sourcePath: string,
+  targetPath: string,
+): Promise<void> {
+  await cp(sourcePath, targetPath, {
+    force: true,
+    recursive: true,
+    dereference: true,
+    // Package-local node_modules get materialized separately via the dependency walk.
+    filter: (entryPath) => {
+      const relativePath = path.relative(sourcePath, entryPath);
+      if (!relativePath) {
+        return true;
+      }
+      return !relativePath.split(path.sep).includes("node_modules");
+    },
+  });
+}
+
 async function materializePackageAtNodeModulesPath(options: {
-  rootNodeModulesDir: string;
+  sourceRootNodeModulesDir: string;
   sourceNodeModulesDir: string;
   targetNodeModulesDir: string;
   packageName: string;
 }): Promise<{ sourcePath: string; targetPath: string } | null> {
   const sourcePath = await resolvePackagePathFromSourceNodeModulesDir(
-    options.rootNodeModulesDir,
+    options.sourceRootNodeModulesDir,
     options.sourceNodeModulesDir,
     options.packageName,
   );
@@ -623,11 +931,7 @@ async function materializePackageAtNodeModulesPath(options: {
   if (!targetPathIsRealDir) {
     await rm(targetPath, { force: true, recursive: true });
     await mkdir(path.dirname(targetPath), { recursive: true });
-    await cp(sourcePath, targetPath, {
-      force: true,
-      recursive: true,
-      dereference: true,
-    });
+    await copyPackageWithoutNestedNodeModules(sourcePath, targetPath);
   }
 
   return {
@@ -669,7 +973,7 @@ async function materializePackageDependencyTree(
   seen.add(visitKey);
 
   const materialized = await materializePackageAtNodeModulesPath({
-    rootNodeModulesDir,
+    sourceRootNodeModulesDir: rootNodeModulesDir,
     sourceNodeModulesDir,
     targetNodeModulesDir,
     packageName,
@@ -968,7 +1272,12 @@ async function verifyRuntimeImportPackages(openclawRuntimeDir: string): Promise<
   );
 }
 
-export async function prunePortableOpenClawRuntime(openclawRuntimeDir: string): Promise<void> {
+export async function prunePortableOpenClawRuntime(
+  openclawRuntimeDir: string,
+  options?: {
+    skipRuntimeDependencyMaterialization?: boolean;
+  },
+): Promise<void> {
   await Promise.all(
     SIDEcar_RUNTIME_PRUNE_PATHS.map((relativePath) =>
       rm(path.join(openclawRuntimeDir, relativePath), {
@@ -980,8 +1289,10 @@ export async function prunePortableOpenClawRuntime(openclawRuntimeDir: string): 
   await pruneDistForGatewaySidecar(openclawRuntimeDir);
   await pruneNodeModulesForGatewaySidecar(openclawRuntimeDir);
   await pruneVirtualStoreForGatewaySidecar(openclawRuntimeDir);
-  await materializeClackPromptDependencies(openclawRuntimeDir);
-  await materializeRuntimeImportPackages(openclawRuntimeDir);
+  if (!options?.skipRuntimeDependencyMaterialization) {
+    await materializeClackPromptDependencies(openclawRuntimeDir);
+    await materializeRuntimeImportPackages(openclawRuntimeDir);
+  }
   await pruneDanglingSymlinksRecursively(path.join(openclawRuntimeDir, "node_modules"));
   await verifyRuntimeImportPackages(openclawRuntimeDir);
 }
@@ -996,14 +1307,18 @@ export async function prepareGatewaySidecar(options: {
   nodeExecutable: string;
   platform: NodeJS.Platform;
   env?: NodeJS.ProcessEnv;
+  deployPortableOpenClawRuntimeImpl?: DeployPortableOpenClawRuntimeLike;
 }): Promise<{
   runtimeDir: string;
   bundledNodePath: string;
   bundledEntryPath: string;
   bundledUiAgentRoot: string;
 }> {
+  debugPrepareGatewaySidecar("start");
   assertSupportedSidecarNodeVersion(TARGET_NODE_VERSION);
   const targetPlatform = resolveSidecarTargetPlatform(options.platform, options.env ?? process.env);
+  const deployPortableOpenClawRuntimeImpl =
+    options.deployPortableOpenClawRuntimeImpl ?? deployPortableOpenClawRuntime;
   const nodeExecutable =
     targetPlatform === options.platform
       ? options.nodeExecutable
@@ -1015,41 +1330,125 @@ export async function prepareGatewaySidecar(options: {
   const bundledNodeDir = path.dirname(bundledNodePath);
   const bundledEntryPath = path.join(runtimeDir, resolveBundledOpenClawEntryRelativePath());
   const bundledUiAgentRoot = path.join(runtimeDir, resolveBundledUiAgentRootRelativePath());
+  const uiAgentOutDir = path.join(options.uiAgentRoot, "out");
+  const preparedOpenClawRuntimeHashPath = path.join(runtimeDir, PREPARED_RUNTIME_HASH_BASENAME);
+  const preparedUiAgentHashPath = path.join(runtimeDir, PREPARED_UI_AGENT_HASH_BASENAME);
 
+  debugPrepareGatewaySidecar("verifying required inputs");
   await ensurePathExists(nodeExecutable, "Node 可执行文件");
   await ensurePathExists(
     path.join(options.repoRoot, "dist", GATEWAY_SIDECAR_ENTRY_BASENAME),
     "OpenClaw 桌面 sidecar 构建产物",
   );
 
-  await rm(runtimeDir, { force: true, recursive: true });
-  await mkdir(bundledNodeDir, { recursive: true });
-  await deployPortableOpenClawRuntime({
+  debugPrepareGatewaySidecar("computing openclaw runtime hash");
+  const expectedPreparedOpenClawRuntimeHash = await computePreparedOpenClawRuntimeHash({
     repoRoot: options.repoRoot,
-    openclawRuntimeDir,
+    targetPlatform,
   });
-
-  await cp(nodeExecutable, bundledNodePath, { force: true });
-  if (targetPlatform !== "win32") {
-    await chmod(bundledNodePath, 0o755);
+  debugPrepareGatewaySidecar("checking openclaw runtime cache");
+  const openClawUpToDateCheck = await checkPreparedOpenClawRuntimeUpToDate({
+    runtimeDir,
+    openclawRuntimeDir,
+    bundledNodePath,
+    bundledEntryPath,
+    expectedHash: expectedPreparedOpenClawRuntimeHash,
+  });
+  if (process.env.OPENCLAW_DEBUG_PREPARE_GATEWAY_SIDECAR === "1" && !openClawUpToDateCheck.ok) {
+    console.error(`[prepare-gateway-sidecar] openclaw cache miss: ${openClawUpToDateCheck.reason}`);
   }
 
-  const uiAgentOutDir = path.join(options.uiAgentRoot, "out");
-  try {
-    await stat(uiAgentOutDir);
-    await mkdir(uiAgentRuntimeDir, { recursive: true });
-    await cp(uiAgentOutDir, uiAgentRuntimeDir, {
-      force: true,
-      recursive: true,
+  if (!openClawUpToDateCheck.ok) {
+    debugPrepareGatewaySidecar("refreshing openclaw runtime bundle");
+    await rm(openclawRuntimeDir, { force: true, recursive: true });
+    await rm(bundledNodePath, { force: true, recursive: true });
+    await mkdir(bundledNodeDir, { recursive: true });
+    await deployPortableOpenClawRuntimeImpl({
+      repoRoot: options.repoRoot,
+      openclawRuntimeDir,
     });
+
+    await cp(nodeExecutable, bundledNodePath, { force: true });
+    if (targetPlatform !== "win32") {
+      await chmod(bundledNodePath, 0o755);
+    }
+    await writeFile(
+      preparedOpenClawRuntimeHashPath,
+      `${expectedPreparedOpenClawRuntimeHash}\n`,
+      "utf8",
+    );
+  }
+
+  debugPrepareGatewaySidecar("computing ui-agent runtime hash");
+  const expectedPreparedUiAgentHash = await computePreparedUiAgentHash({
+    uiAgentRoot: options.uiAgentRoot,
+  });
+  debugPrepareGatewaySidecar("checking ui-agent runtime cache");
+  const uiAgentUpToDateCheck = await checkPreparedUiAgentUpToDate({
+    runtimeDir,
+    bundledUiAgentRoot,
+    uiAgentOutDir,
+    expectedHash: expectedPreparedUiAgentHash,
+  });
+  if (process.env.OPENCLAW_DEBUG_PREPARE_GATEWAY_SIDECAR === "1" && !uiAgentUpToDateCheck.ok) {
+    console.error(`[prepare-gateway-sidecar] ui cache miss: ${uiAgentUpToDateCheck.reason}`);
+  }
+  try {
+    debugPrepareGatewaySidecar("verifying ui-agent out directory");
+    await stat(uiAgentOutDir);
+    if (!uiAgentUpToDateCheck.ok) {
+      debugPrepareGatewaySidecar("refreshing ui-agent runtime bundle");
+      await rm(bundledUiAgentRoot, { force: true, recursive: true });
+      await mkdir(uiAgentRuntimeDir, { recursive: true });
+      await cp(uiAgentOutDir, uiAgentRuntimeDir, {
+        force: true,
+        recursive: true,
+      });
+      await writeFile(preparedUiAgentHashPath, `${expectedPreparedUiAgentHash}\n`, "utf8");
+    }
   } catch {
     // Dev mode may run before static assets are exported. Packaged builds prepare them first.
   }
 
+  debugPrepareGatewaySidecar("done");
   return {
     runtimeDir,
     bundledNodePath,
     bundledEntryPath,
     bundledUiAgentRoot,
   };
+}
+
+export async function runPrepareGatewaySidecarCli(params: {
+  uiAgentRoot: string;
+  repoRoot: string;
+  nodeExecutable: string;
+  env: NodeJS.ProcessEnv;
+  platform: NodeJS.Platform;
+  prepareGatewaySidecarImpl?: PrepareGatewaySidecarLike;
+  exit?: (code: number) => void;
+  log?: (message: string) => void;
+  error?: (message: string) => void;
+}): Promise<void> {
+  const prepareGatewaySidecarImpl = params.prepareGatewaySidecarImpl ?? prepareGatewaySidecar;
+  const exit = params.exit ?? process.exit;
+  const log = params.log ?? console.log;
+  const error = params.error ?? console.error;
+
+  try {
+    const result = await prepareGatewaySidecarImpl({
+      uiAgentRoot: params.uiAgentRoot,
+      repoRoot: params.repoRoot,
+      nodeExecutable: params.nodeExecutable,
+      env: params.env,
+      platform: params.platform,
+    });
+    log(`gateway runtime prepared at ${result.runtimeDir}`);
+    log(`bundled node: ${result.bundledNodePath}`);
+    log(`bundled entry: ${result.bundledEntryPath}`);
+    exit(0);
+  } catch (cause) {
+    error(cause instanceof Error ? cause.message : String(cause));
+    exit(1);
+  }
 }

@@ -2,8 +2,9 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import type { OpenClawConfig } from "../../../../src/config/config.js";
+import * as knowledgeGraphModule from "./knowledge-graph.js";
 import { KnowledgeManager } from "./knowledge-manager.js";
 import { ensureKnowledgeSchema } from "./knowledge-schema.js";
 import { ensureMemoryIndexSchema } from "./memory-schema.js";
@@ -152,7 +153,8 @@ describe("KnowledgeManager", () => {
       expect(updated.name).toBe("Base B");
       expect(updated.visibility).toBe("team");
       const list = manager.listBases({ agentId: "agent-1" });
-      expect(list.total).toBe(1);
+      expect(list.total).toBe(2);
+      expect(list.kbs.some((item) => item.id === created.id)).toBe(true);
       const deleted = manager.deleteBase({ agentId: "agent-1", kbId: created.id });
       expect(deleted.success).toBe(true);
     });
@@ -199,6 +201,76 @@ describe("KnowledgeManager", () => {
       const list = manager.listBases({ agentId: "agent-1", tags: ["HR"] });
       expect(list.total).toBe(1);
       expect(list.kbs[0]?.name).toBe("KB-HR");
+    });
+  });
+
+  describe("source lifecycle", () => {
+    it("keeps graphize independent from vectorize for local tree files", async () => {
+      const base = manager.createBase({
+        agentId: "agent-1",
+        name: "Local Source",
+        visibility: "private",
+        sourceType: "local_fs",
+      });
+      const sourceFile = path.join(tempDir, "graph-only.txt");
+      await fs.writeFile(sourceFile, "alpha beta gamma", "utf8");
+
+      const result = await manager.materializeTreeFile({
+        agentId: "agent-1",
+        kbId: base.id,
+        path: sourceFile,
+        mode: "graphize",
+      });
+
+      expect(result.vectorized).toBe(false);
+      const doc = manager.getDocument({
+        agentId: "agent-1",
+        kbId: base.id,
+        documentId: result.documentId,
+      });
+      expect(doc).not.toBeNull();
+      expect(doc?.indexed_at ?? null).toBeNull();
+    });
+
+    it("deletes source config and local source documents without deleting the base", async () => {
+      const base = manager.createBase({
+        agentId: "agent-1",
+        name: "Local Delete Source",
+        visibility: "private",
+        sourceType: "local_fs",
+      });
+      const sourceFile = path.join(tempDir, "to-remove.txt");
+      await fs.writeFile(sourceFile, "remove me", "utf8");
+
+      const materialized = await manager.materializeTreeFile({
+        agentId: "agent-1",
+        kbId: base.id,
+        path: sourceFile,
+        mode: "vectorize",
+      });
+      expect(
+        manager.getDocument({
+          agentId: "agent-1",
+          kbId: base.id,
+          documentId: materialized.documentId,
+        }),
+      ).not.toBeNull();
+
+      const deleted = await manager.deleteSource({ agentId: "agent-1", kbId: base.id });
+      expect(deleted.success).toBe(true);
+      expect(deleted.deletedDocuments).toBe(1);
+
+      const stillThere = manager.getBase("agent-1", base.id);
+      expect(stillThere).not.toBeNull();
+      expect(stillThere?.source_status).toBe("paused");
+      expect(stillThere?.source_config ?? null).toBeNull();
+      expect(
+        manager.getDocument({
+          agentId: "agent-1",
+          kbId: base.id,
+          documentId: materialized.documentId,
+        }),
+      ).toBeNull();
     });
   });
 
@@ -593,6 +665,108 @@ describe("KnowledgeManager", () => {
       expect(doc?.filename).toBe("updated.txt");
       expect(doc?.description).toBe("updated");
       expect(doc?.tags).toEqual(["three", "two"]);
+    });
+  });
+
+  describe("updateDocumentMetadata", () => {
+    it("renames the underlying local file for local_fs documents", async () => {
+      const kbId = createBase("agent-1", "Local Rename").id;
+      const sourceFile = path.join(tempDir, "original-name.txt");
+      await fs.writeFile(sourceFile, "rename me", "utf8");
+
+      const materialized = await manager.materializeTreeFile({
+        agentId: "agent-1",
+        kbId,
+        path: sourceFile,
+        mode: "vectorize",
+      });
+
+      const updated = await manager.updateDocumentMetadata({
+        documentId: materialized.documentId,
+        agentId: "agent-1",
+        kbId,
+        filename: "renamed-name.txt",
+      });
+
+      expect(updated.filename).toBe("renamed-name.txt");
+      expect(updated.filepath).toBe(path.join(tempDir, "renamed-name.txt"));
+      await expect(fs.stat(path.join(tempDir, "renamed-name.txt"))).resolves.toBeTruthy();
+      await expect(fs.stat(sourceFile)).rejects.toThrow();
+    });
+
+    it("renames an unmaterialized local tree file", async () => {
+      const kbId = createBase("agent-1", "Local Virtual Rename").id;
+      const sourceFile = path.join(tempDir, "tree-original.txt");
+      await fs.writeFile(sourceFile, "rename me too", "utf8");
+
+      const updated = await manager.renameTreeFile({
+        agentId: "agent-1",
+        kbId,
+        path: sourceFile,
+        filename: "tree-renamed.txt",
+      });
+
+      expect(updated.filename).toBe("tree-renamed.txt");
+      expect(updated.path).toBe(path.join(tempDir, "tree-renamed.txt"));
+      expect(updated.documentId).toBeNull();
+      await expect(fs.stat(path.join(tempDir, "tree-renamed.txt"))).resolves.toBeTruthy();
+      await expect(fs.stat(sourceFile)).rejects.toThrow();
+    });
+  });
+
+  describe("rebuildDocument", () => {
+    it("does not report graph success when extraction returns zero triples", async () => {
+      const extractSpy = vi.spyOn(knowledgeGraphModule, "extractTriplesViaLlm").mockResolvedValue({
+        entities: [],
+        relations: [],
+        triples: [],
+        targetTriples: 0,
+        rawText: "Request timed out before a response was generated.",
+      });
+
+      const base = manager.createBase({
+        agentId: "agent-1",
+        name: "Graph Rebuild",
+        visibility: "private",
+        settings: {
+          vectorization: { enabled: false },
+          graph: {
+            enabled: true,
+            minTriples: 3,
+            maxTriples: 50,
+            triplesPerKTokens: 10,
+            maxDepth: 3,
+          },
+        },
+      });
+
+      const uploaded = await manager.uploadDocument({
+        kbId: base.id,
+        filename: "graph.txt",
+        buffer: Buffer.from("alpha beta gamma"),
+        mimetype: "text/plain",
+        sourceType: "web_api",
+        agentId: "agent-1",
+      });
+
+      const result = await manager.rebuildDocument({
+        agentId: "agent-1",
+        kbId: base.id,
+        documentId: uploaded.documentId,
+      });
+
+      expect(result.graphBuilt).toBe(false);
+      const run = db
+        .prepare(
+          `SELECT status, error
+           FROM knowledge_graph_runs
+           WHERE kb_id = ? AND document_id = ?`,
+        )
+        .get(base.id, uploaded.documentId) as { status: string; error: string | null } | undefined;
+      expect(run?.status).toBe("failed");
+      expect(run?.error).toContain("No graph triples extracted");
+
+      extractSpy.mockRestore();
     });
   });
 

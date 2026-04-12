@@ -5,10 +5,16 @@ export interface ParsedApprovalCommand {
   decisions: ApprovalDecision[];
 }
 
+export interface ParsedDevicePairApproveCommand {
+  requestId: string;
+}
+
 const APPROVAL_COMMAND_RE =
   /\/?approve(?:@[^\s]+)?\s+([A-Za-z0-9][A-Za-z0-9._:-]*)\s+(allow-once|allow-always|always|deny)\b/gi;
 const APPROVAL_TRIPLE_RE =
   /\/?approve(?:@[^\s]+)?\s+([A-Za-z0-9][A-Za-z0-9._:-]*)\s+allow-once\|allow-always\|deny\b/i;
+const DEVICE_PAIR_APPROVE_COMMAND_RE =
+  /\b(?:openclaw|moltbot)\s+devices\s+approve\s+([A-Za-z0-9][A-Za-z0-9-]*)\b/i;
 
 function normalizeDecision(value: string): ApprovalDecision | null {
   const lower = value.trim().toLowerCase();
@@ -63,4 +69,14 @@ export function parseApprovalCommandFromText(content: string): ParsedApprovalCom
     id: approvalId,
     decisions: dedupeDecisions(decisions),
   };
+}
+
+export function parseDevicePairApproveCommandFromText(
+  content: string,
+): ParsedDevicePairApproveCommand | null {
+  const match = DEVICE_PAIR_APPROVE_COMMAND_RE.exec(content);
+  if (!match?.[1]) {
+    return null;
+  }
+  return { requestId: match[1] };
 }

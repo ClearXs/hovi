@@ -4,6 +4,7 @@ import { memo, useRef, useEffect } from "react";
 import { Citation } from "@/components/chat/CitationBlock";
 import { FileItemProps } from "@/components/files/FileList";
 import { useStreamingReplay } from "@/contexts/StreamingReplayContext";
+import { parseApprovalCommandFromText } from "@/lib/approval-command";
 import { AgentMessage, AgentMessageProps } from "../agent/AgentMessage";
 import { MemoizedMessageBubble } from "./MessageBubble";
 
@@ -16,11 +17,19 @@ export interface SessionAttachmentMeta {
   uploadedAt?: string;
 }
 
+export interface AssistantRichPart {
+  type: "image" | "audio" | "file";
+  url: string;
+  mimeType?: string;
+  fileName?: string;
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant" | "agent";
   content: string;
   timestamp: Date;
+  richParts?: AssistantRichPart[];
   attachments?: File[];
   sessionAttachments?: SessionAttachmentMeta[];
   usage?: {
@@ -99,6 +108,14 @@ export function MessageList({
   const { shouldShowMessage } = useStreamingReplay();
   const prevMessageCount = useRef(0);
   const prevMessagesRef = useRef<Message[]>([]);
+  const latestApprovalMessageId = [...messages]
+    .reverse()
+    .find(
+      (message) =>
+        message.role === "assistant" &&
+        !message.id.startsWith("history-") &&
+        parseApprovalCommandFromText(message.content) != null,
+    )?.id;
 
   // 自动滚动到底部 - 只有启用且真正添加了新消息时才滚动
   useEffect(() => {
@@ -158,6 +175,7 @@ export function MessageList({
               <MemoizedMessageBubble
                 role={message.role as "user" | "assistant"}
                 content={message.content}
+                richParts={message.richParts}
                 timestamp={message.timestamp}
                 sessionKey={sessionKey}
                 attachments={message.attachments}
@@ -179,7 +197,8 @@ export function MessageList({
                 onCopy={onCopy ? (content: string) => onCopy(content) : undefined}
                 isEditing={editingMessageId === message.id}
                 messageIndex={index}
-                autoApproveAlways={autoApproveAlways}
+                messageId={message.id}
+                autoApproveAlways={autoApproveAlways && message.id === latestApprovalMessageId}
               />
             </div>
           );

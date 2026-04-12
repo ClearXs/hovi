@@ -4,6 +4,7 @@
 export const MOBILE_EVENTS = {
   OPEN_CHAT: "mobile:open-chat",
   OPEN_CHANNEL: "mobile:open-channel",
+  OPEN_CLI: "mobile:open-cli",
   OPEN_DISCOVER: "mobile:open-discover",
   OPEN_PERSONA: "mobile:open-persona",
   OPEN_SETTINGS: "mobile:open-settings",

@@ -24,6 +24,7 @@ import {
   Clock,
   Bot,
   Compass,
+  TerminalSquare,
 } from "lucide-react";
 import { useEffect, useRef, useState, useMemo } from "react";
 import { FiEdit3, FiSearch, FiBook } from "react-icons/fi";
@@ -70,6 +71,7 @@ interface SidebarProps {
   isLoading?: boolean;
   onOpenKnowledge?: () => void;
   onOpenDiscover?: () => void;
+  onOpenCli?: () => void;
   onOpenChannel?: () => void;
   onOpenPersonaSettings?: () => void;
   onOpenCronJobs?: () => void;
@@ -78,7 +80,7 @@ interface SidebarProps {
   onGoHome?: () => void;
   assistantVisible?: boolean;
   onToggleAssistantVisible?: () => void;
-  activeView?: "chat" | "channel" | "discover" | "knowledge" | "persona" | "my";
+  activeView?: "chat" | "channel" | "cli" | "discover" | "knowledge" | "persona" | "my";
   searchShortcutLabel?: string;
   newSessionShortcutLabel?: string;
 }
@@ -110,6 +112,7 @@ const Sidebar = ({
   isLoading = false,
   onOpenKnowledge = () => {},
   onOpenDiscover = () => {},
+  onOpenCli = () => {},
   onOpenChannel = () => {},
   onOpenPersonaSettings = () => {},
   onOpenCronJobs = () => {},
@@ -173,6 +176,9 @@ const Sidebar = ({
   };
   const handleDiscoverClick = () => {
     onOpenDiscover();
+  };
+  const handleCliClick = () => {
+    onOpenCli();
   };
   const handleChannelClick = () => {
     onOpenChannel();
@@ -739,6 +745,32 @@ const Sidebar = ({
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
+                  onClick={handleCliClick}
+                  aria-label="CLI 软件"
+                  className={cn(
+                    "group w-10 h-10 rounded-md flex items-center justify-center transition-all duration-fast cursor-pointer active:bg-surface-subtle",
+                    activeView === "cli"
+                      ? "bg-primary/10 hover:bg-primary/20"
+                      : "hover:bg-background-secondary",
+                  )}
+                >
+                  <TerminalSquare
+                    className={cn(
+                      "w-5 h-5 transition-colors",
+                      activeView === "cli"
+                        ? "text-primary"
+                        : "text-text-secondary group-hover:text-text-primary",
+                    )}
+                  />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className="text-xs">CLI 软件</p>
+              </TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
                   onClick={handleChannelClick}
                   aria-label="频道"
                   className={cn(
@@ -996,6 +1028,34 @@ const Sidebar = ({
               )}
             >
               动态
+            </span>
+          </button>
+          <button
+            onClick={handleCliClick}
+            className={cn(
+              "group w-full flex items-center gap-sm rounded-md px-lg py-sm transition-all duration-fast cursor-pointer active:bg-surface-subtle",
+              activeView === "cli"
+                ? "bg-primary/10 hover:bg-primary/20"
+                : "hover:bg-background-secondary",
+            )}
+          >
+            <TerminalSquare
+              className={cn(
+                "w-4 h-4 flex-shrink-0 transition-colors",
+                activeView === "cli"
+                  ? "text-primary"
+                  : "text-text-secondary group-hover:text-text-primary",
+              )}
+            />
+            <span
+              className={cn(
+                "text-xs font-medium transition-colors",
+                activeView === "cli"
+                  ? "text-text-primary"
+                  : "text-text-secondary group-hover:text-text-primary",
+              )}
+            >
+              CLI 软件
             </span>
           </button>
           {/* 频道 */}

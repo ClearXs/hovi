@@ -76,6 +76,7 @@ interface DocPreviewProps {
     kbId: string;
     path: string;
   };
+  editRequestToken?: number;
 }
 
 const UniverDocPreview = dynamic(
@@ -206,7 +207,12 @@ function highlightText(text: string, keywords: string[]) {
   });
 }
 
-export function DocPreview({ detail, highlightKeywords = [], treeContext }: DocPreviewProps) {
+export function DocPreview({
+  detail,
+  highlightKeywords = [],
+  treeContext,
+  editRequestToken = 0,
+}: DocPreviewProps) {
   const { addToast } = useToastStore();
   const [blobUrl, setBlobUrl] = useState<string | null>(null);
   const [textContent, setTextContent] = useState<string>("");
@@ -343,6 +349,16 @@ export function DocPreview({ detail, highlightKeywords = [], treeContext }: DocP
   const isPptx =
     mime === "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
     filename.endsWith(".pptx");
+
+  useEffect(() => {
+    if (editRequestToken <= 0) return;
+    setJsonToolbarExpanded(true);
+    setTextToolbarExpanded(true);
+    setMarkdownToolbarExpanded(true);
+    if (isMarkdownFile) {
+      setMarkdownEditMode(true);
+    }
+  }, [editRequestToken, isMarkdownFile]);
 
   const handlePdfSearch = async (value?: string) => {
     const queryValue = (value ?? pdfSearch).trim();

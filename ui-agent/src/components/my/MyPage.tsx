@@ -50,6 +50,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { fetchCronJobs, fetchCronStatus } from "@/features/cron/api/cronApi";
 import { fetchAgents } from "@/features/persona/services/personaApi";
 import type { AgentInfo } from "@/features/persona/types/persona";
+import { resolvePairingApprovalFailure } from "@/lib/pairing-approval";
 import { getStoredDeviceIdentity, resetDeviceIdentity } from "@/services/device-identity";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useSettingsStore } from "@/stores/settingsStore";
@@ -316,6 +317,8 @@ function ConnectionContent({ onBack }: { onBack: () => void }) {
     gatewayToken,
     pairingRequestId,
     pairingDeviceId,
+    approvePairingRequest,
+    clearPairingRequest,
     setGatewayUrl,
     setGatewayToken,
   } = useConnectionStore();
@@ -324,6 +327,7 @@ function ConnectionContent({ onBack }: { onBack: () => void }) {
   const [gatewayUrlInput, setGatewayUrlInput] = useState(gatewayUrl);
   const [tokenInput, setTokenInput] = useState(gatewayToken);
   const [isTokenDialogOpen, setIsTokenDialogOpen] = useState(false);
+  const [isApprovingPairing, setIsApprovingPairing] = useState(false);
 
   // 获取设备ID
   useEffect(() => {
@@ -388,6 +392,38 @@ function ConnectionContent({ onBack }: { onBack: () => void }) {
     connect();
   };
 
+  const handleApprovePairing = async () => {
+    if (!pairingRequestId || isApprovingPairing) return;
+    setIsApprovingPairing(true);
+    try {
+      await approvePairingRequest(pairingRequestId);
+      clearPairingRequest();
+      addToast({
+        title: "配对审批已通过",
+        description: `请求 ${pairingRequestId} 已批准。`,
+        variant: "success",
+      });
+    } catch (error) {
+      const resolved = resolvePairingApprovalFailure(error, pairingRequestId);
+      const cliCommand = resolved.cliCommand;
+      addToast({
+        title: "配对审批失败",
+        description: resolved.message,
+        variant: "error",
+        action: cliCommand
+          ? {
+              label: "复制命令",
+              onClick: () => {
+                void navigator.clipboard?.writeText(cliCommand);
+              },
+            }
+          : undefined,
+      });
+    } finally {
+      setIsApprovingPairing(false);
+    }
+  };
+
   return (
     <div className="flex flex-col h-full">
       {/* 简洁头部 */}
@@ -445,8 +481,25 @@ function ConnectionContent({ onBack }: { onBack: () => void }) {
               <div className="text-text-secondary mt-1">
                 设备 {pairingDeviceId ? pairingDeviceId.slice(0, 6) : ""} 请求配对
               </div>
-              <div className="mt-2 font-mono text-xs text-text-primary">
-                moltbot devices approve {pairingRequestId}
+              <div className="mt-2 font-mono text-xs text-text-primary">{pairingRequestId}</div>
+              <div className="mt-2 flex gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={handleApprovePairing}
+                  disabled={isApprovingPairing}
+                >
+                  {isApprovingPairing ? "批准中..." : "批准配对"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(pairingRequestId);
+                  }}
+                >
+                  复制请求 ID
+                </Button>
               </div>
             </div>
           )}

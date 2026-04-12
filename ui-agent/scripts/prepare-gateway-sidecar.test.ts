@@ -5,6 +5,9 @@ import path from "node:path";
 import {
   assertSupportedSidecarNodeVersion,
   deployPortableOpenClawRuntime,
+  isDirectScriptExecution,
+  runPrepareGatewaySidecarCli,
+  prepareGatewaySidecar,
   resolveBundledNodeRelativePath,
   resolveBundledOpenClawEntryRelativePath,
   resolvePnpmExecutable,
@@ -14,11 +17,32 @@ import {
   resolveRuntimeResourceDir,
 } from "./prepare-gateway-sidecar.shared";
 
+function withNodeEnv(overrides: Partial<NodeJS.ProcessEnv> = {}): NodeJS.ProcessEnv {
+  return { NODE_ENV: "test", ...overrides };
+}
+
+function lastItem<T>(values: readonly T[] | null | undefined): T | undefined {
+  if (!values || values.length === 0) {
+    return undefined;
+  }
+  return values[values.length - 1];
+}
+
 describe("prepare-gateway-sidecar", () => {
   it("computes the expected runtime resource directory", () => {
     expect(resolveRuntimeResourceDir("/repo/ui-agent")).toBe(
       path.join("/repo/ui-agent", "src-tauri", "resources", "runtime"),
     );
+  });
+
+  it("recognizes direct script execution when argv uses a relative path", () => {
+    expect(
+      isDirectScriptExecution(
+        "file:///Users/test/repo/ui-agent/scripts/prepare-gateway-sidecar.ts",
+        "scripts/prepare-gateway-sidecar.ts",
+        "/Users/test/repo/ui-agent",
+      ),
+    ).toBe(true);
   });
 
   it("computes the expected bundled node path", () => {
@@ -31,12 +55,18 @@ describe("prepare-gateway-sidecar", () => {
   });
 
   it("resolves the sidecar target platform from packaging env", () => {
-    expect(resolveSidecarTargetPlatform("darwin", {})).toBe("darwin");
+    expect(resolveSidecarTargetPlatform("darwin", withNodeEnv())).toBe("darwin");
     expect(
-      resolveSidecarTargetPlatform("darwin", { OPENCLAW_UI_AGENT_DESKTOP_TARGET: "win32" }),
+      resolveSidecarTargetPlatform(
+        "darwin",
+        withNodeEnv({ OPENCLAW_UI_AGENT_DESKTOP_TARGET: "win32" }),
+      ),
     ).toBe("win32");
     expect(
-      resolveSidecarTargetPlatform("darwin", { OPENCLAW_UI_AGENT_DESKTOP_TARGET: "linux" }),
+      resolveSidecarTargetPlatform(
+        "darwin",
+        withNodeEnv({ OPENCLAW_UI_AGENT_DESKTOP_TARGET: "linux" }),
+      ),
     ).toBe("linux");
   });
 
@@ -81,7 +111,141 @@ describe("prepare-gateway-sidecar", () => {
       expect(deployArgs).toContain("--offline");
       expect(deployArgs).toContain("--prod");
       expect(deployArgs).toContain("--config.virtual-store-dir-max-length=40");
-      expect(deployArgs?.at(-1)).toMatch(/^\/.+openclaw-sidecar-deploy-/);
+      expect(lastItem(deployArgs)).toMatch(/^\/.+openclaw-sidecar-deploy-/);
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("stages the sidecar runtime from installed node_modules before falling back to pnpm deploy", async () => {
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
+    const runtimeDir = path.join(tempRoot, "runtime", "openclaw");
+    let execCalled = false;
+
+    try {
+      await fsPromises.mkdir(path.join(tempRoot, "dist"), { recursive: true });
+      await fsPromises.mkdir(path.join(tempRoot, "node_modules", "foo"), { recursive: true });
+      await fsPromises.mkdir(path.join(tempRoot, "node_modules", "bar"), { recursive: true });
+      await fsPromises.mkdir(path.join(tempRoot, "node_modules", "baz"), { recursive: true });
+      await fsPromises.mkdir(path.join(tempRoot, "node_modules", "foo", "node_modules", "qux"), {
+        recursive: true,
+      });
+
+      await fsPromises.writeFile(
+        path.join(tempRoot, "package.json"),
+        JSON.stringify({
+          name: "tmp-root",
+          version: "1.0.0",
+          dependencies: {
+            foo: "1.0.0",
+          },
+        }),
+        "utf8",
+      );
+      await fsPromises.writeFile(
+        path.join(tempRoot, "dist", "gateway-sidecar-entry.js"),
+        'import "foo";\n',
+        "utf8",
+      );
+      await fsPromises.writeFile(
+        path.join(tempRoot, "node_modules", "foo", "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          main: "index.js",
+          dependencies: {
+            bar: "1.0.0",
+          },
+        }),
+        "utf8",
+      );
+      await fsPromises.writeFile(
+        path.join(tempRoot, "node_modules", "foo", "index.js"),
+        'import "bar";\nexport const foo = "foo";\n',
+        "utf8",
+      );
+      await fsPromises.writeFile(
+        path.join(tempRoot, "node_modules", "foo", "node_modules", "qux", "package.json"),
+        JSON.stringify({
+          name: "qux",
+          version: "1.0.0",
+          main: "index.js",
+        }),
+        "utf8",
+      );
+      await fsPromises.writeFile(
+        path.join(tempRoot, "node_modules", "foo", "node_modules", "qux", "index.js"),
+        'export const qux = "qux";\n',
+        "utf8",
+      );
+      await fsPromises.writeFile(
+        path.join(tempRoot, "node_modules", "bar", "package.json"),
+        JSON.stringify({
+          name: "bar",
+          version: "1.0.0",
+          main: "index.js",
+        }),
+        "utf8",
+      );
+      await fsPromises.writeFile(
+        path.join(tempRoot, "node_modules", "bar", "index.js"),
+        'export const bar = "bar";\n',
+        "utf8",
+      );
+      await fsPromises.writeFile(
+        path.join(tempRoot, "node_modules", "baz", "package.json"),
+        JSON.stringify({
+          name: "baz",
+          version: "1.0.0",
+          main: "index.js",
+        }),
+        "utf8",
+      );
+      await fsPromises.writeFile(
+        path.join(tempRoot, "node_modules", "baz", "index.js"),
+        'export const baz = "baz";\n',
+        "utf8",
+      );
+
+      await deployPortableOpenClawRuntime({
+        repoRoot: tempRoot,
+        openclawRuntimeDir: runtimeDir,
+        execFileImpl: async (_file, args) => {
+          execCalled = true;
+          const deployDir = lastItem(args);
+          if (!deployDir) {
+            throw new Error("missing deploy dir");
+          }
+          await fsPromises.mkdir(path.join(deployDir, "dist"), { recursive: true });
+          await fsPromises.writeFile(
+            path.join(deployDir, "dist", "gateway-sidecar-entry.js"),
+            'import "foo";\n',
+            "utf8",
+          );
+        },
+      });
+
+      expect(execCalled).toBe(false);
+      await expect(
+        fsPromises.readFile(path.join(runtimeDir, "dist", "gateway-sidecar-entry.js"), "utf8"),
+      ).resolves.toContain('import "foo";');
+      await expect(
+        fsPromises.readFile(path.join(runtimeDir, "node_modules", "foo", "package.json"), "utf8"),
+      ).resolves.toContain('"name":"foo"');
+      await expect(
+        fsPromises.readFile(
+          path.join(runtimeDir, "node_modules", "foo", "node_modules", "bar", "package.json"),
+          "utf8",
+        ),
+      ).resolves.toContain('"name":"bar"');
+      await expect(
+        fsPromises.stat(path.join(runtimeDir, "node_modules", "baz")),
+      ).rejects.toMatchObject({
+        code: "ENOENT",
+      });
+      await expect(
+        fsPromises.stat(path.join(runtimeDir, "node_modules", "foo", "node_modules", "qux")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
     } finally {
       await fsPromises.rm(tempRoot, { recursive: true, force: true });
     }
@@ -164,7 +328,7 @@ describe("prepare-gateway-sidecar", () => {
         repoRoot: "/repo",
         openclawRuntimeDir: runtimeDir,
         execFileImpl: async (_file, args) => {
-          const deployDir = args.at(-1);
+          const deployDir = lastItem(args);
           if (!deployDir) {
             throw new Error("missing deploy dir");
           }
@@ -273,7 +437,7 @@ describe("prepare-gateway-sidecar", () => {
         repoRoot: "/repo",
         openclawRuntimeDir: runtimeDir,
         execFileImpl: async (_file, args) => {
-          const deployDir = args.at(-1);
+          const deployDir = lastItem(args);
           if (!deployDir) {
             throw new Error("missing deploy dir");
           }
@@ -356,7 +520,7 @@ describe("prepare-gateway-sidecar", () => {
         repoRoot: "/repo",
         openclawRuntimeDir: runtimeDir,
         execFileImpl: async (_file, args) => {
-          const deployDir = args.at(-1);
+          const deployDir = lastItem(args);
           if (!deployDir) {
             throw new Error("missing deploy dir");
           }
@@ -412,7 +576,7 @@ describe("prepare-gateway-sidecar", () => {
         repoRoot: "/repo",
         openclawRuntimeDir: runtimeDir,
         execFileImpl: async (_file, args) => {
-          const deployDir = args.at(-1);
+          const deployDir = lastItem(args);
           if (!deployDir) {
             throw new Error("missing deploy dir");
           }
@@ -517,7 +681,7 @@ describe("prepare-gateway-sidecar", () => {
         repoRoot: "/repo",
         openclawRuntimeDir: runtimeDir,
         execFileImpl: async (_file, args) => {
-          const deployDir = args.at(-1);
+          const deployDir = lastItem(args);
           if (!deployDir) {
             throw new Error("missing deploy dir");
           }
@@ -580,7 +744,7 @@ describe("prepare-gateway-sidecar", () => {
         repoRoot: "/repo",
         openclawRuntimeDir: runtimeDir,
         execFileImpl: async (_file, args) => {
-          const deployDir = args.at(-1);
+          const deployDir = lastItem(args);
           if (!deployDir) {
             throw new Error("missing deploy dir");
           }
@@ -647,7 +811,7 @@ describe("prepare-gateway-sidecar", () => {
         repoRoot: "/repo",
         openclawRuntimeDir: runtimeDir,
         execFileImpl: async (_file, args) => {
-          const deployDir = args.at(-1);
+          const deployDir = lastItem(args);
           if (!deployDir) {
             throw new Error("missing deploy dir");
           }
@@ -710,7 +874,7 @@ describe("prepare-gateway-sidecar", () => {
         repoRoot: "/repo",
         openclawRuntimeDir: runtimeDir,
         execFileImpl: async (_file, args) => {
-          const deployDir = args.at(-1);
+          const deployDir = lastItem(args);
           if (!deployDir) {
             throw new Error("missing deploy dir");
           }
@@ -780,7 +944,7 @@ describe("prepare-gateway-sidecar", () => {
         repoRoot: "/repo",
         openclawRuntimeDir: runtimeDir,
         execFileImpl: async (_file, args) => {
-          const deployDir = args.at(-1);
+          const deployDir = lastItem(args);
           if (!deployDir) {
             throw new Error("missing deploy dir");
           }
@@ -842,7 +1006,7 @@ describe("prepare-gateway-sidecar", () => {
           repoRoot: "/repo",
           openclawRuntimeDir: runtimeDir,
           execFileImpl: async (_file, args) => {
-            const deployDir = args.at(-1);
+            const deployDir = lastItem(args);
             if (!deployDir) {
               throw new Error("missing deploy dir");
             }
@@ -879,7 +1043,7 @@ describe("prepare-gateway-sidecar", () => {
           repoRoot: "/repo",
           openclawRuntimeDir: runtimeDir,
           execFileImpl: async (_file, args) => {
-            const deployDir = args.at(-1);
+            const deployDir = lastItem(args);
             if (!deployDir) {
               throw new Error("missing deploy dir");
             }
@@ -918,7 +1082,7 @@ describe("prepare-gateway-sidecar", () => {
           repoRoot: "/repo",
           openclawRuntimeDir: runtimeDir,
           execFileImpl: async (_file, args) => {
-            const deployDir = args.at(-1);
+            const deployDir = lastItem(args);
             if (!deployDir) {
               throw new Error("missing deploy dir");
             }
@@ -958,7 +1122,7 @@ describe("prepare-gateway-sidecar", () => {
         repoRoot: "/repo",
         openclawRuntimeDir: runtimeDir,
         execFileImpl: async (_file, args) => {
-          const deployDir = args.at(-1);
+          const deployDir = lastItem(args);
           if (!deployDir) {
             throw new Error("missing deploy dir");
           }
@@ -1067,7 +1231,7 @@ describe("prepare-gateway-sidecar", () => {
         repoRoot: "/repo",
         openclawRuntimeDir: runtimeDir,
         execFileImpl: async (_file, args) => {
-          const deployDir = args.at(-1);
+          const deployDir = lastItem(args);
           if (!deployDir) {
             throw new Error("missing deploy dir");
           }
@@ -1191,7 +1355,7 @@ describe("prepare-gateway-sidecar", () => {
         repoRoot: "/repo",
         openclawRuntimeDir: runtimeDir,
         execFileImpl: async (_file, args) => {
-          const deployDir = args.at(-1);
+          const deployDir = lastItem(args);
           if (!deployDir) {
             throw new Error("missing deploy dir");
           }
@@ -1266,7 +1430,7 @@ describe("prepare-gateway-sidecar", () => {
           repoRoot: "/repo",
           openclawRuntimeDir: runtimeDir,
           execFileImpl: async (_file, args) => {
-            const deployDir = args.at(-1);
+            const deployDir = lastItem(args);
             if (!deployDir) {
               throw new Error("missing deploy dir");
             }
@@ -1331,6 +1495,112 @@ describe("prepare-gateway-sidecar", () => {
     expect(() => assertSupportedSidecarNodeVersion("22.22.0")).not.toThrow();
   });
 
+  it("moves the deployed runtime into place when rename succeeds", async () => {
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
+    const runtimeDir = path.join(tempRoot, "runtime", "openclaw");
+    let renamedFrom: string | null = null;
+    let renamedTo: string | null = null;
+    let copied = false;
+
+    try {
+      await deployPortableOpenClawRuntime({
+        repoRoot: "/repo",
+        openclawRuntimeDir: runtimeDir,
+        execFileImpl: async (_file, args) => {
+          const deployDir = lastItem(args);
+          if (!deployDir) {
+            throw new Error("missing deploy dir");
+          }
+
+          await fsPromises.mkdir(path.join(deployDir, "dist"), { recursive: true });
+          await fsPromises.writeFile(
+            path.join(deployDir, "dist", "gateway-sidecar-entry.js"),
+            'console.log("sidecar");\n',
+            "utf8",
+          );
+          await fsPromises.writeFile(path.join(deployDir, "openclaw.mjs"), "export {};\n", "utf8");
+          await fsPromises.writeFile(path.join(deployDir, "package.json"), "{}\n", "utf8");
+
+          return { stdout: "", stderr: "" };
+        },
+        renameImpl: async (from, to) => {
+          renamedFrom = from;
+          renamedTo = to;
+          await fsPromises.mkdir(path.dirname(to), { recursive: true });
+          await fsPromises.rename(from, to);
+        },
+        copyImpl: async () => {
+          copied = true;
+          throw new Error("copy should not run when rename succeeds");
+        },
+      });
+
+      expect(renamedFrom).toMatch(/^\/.+openclaw-sidecar-deploy-/);
+      expect(renamedTo).toBe(runtimeDir);
+      expect(copied).toBe(false);
+      expect(fs.existsSync(path.join(runtimeDir, "dist", "gateway-sidecar-entry.js"))).toBe(true);
+      expect(fs.readFileSync(path.join(runtimeDir, "openclaw.mjs"), "utf8")).toContain(
+        "./dist/gateway-sidecar-entry.js",
+      );
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to recursive copy when rename crosses devices", async () => {
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
+    const runtimeDir = path.join(tempRoot, "runtime", "openclaw");
+    let renameAttempts = 0;
+    let copiedFrom: string | null = null;
+    let copiedTo: string | null = null;
+
+    try {
+      await deployPortableOpenClawRuntime({
+        repoRoot: "/repo",
+        openclawRuntimeDir: runtimeDir,
+        execFileImpl: async (_file, args) => {
+          const deployDir = lastItem(args);
+          if (!deployDir) {
+            throw new Error("missing deploy dir");
+          }
+
+          await fsPromises.mkdir(path.join(deployDir, "dist"), { recursive: true });
+          await fsPromises.writeFile(
+            path.join(deployDir, "dist", "gateway-sidecar-entry.js"),
+            'console.log("sidecar");\n',
+            "utf8",
+          );
+          await fsPromises.writeFile(path.join(deployDir, "openclaw.mjs"), "export {};\n", "utf8");
+          await fsPromises.writeFile(path.join(deployDir, "package.json"), "{}\n", "utf8");
+
+          return { stdout: "", stderr: "" };
+        },
+        renameImpl: async () => {
+          renameAttempts += 1;
+          const error = new Error("cross-device rename") as NodeJS.ErrnoException;
+          error.code = "EXDEV";
+          throw error;
+        },
+        copyImpl: async (from, to, options) => {
+          copiedFrom = from;
+          copiedTo = to;
+          await fsPromises.mkdir(path.dirname(to), { recursive: true });
+          await fsPromises.cp(from, to, options);
+        },
+      });
+
+      expect(renameAttempts).toBe(1);
+      expect(copiedFrom).toMatch(/^\/.+openclaw-sidecar-deploy-/);
+      expect(copiedTo).toBe(runtimeDir);
+      expect(fs.existsSync(path.join(runtimeDir, "dist", "gateway-sidecar-entry.js"))).toBe(true);
+      expect(fs.readFileSync(path.join(runtimeDir, "openclaw.mjs"), "utf8")).toContain(
+        "./dist/gateway-sidecar-entry.js",
+      );
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
   it("deploys a portable openclaw runtime trimmed for the gateway sidecar", async () => {
     const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
     const runtimeDir = path.join(tempRoot, "runtime", "openclaw");
@@ -1340,7 +1610,7 @@ describe("prepare-gateway-sidecar", () => {
         repoRoot: "/repo",
         openclawRuntimeDir: runtimeDir,
         execFileImpl: async (_file, args) => {
-          const deployDir = args.at(-1);
+          const deployDir = lastItem(args);
           if (!deployDir) {
             throw new Error("missing deploy dir");
           }
@@ -1531,6 +1801,365 @@ describe("prepare-gateway-sidecar", () => {
     }
   });
 
+  it("skips redeploying the desktop runtime when inputs are unchanged", async () => {
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
+    const repoRoot = path.join(tempRoot, "repo");
+    const uiAgentRoot = path.join(repoRoot, "ui-agent");
+    const nodeExecutable = path.join(tempRoot, "fake-node");
+    let deployCalls = 0;
+
+    try {
+      await fsPromises.mkdir(path.join(repoRoot, "dist"), { recursive: true });
+      await fsPromises.mkdir(path.join(uiAgentRoot, "out"), { recursive: true });
+      await fsPromises.writeFile(path.join(repoRoot, "package.json"), "{}\n", "utf8");
+      await fsPromises.writeFile(path.join(repoRoot, "pnpm-lock.yaml"), "lockfile\n", "utf8");
+      await fsPromises.writeFile(
+        path.join(repoRoot, "dist", "gateway-sidecar-entry.js"),
+        'console.log("entry");\n',
+        "utf8",
+      );
+      await fsPromises.writeFile(
+        path.join(uiAgentRoot, "out", "index.html"),
+        "<html></html>\n",
+        "utf8",
+      );
+      await fsPromises.writeFile(nodeExecutable, "#!/usr/bin/env node\n", "utf8");
+
+      const deployPortableOpenClawRuntimeImpl = async ({
+        openclawRuntimeDir,
+      }: {
+        repoRoot: string;
+        openclawRuntimeDir: string;
+      }) => {
+        deployCalls += 1;
+        await fsPromises.mkdir(path.join(openclawRuntimeDir, "dist"), { recursive: true });
+        await fsPromises.writeFile(
+          path.join(openclawRuntimeDir, "dist", "gateway-sidecar-entry.js"),
+          'console.log("entry");\n',
+          "utf8",
+        );
+        await fsPromises.writeFile(
+          path.join(openclawRuntimeDir, "openclaw.mjs"),
+          '#!/usr/bin/env node\nimport "./dist/gateway-sidecar-entry.js";\n',
+          "utf8",
+        );
+        await fsPromises.writeFile(path.join(openclawRuntimeDir, "package.json"), "{}\n", "utf8");
+      };
+
+      await prepareGatewaySidecar({
+        repoRoot,
+        uiAgentRoot,
+        nodeExecutable,
+        platform: "darwin",
+        deployPortableOpenClawRuntimeImpl,
+      });
+      await prepareGatewaySidecar({
+        repoRoot,
+        uiAgentRoot,
+        nodeExecutable,
+        platform: "darwin",
+        deployPortableOpenClawRuntimeImpl,
+      });
+
+      expect(deployCalls).toBe(1);
+      expect(
+        fs.readFileSync(
+          path.join(resolveRuntimeResourceDir(uiAgentRoot), "openclaw", "openclaw.mjs"),
+          "utf8",
+        ),
+      ).toContain("./dist/gateway-sidecar-entry.js");
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rebuilds the desktop runtime when hashed inputs change", async () => {
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
+    const repoRoot = path.join(tempRoot, "repo");
+    const uiAgentRoot = path.join(repoRoot, "ui-agent");
+    const nodeExecutable = path.join(tempRoot, "fake-node");
+    let deployCalls = 0;
+
+    try {
+      await fsPromises.mkdir(path.join(repoRoot, "dist"), { recursive: true });
+      await fsPromises.mkdir(path.join(uiAgentRoot, "out"), { recursive: true });
+      await fsPromises.writeFile(path.join(repoRoot, "package.json"), "{}\n", "utf8");
+      await fsPromises.writeFile(path.join(repoRoot, "pnpm-lock.yaml"), "lockfile\n", "utf8");
+      await fsPromises.writeFile(
+        path.join(repoRoot, "dist", "gateway-sidecar-entry.js"),
+        'console.log("entry");\n',
+        "utf8",
+      );
+      await fsPromises.writeFile(
+        path.join(uiAgentRoot, "out", "index.html"),
+        "<html>v1</html>\n",
+        "utf8",
+      );
+      await fsPromises.writeFile(nodeExecutable, "#!/usr/bin/env node\n", "utf8");
+
+      const deployPortableOpenClawRuntimeImpl = async ({
+        openclawRuntimeDir,
+      }: {
+        repoRoot: string;
+        openclawRuntimeDir: string;
+      }) => {
+        deployCalls += 1;
+        await fsPromises.mkdir(path.join(openclawRuntimeDir, "dist"), { recursive: true });
+        await fsPromises.writeFile(
+          path.join(openclawRuntimeDir, "dist", "gateway-sidecar-entry.js"),
+          'console.log("entry");\n',
+          "utf8",
+        );
+        await fsPromises.writeFile(
+          path.join(openclawRuntimeDir, "openclaw.mjs"),
+          '#!/usr/bin/env node\nimport "./dist/gateway-sidecar-entry.js";\n',
+          "utf8",
+        );
+        await fsPromises.writeFile(path.join(openclawRuntimeDir, "package.json"), "{}\n", "utf8");
+      };
+
+      await prepareGatewaySidecar({
+        repoRoot,
+        uiAgentRoot,
+        nodeExecutable,
+        platform: "darwin",
+        deployPortableOpenClawRuntimeImpl,
+      });
+      await fsPromises.writeFile(
+        path.join(repoRoot, "dist", "gateway-sidecar-entry.js"),
+        'console.log("entry-v2");\n',
+        "utf8",
+      );
+      await prepareGatewaySidecar({
+        repoRoot,
+        uiAgentRoot,
+        nodeExecutable,
+        platform: "darwin",
+        deployPortableOpenClawRuntimeImpl,
+      });
+
+      expect(deployCalls).toBe(2);
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores volatile dist metadata when deciding to redeploy the desktop runtime", async () => {
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
+    const repoRoot = path.join(tempRoot, "repo");
+    const uiAgentRoot = path.join(repoRoot, "ui-agent");
+    const nodeExecutable = path.join(tempRoot, "fake-node");
+    let deployCalls = 0;
+
+    try {
+      await fsPromises.mkdir(path.join(repoRoot, "dist"), { recursive: true });
+      await fsPromises.mkdir(path.join(uiAgentRoot, "out"), { recursive: true });
+      await fsPromises.writeFile(path.join(repoRoot, "package.json"), "{}\n", "utf8");
+      await fsPromises.writeFile(path.join(repoRoot, "pnpm-lock.yaml"), "lockfile\n", "utf8");
+      await fsPromises.writeFile(
+        path.join(repoRoot, "dist", "gateway-sidecar-entry.js"),
+        'console.log("entry");\n',
+        "utf8",
+      );
+      await fsPromises.writeFile(
+        path.join(repoRoot, "dist", ".buildstamp"),
+        '{"builtAt":1}\n',
+        "utf8",
+      );
+      await fsPromises.writeFile(
+        path.join(repoRoot, "dist", "build-info.json"),
+        '{"version":"1","commit":"abc","builtAt":"2026-04-08T00:00:00.000Z"}\n',
+        "utf8",
+      );
+      await fsPromises.writeFile(
+        path.join(uiAgentRoot, "out", "index.html"),
+        "<html>v1</html>\n",
+        "utf8",
+      );
+      await fsPromises.writeFile(nodeExecutable, "#!/usr/bin/env node\n", "utf8");
+
+      const deployPortableOpenClawRuntimeImpl = async ({
+        openclawRuntimeDir,
+      }: {
+        repoRoot: string;
+        openclawRuntimeDir: string;
+      }) => {
+        deployCalls += 1;
+        await fsPromises.mkdir(path.join(openclawRuntimeDir, "dist"), { recursive: true });
+        await fsPromises.writeFile(
+          path.join(openclawRuntimeDir, "dist", "gateway-sidecar-entry.js"),
+          'console.log("entry");\n',
+          "utf8",
+        );
+        await fsPromises.writeFile(
+          path.join(openclawRuntimeDir, "openclaw.mjs"),
+          '#!/usr/bin/env node\nimport "./dist/gateway-sidecar-entry.js";\n',
+          "utf8",
+        );
+        await fsPromises.writeFile(path.join(openclawRuntimeDir, "package.json"), "{}\n", "utf8");
+      };
+
+      await prepareGatewaySidecar({
+        repoRoot,
+        uiAgentRoot,
+        nodeExecutable,
+        platform: "darwin",
+        deployPortableOpenClawRuntimeImpl,
+      });
+      await fsPromises.writeFile(
+        path.join(repoRoot, "dist", ".buildstamp"),
+        '{"builtAt":2}\n',
+        "utf8",
+      );
+      await fsPromises.writeFile(
+        path.join(repoRoot, "dist", "build-info.json"),
+        '{"version":"1","commit":"abc","builtAt":"2026-04-08T00:00:01.000Z"}\n',
+        "utf8",
+      );
+      await prepareGatewaySidecar({
+        repoRoot,
+        uiAgentRoot,
+        nodeExecutable,
+        platform: "darwin",
+        deployPortableOpenClawRuntimeImpl,
+      });
+
+      expect(deployCalls).toBe(1);
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("refreshes bundled ui-agent assets without redeploying openclaw runtime", async () => {
+    const tempRoot = await fsPromises.mkdtemp(path.join(os.tmpdir(), "openclaw-sidecar-test-"));
+    const repoRoot = path.join(tempRoot, "repo");
+    const uiAgentRoot = path.join(repoRoot, "ui-agent");
+    const nodeExecutable = path.join(tempRoot, "fake-node");
+    let deployCalls = 0;
+
+    try {
+      await fsPromises.mkdir(path.join(repoRoot, "dist"), { recursive: true });
+      await fsPromises.mkdir(path.join(uiAgentRoot, "out"), { recursive: true });
+      await fsPromises.writeFile(path.join(repoRoot, "package.json"), "{}\n", "utf8");
+      await fsPromises.writeFile(path.join(repoRoot, "pnpm-lock.yaml"), "lockfile\n", "utf8");
+      await fsPromises.writeFile(
+        path.join(repoRoot, "dist", "gateway-sidecar-entry.js"),
+        'console.log("entry");\n',
+        "utf8",
+      );
+      await fsPromises.writeFile(
+        path.join(uiAgentRoot, "out", "index.html"),
+        "<html>v1</html>\n",
+        "utf8",
+      );
+      await fsPromises.writeFile(nodeExecutable, "#!/usr/bin/env node\n", "utf8");
+
+      const deployPortableOpenClawRuntimeImpl = async ({
+        openclawRuntimeDir,
+      }: {
+        repoRoot: string;
+        openclawRuntimeDir: string;
+      }) => {
+        deployCalls += 1;
+        await fsPromises.mkdir(path.join(openclawRuntimeDir, "dist"), { recursive: true });
+        await fsPromises.writeFile(
+          path.join(openclawRuntimeDir, "dist", "gateway-sidecar-entry.js"),
+          'console.log("entry");\n',
+          "utf8",
+        );
+        await fsPromises.writeFile(
+          path.join(openclawRuntimeDir, "openclaw.mjs"),
+          '#!/usr/bin/env node\nimport "./dist/gateway-sidecar-entry.js";\n',
+          "utf8",
+        );
+        await fsPromises.writeFile(path.join(openclawRuntimeDir, "package.json"), "{}\n", "utf8");
+      };
+
+      await prepareGatewaySidecar({
+        repoRoot,
+        uiAgentRoot,
+        nodeExecutable,
+        platform: "darwin",
+        deployPortableOpenClawRuntimeImpl,
+      });
+      await fsPromises.writeFile(
+        path.join(uiAgentRoot, "out", "index.html"),
+        "<html>v2</html>\n",
+        "utf8",
+      );
+      await prepareGatewaySidecar({
+        repoRoot,
+        uiAgentRoot,
+        nodeExecutable,
+        platform: "darwin",
+        deployPortableOpenClawRuntimeImpl,
+      });
+
+      expect(deployCalls).toBe(1);
+      expect(
+        fs.readFileSync(
+          path.join(resolveRuntimeResourceDir(uiAgentRoot), "ui-agent", "index.html"),
+          "utf8",
+        ),
+      ).toContain("v2");
+    } finally {
+      await fsPromises.rm(tempRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("exits the CLI process after a successful prepare run", async () => {
+    const exitCalls: number[] = [];
+    const logs: string[] = [];
+
+    await runPrepareGatewaySidecarCli({
+      prepareGatewaySidecarImpl: async () => ({
+        runtimeDir: "/tmp/runtime",
+        bundledNodePath: "/tmp/runtime/node/node",
+        bundledEntryPath: "/tmp/runtime/openclaw/openclaw.mjs",
+        bundledUiAgentRoot: "/tmp/runtime/ui-agent",
+      }),
+      exit: (code) => {
+        exitCalls.push(code);
+      },
+      log: (message) => {
+        logs.push(message);
+      },
+      error: () => {
+        throw new Error("unexpected error log");
+      },
+    });
+
+    expect(exitCalls).toEqual([0]);
+    expect(logs).toEqual([
+      "gateway runtime prepared at /tmp/runtime",
+      "bundled node: /tmp/runtime/node/node",
+      "bundled entry: /tmp/runtime/openclaw/openclaw.mjs",
+    ]);
+  });
+
+  it("exits the CLI process with code 1 when prepare fails", async () => {
+    const exitCalls: number[] = [];
+    const errors: string[] = [];
+
+    await runPrepareGatewaySidecarCli({
+      prepareGatewaySidecarImpl: async () => {
+        throw new Error("boom");
+      },
+      exit: (code) => {
+        exitCalls.push(code);
+      },
+      log: () => {
+        throw new Error("unexpected success log");
+      },
+      error: (message) => {
+        errors.push(message);
+      },
+    });
+
+    expect(exitCalls).toEqual([1]);
+    expect(errors).toEqual(["boom"]);
+  });
+
   it("rebuilds openclaw before desktop dev and package flows", () => {
     const rootPackageJson = JSON.parse(
       fs.readFileSync(path.join(__dirname, "..", "..", "package.json"), "utf8"),
@@ -1564,10 +2193,15 @@ describe("prepare-gateway-sidecar", () => {
     expect(packageJson.scripts?.["dev:desktop"]).toContain("pnpm clean:tauri-runtime-staging");
     expect(packageJson.scripts?.["build:desktop"]).toContain("pnpm -C .. build");
     expect(packageJson.scripts?.["build:desktop"]).toContain("pnpm clean:tauri-runtime-staging");
-    expect(packageJson.scripts?.["clean:tauri-runtime-staging"]).toContain(
-      "clean-tauri-runtime-staging.ts",
+    expect(packageJson.scripts?.["clean:tauri-runtime-staging"]).toBe(
+      "node --import tsx scripts/clean-tauri-runtime-staging.ts",
     );
-    expect(packageJson.scripts?.["prepare:nsis-tooling"]).toContain("prepare-nsis-tooling.ts");
+    expect(packageJson.scripts?.["prepare:gateway-sidecar"]).toBe(
+      "node --import tsx scripts/prepare-gateway-sidecar.ts",
+    );
+    expect(packageJson.scripts?.["prepare:nsis-tooling"]).toBe(
+      "node --import tsx scripts/prepare-nsis-tooling.ts",
+    );
     expect(tauriConfig.build?.beforeBuildCommand).toContain("pnpm -C .. build");
     expect(tauriConfig.build?.beforeBuildCommand).toContain("pnpm clean:tauri-runtime-staging");
     expect(tauriConfig.bundle?.resources).toEqual({
@@ -1576,12 +2210,22 @@ describe("prepare-gateway-sidecar", () => {
     expect(rootPackageJson.scripts?.["ui-agent:desktop:package:windows:xwin"]).toContain(
       "/opt/homebrew/opt/llvm/bin",
     );
+    expect(rootPackageJson.scripts?.["ui-agent:desktop:package:windows"]).toContain(
+      "/opt/homebrew/opt/llvm/bin",
+    );
     expect(rootPackageJson.scripts?.["ui-agent:desktop:package:windows:xwin"]).toContain(
+      "OPENCLAW_UI_AGENT_DESKTOP_TARGET=win32",
+    );
+    expect(rootPackageJson.scripts?.["ui-agent:desktop:package:windows"]).toContain(
       "OPENCLAW_UI_AGENT_DESKTOP_TARGET=win32",
     );
     expect(rootPackageJson.scripts?.["ui-agent:desktop:package:windows:xwin"]).toContain(
       "prepare:nsis-tooling",
     );
+    expect(rootPackageJson.scripts?.["ui-agent:desktop:package:windows"]).toContain(
+      "prepare:nsis-tooling",
+    );
+    expect(rootPackageJson.scripts?.["ui-agent:desktop:package:windows"]).toContain("cargo-xwin");
     expect(rootPackageJson.scripts?.["ui-agent:desktop:package:linux"]).toContain(
       "OPENCLAW_UI_AGENT_DESKTOP_TARGET=linux",
     );

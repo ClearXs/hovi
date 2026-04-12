@@ -4,7 +4,7 @@ describe("mcpso service", () => {
   beforeEach(() => {
     jest.resetModules();
     fetchMock.mockReset();
-    global.fetch = fetchMock as typeof fetch;
+    global.fetch = fetchMock as unknown as typeof fetch;
     delete (window as Window & { __TAURI__?: unknown }).__TAURI__;
     delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
   });

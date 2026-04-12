@@ -10,7 +10,10 @@ import {
   ChevronLeft,
   ChevronRight as ChevronRightIcon,
 } from "lucide-react";
+import type { ReactNode } from "react";
 import { useState, useMemo } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import type { KnowledgeChunk } from "@/services/knowledgeApi";
 
@@ -27,6 +30,11 @@ interface KnowledgeChunksListProps {
   // 用于批量操作
   selectedChunkIds?: Set<string>;
   onSelectionChange?: (selectedIds: Set<string>) => void;
+  emptyState?: {
+    title?: string;
+    description?: string;
+    actions?: ReactNode;
+  };
 }
 
 const PREVIEW_LENGTH = 150; // 预览字符数
@@ -42,6 +50,7 @@ export function KnowledgeChunksList({
   onGoToPage,
   selectedChunkIds,
   onSelectionChange,
+  emptyState,
 }: KnowledgeChunksListProps) {
   const [expandedChunks, setExpandedChunks] = useState<Set<string>>(new Set());
   const [selectMode, setSelectMode] = useState(false);
@@ -133,14 +142,6 @@ export function KnowledgeChunksList({
     );
   }
 
-  if (chunks.length === 0) {
-    return (
-      <div className="flex flex-1 items-center justify-center rounded-lg border border-dashed border-border-light px-sm text-xs text-text-tertiary">
-        暂无分块数据
-      </div>
-    );
-  }
-
   return (
     <div className="flex h-full flex-col">
       {/* 搜索和操作栏 */}
@@ -148,20 +149,22 @@ export function KnowledgeChunksList({
         {/* 搜索框 */}
         <div className="relative">
           <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-text-tertiary" />
-          <input
-            type="text"
+          <Input
             placeholder="搜索 chunk 内容..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full rounded-md border border-border-light bg-background-secondary py-1.5 pl-7 pr-7 text-xs placeholder:text-text-tertiary focus:border-primary/50 focus:outline-none"
+            className="h-8 border-border-light bg-background-secondary py-1.5 pl-7 pr-7 text-xs placeholder:text-text-tertiary"
           />
           {searchQuery && (
-            <button
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
               onClick={() => setSearchQuery("")}
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-text-tertiary hover:text-text-primary"
+              className="absolute right-1 top-1/2 h-6 w-6 -translate-y-1/2 text-text-tertiary hover:text-text-primary"
             >
               <X className="h-3.5 w-3.5" />
-            </button>
+            </Button>
           )}
         </div>
 
@@ -171,23 +174,29 @@ export function KnowledgeChunksList({
             {filteredChunks.length} / {chunks.length} 个 chunks
           </span>
           {onSelectionChange && (
-            <button
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
               onClick={() => setSelectMode(!selectMode)}
               className={cn(
-                "text-xs transition-colors",
+                "h-7 px-2 text-xs transition-colors",
                 selectMode ? "text-primary" : "text-text-tertiary hover:text-text-primary",
               )}
             >
               {selectMode ? "取消选择" : "批量选择"}
-            </button>
+            </Button>
           )}
         </div>
 
         {/* 选择模式下的全选按钮 */}
         {selectMode && (
-          <button
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
             onClick={selectAll}
-            className="flex items-center gap-1 text-xs text-primary hover:text-primary/80"
+            className="h-7 justify-start gap-1 px-0 text-xs text-primary hover:text-primary/80"
           >
             {selectedChunkIds?.size === filteredChunks.length ? (
               <CheckSquare className="h-3.5 w-3.5" />
@@ -195,110 +204,125 @@ export function KnowledgeChunksList({
               <Square className="h-3.5 w-3.5" />
             )}
             全选 ({filteredChunks.length})
-          </button>
+          </Button>
         )}
       </div>
 
       {/* Chunk 列表 */}
-      <div className="flex-1 space-y-4 overflow-auto scrollbar-default pr-xs">
-        {filteredChunks.map((chunk) => {
-          const chunkText = getChunkText(chunk);
-          const isExpanded = expandedChunks.has(chunk.id);
-          const isActive = activeChunkId === chunk.id;
-          const isSelected = selectedChunkIds?.has(chunk.id);
-          const charCount = chunkText.length;
-          const previewText = getPreviewText(chunkText);
+      <div className="flex-1 overflow-auto scrollbar-default pr-xs">
+        {filteredChunks.length === 0 ? (
+          <div className="flex h-full min-h-[240px] items-center justify-center rounded-lg border border-dashed border-border-light px-sm text-center">
+            <div className="space-y-2">
+              <div className="text-xs font-medium text-text-secondary">
+                {searchQuery ? "没有找到匹配的 chunk" : (emptyState?.title ?? "暂无分块数据")}
+              </div>
+              {!searchQuery && (emptyState?.description ?? "文档尚未生成 chunk 数据") ? (
+                <div className="text-xs text-text-tertiary">
+                  {emptyState?.description ?? "文档尚未生成 chunk 数据"}
+                </div>
+              ) : null}
+              {!searchQuery ? emptyState?.actions : null}
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {filteredChunks.map((chunk) => {
+              const chunkText = getChunkText(chunk);
+              const isExpanded = expandedChunks.has(chunk.id);
+              const isActive = activeChunkId === chunk.id;
+              const isSelected = selectedChunkIds?.has(chunk.id);
+              const charCount = chunkText.length;
+              const previewText = getPreviewText(chunkText);
 
-          return (
-            <div
-              key={chunk.id}
-              className={cn(
-                "rounded-md border border-border-light transition-all",
-                isActive
-                  ? "border-primary/40 bg-primary/5"
-                  : isSelected
-                    ? "border-primary/30 bg-primary/5"
-                    : "hover:border-border hover:bg-gray-50",
-                selectMode && "cursor-pointer",
-              )}
-              onClick={() => {
-                if (selectMode) {
-                  toggleSelect(chunk.id, {} as React.MouseEvent);
-                } else {
-                  onSelectChunk(chunk.id);
-                }
-              }}
-            >
-              {/* Chunk 头部 */}
-              <div className="flex items-start gap-1 px-2 py-1.5">
-                {/* 展开/收起按钮 */}
-                <button
-                  onClick={(e) => toggleExpand(chunk.id, e)}
-                  className="mt-0.5 flex-shrink-0 text-text-tertiary hover:text-text-primary"
-                >
-                  {isExpanded ? (
-                    <ChevronDown className="h-3.5 w-3.5" />
-                  ) : (
-                    <ChevronRight className="h-3.5 w-3.5" />
+              return (
+                <div
+                  key={chunk.id}
+                  className={cn(
+                    "rounded-md border border-border-light transition-all",
+                    isActive
+                      ? "border-primary/40 bg-primary/5"
+                      : isSelected
+                        ? "border-primary/30 bg-primary/5"
+                        : "hover:border-border hover:bg-gray-50",
+                    selectMode && "cursor-pointer",
                   )}
-                </button>
+                  onClick={() => {
+                    if (selectMode) {
+                      toggleSelect(chunk.id, {} as React.MouseEvent);
+                    } else {
+                      onSelectChunk(chunk.id);
+                    }
+                  }}
+                >
+                  {/* Chunk 头部 */}
+                  <div className="flex items-start gap-1 px-2 py-1.5">
+                    {/* 展开/收起按钮 */}
+                    <button
+                      onClick={(e) => toggleExpand(chunk.id, e)}
+                      className="mt-0.5 flex-shrink-0 text-text-tertiary hover:text-text-primary"
+                    >
+                      {isExpanded ? (
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      ) : (
+                        <ChevronRight className="h-3.5 w-3.5" />
+                      )}
+                    </button>
 
-                {/* 选择框（批量选择模式） */}
-                {selectMode && (
-                  <button
-                    onClick={(e) => toggleSelect(chunk.id, e)}
-                    className="mt-0.5 flex-shrink-0 text-text-tertiary hover:text-primary"
-                  >
-                    {isSelected ? (
-                      <CheckSquare className="h-3.5 w-3.5" />
-                    ) : (
-                      <Square className="h-3.5 w-3.5" />
+                    {/* 选择框（批量选择模式） */}
+                    {selectMode && (
+                      <button
+                        onClick={(e) => toggleSelect(chunk.id, e)}
+                        className="mt-0.5 flex-shrink-0 text-text-tertiary hover:text-primary"
+                      >
+                        {isSelected ? (
+                          <CheckSquare className="h-3.5 w-3.5" />
+                        ) : (
+                          <Square className="h-3.5 w-3.5" />
+                        )}
+                      </button>
                     )}
-                  </button>
-                )}
 
-                {/* Chunk 信息 */}
-                <div className="min-w-0 flex-1">
-                  {/* 第一行：Chunk 编号 + 元信息 */}
-                  <div className="flex items-center gap-2 text-xs">
-                    <span className="font-medium text-text-primary">Chunk {chunk.index}</span>
-                    <span className="text-text-tertiary">{formatCharCount(charCount)} 字符</span>
-                    {chunk.startLine && chunk.endLine && (
-                      <span className="text-text-tertiary">
-                        第 {chunk.startLine}-{chunk.endLine} 行
-                      </span>
-                    )}
-                    {chunk.tokens && (
-                      <span className="text-text-tertiary">~{chunk.tokens} tokens</span>
-                    )}
+                    {/* Chunk 信息 */}
+                    <div className="min-w-0 flex-1">
+                      {/* 第一行：Chunk 编号 + 元信息 */}
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="font-medium text-text-primary">Chunk {chunk.index}</span>
+                        <span className="text-text-tertiary">
+                          {formatCharCount(charCount)} 字符
+                        </span>
+                        {chunk.startLine && chunk.endLine && (
+                          <span className="text-text-tertiary">
+                            第 {chunk.startLine}-{chunk.endLine} 行
+                          </span>
+                        )}
+                        {chunk.tokens && (
+                          <span className="text-text-tertiary">~{chunk.tokens} tokens</span>
+                        )}
+                      </div>
+
+                      {/* 第二行：预览文本（收起状态） */}
+                      {!isExpanded && (
+                        <div className="mt-0.5 text-[11px] text-text-secondary line-clamp-2">
+                          {previewText}
+                        </div>
+                      )}
+                    </div>
                   </div>
 
-                  {/* 第二行：预览文本（收起状态） */}
-                  {!isExpanded && (
-                    <div className="mt-0.5 text-[11px] text-text-secondary line-clamp-2">
-                      {previewText}
+                  {/* 展开状态：显示完整内容 */}
+                  {isExpanded && (
+                    <div className="border-t border-border-light px-3 py-3 text-[11px] text-text-secondary bg-background-secondary/30">
+                      <pre className="whitespace-pre-wrap break-words font-mono leading-relaxed">
+                        {chunkText}
+                      </pre>
                     </div>
                   )}
                 </div>
-              </div>
-
-              {/* 展开状态：显示完整内容 */}
-              {isExpanded && (
-                <div className="border-t border-border-light px-3 py-3 text-[11px] text-text-secondary bg-background-secondary/30">
-                  <pre className="whitespace-pre-wrap break-words font-mono leading-relaxed">
-                    {chunkText}
-                  </pre>
-                </div>
-              )}
-            </div>
-          );
-        })}
+              );
+            })}
+          </div>
+        )}
       </div>
-
-      {/* 空搜索结果 */}
-      {filteredChunks.length === 0 && searchQuery && (
-        <div className="py-4 text-center text-xs text-text-tertiary">没有找到匹配的 chunk</div>
-      )}
 
       {/* 分页控件 */}
       {total !== undefined && total > limit && onGoToPage && (
@@ -307,25 +331,31 @@ export function KnowledgeChunksList({
             {offset + 1}-{Math.min(offset + limit, total)} / {total}
           </span>
           <div className="flex items-center gap-1">
-            <button
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
               onClick={() => onGoToPage(Math.floor(offset / limit) + 1 - 1)}
               disabled={offset < limit}
-              className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+              className="h-7 w-7"
               title="上一页"
             >
               <ChevronLeft className="h-3.5 w-3.5" />
-            </button>
+            </Button>
             <span className="text-xs text-text-tertiary px-2 min-w-[40px] text-center">
               {Math.floor(offset / limit) + 1}
             </span>
-            <button
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
               onClick={() => onGoToPage(Math.floor(offset / limit) + 1 + 1)}
               disabled={offset + limit >= total}
-              className="p-1 rounded hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+              className="h-7 w-7"
               title="下一页"
             >
               <ChevronRightIcon className="h-3.5 w-3.5" />
-            </button>
+            </Button>
           </div>
         </div>
       )}

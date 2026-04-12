@@ -3,10 +3,12 @@
 import { ChevronLeft, FileText, Network, Pencil, RefreshCw, Search, Settings2 } from "lucide-react";
 import { Loader2, Check, X } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
+import { KnowledgeDocumentsTab } from "@/components/knowledge/tabs/KnowledgeDocumentsTab";
 import { KnowledgeGraphTab } from "@/components/knowledge/tabs/KnowledgeGraphTab";
 import { KnowledgeRetrievalTab } from "@/components/knowledge/tabs/KnowledgeRetrievalTab";
 import { KnowledgeSettingsTab } from "@/components/knowledge/tabs/KnowledgeSettingsTab";
 import { KnowledgeTreeTab } from "@/components/knowledge/tabs/KnowledgeTreeTab";
+import type { KnowledgeTreeDetailState } from "@/components/knowledge/tabs/KnowledgeTreeTab";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -24,6 +26,7 @@ export function KnowledgeDetail({ activeDocumentId, onBack }: KnowledgeDetailPro
   const [tab, setTab] = useState<TabKey>("tree");
   const [documentsMode, setDocumentsMode] = useState<"list" | "detail">("list");
   const [backToListSignal, setBackToListSignal] = useState(0);
+  const [treeDetailState, setTreeDetailState] = useState<KnowledgeTreeDetailState | null>(null);
   const [editOpen, setEditOpen] = useState(false);
   const [editFilename, setEditFilename] = useState("");
   const [editDescription, setEditDescription] = useState("");
@@ -38,10 +41,13 @@ export function KnowledgeDetail({ activeDocumentId, onBack }: KnowledgeDetailPro
   const rebuildProgress = useKnowledgeBaseStore((state) => state.rebuildProgress);
   const kbDetail = useKnowledgeBaseStore((state) => state.kbDetail);
   const currentDocument = useKnowledgeBaseStore((state) => state.detail);
+  const usesDirectoryTree = kbDetail?.sourceType === "local_fs";
   const isDocumentDetail = tab === "tree" && documentsMode === "detail";
+  const activeTreeDetail = usesDirectoryTree && isDocumentDetail ? treeDetailState : null;
   const canSaveEdit = useMemo(() => {
     return Boolean(currentDocument?.id && editFilename.trim());
   }, [currentDocument?.id, editFilename]);
+  const localDetailMeta = activeTreeDetail?.metadata;
 
   const handleOpenDocument = useCallback(
     async (documentId: string) => {
@@ -142,17 +148,35 @@ export function KnowledgeDetail({ activeDocumentId, onBack }: KnowledgeDetailPro
             <div className="min-w-0 pt-0.5">
               <div className="truncate text-base font-semibold text-text-primary">
                 {isDocumentDetail
-                  ? currentDocument?.filename || "文档预览"
+                  ? currentDocument?.filename || activeTreeDetail?.title || "文档预览"
                   : kbDetail?.name || "知识库"}
               </div>
-              <div className="truncate text-xs text-text-tertiary">
-                {isDocumentDetail
-                  ? kbDetail?.name || "知识库"
-                  : kbDetail?.description || "管理该知识库的文档与检索设置"}
-              </div>
+              {isDocumentDetail ? (
+                localDetailMeta ? (
+                  <div className="mt-1 space-y-0.5 text-xs text-text-tertiary">
+                    <div className="truncate">{localDetailMeta.path}</div>
+                    <div className="truncate">
+                      {[
+                        localDetailMeta.typeLabel,
+                        localDetailMeta.sizeLabel,
+                        localDetailMeta.createdAtLabel,
+                        localDetailMeta.permissions,
+                      ].join(" · ")}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="truncate text-xs text-text-tertiary">
+                    {kbDetail?.name || "知识库"}
+                  </div>
+                )
+              ) : (
+                <div className="truncate text-xs text-text-tertiary">
+                  {kbDetail?.description || "管理该知识库的文档与检索设置"}
+                </div>
+              )}
             </div>
           </div>
-          {isDocumentDetail && currentDocument?.id && (
+          {isDocumentDetail && (currentDocument?.id || activeTreeDetail) && (
             <div className="flex items-center gap-xs">
               {/* Rebuild button with tooltip */}
               <div className="relative group">
@@ -160,14 +184,16 @@ export function KnowledgeDetail({ activeDocumentId, onBack }: KnowledgeDetailPro
                   type="button"
                   className="inline-flex items-center gap-1 text-text-tertiary transition-colors hover:text-text-primary disabled:opacity-50 text-xs"
                   aria-label="重建文档"
-                  disabled={isRebuilding}
+                  disabled={isRebuilding || activeTreeDetail?.isBusy}
                   onClick={() => {
                     if (currentDocument?.id) {
                       void rebuildDocument(currentDocument.id);
+                      return;
                     }
+                    activeTreeDetail?.onRebuild();
                   }}
                 >
-                  {isRebuilding ? (
+                  {isRebuilding || activeTreeDetail?.isBusy ? (
                     <Loader2 className="h-3 w-3 animate-spin" />
                   ) : (
                     <RefreshCw className="h-3 w-3" />
@@ -215,6 +241,10 @@ export function KnowledgeDetail({ activeDocumentId, onBack }: KnowledgeDetailPro
                 aria-label="编辑文档信息"
                 title="编辑文档信息"
                 onClick={() => {
+                  if (usesDirectoryTree && activeTreeDetail?.canEdit) {
+                    activeTreeDetail?.onEdit();
+                    return;
+                  }
                   setEditFilename(currentDocument?.filename ?? "");
                   setEditDescription(currentDocument?.description ?? "");
                   setEditError(null);
@@ -231,7 +261,7 @@ export function KnowledgeDetail({ activeDocumentId, onBack }: KnowledgeDetailPro
           <div className="mt-md border-b border-border-light">
             {(
               [
-                { key: "tree", label: "目录树", icon: FileText },
+                { key: "tree", label: usesDirectoryTree ? "目录树" : "文档列表", icon: FileText },
                 { key: "graph", label: "图谱", icon: Network },
                 { key: "retrieval", label: "检索测试", icon: Search },
                 { key: "settings", label: "设置", icon: Settings2 },
@@ -258,13 +288,21 @@ export function KnowledgeDetail({ activeDocumentId, onBack }: KnowledgeDetailPro
         )}
       </div>
       <div className="flex-1 min-h-0">
-        {tab === "tree" && (
-          <KnowledgeTreeTab
-            activeDocumentId={activeDocumentId}
-            backToListSignal={backToListSignal}
-            onModeChange={setDocumentsMode}
-          />
-        )}
+        {tab === "tree" &&
+          (usesDirectoryTree ? (
+            <KnowledgeTreeTab
+              activeDocumentId={activeDocumentId}
+              backToListSignal={backToListSignal}
+              onModeChange={setDocumentsMode}
+              onDetailStateChange={setTreeDetailState}
+            />
+          ) : (
+            <KnowledgeDocumentsTab
+              activeDocumentId={activeDocumentId}
+              backToListSignal={backToListSignal}
+              onModeChange={setDocumentsMode}
+            />
+          ))}
         {tab === "graph" && <KnowledgeGraphTab />}
         {tab === "retrieval" && <KnowledgeRetrievalTab onOpenDocument={handleOpenDocument} />}
         {tab === "settings" && <KnowledgeSettingsTab />}

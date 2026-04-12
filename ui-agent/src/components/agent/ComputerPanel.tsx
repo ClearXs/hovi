@@ -49,6 +49,7 @@ export function ComputerPanel({ files, isOpen, onClose, fullscreen = false }: Co
       <ScrollArea
         className={cn("h-full min-h-0 flex-1 px-md pb-md", fullscreen ? "pt-md" : "pt-sm")}
         viewportClassName="h-full"
+        scrollbarClassName="w-3 p-[2px] [&>div]:bg-border hover:[&>div]:bg-text-tertiary"
       >
         <FileList files={files} />
       </ScrollArea>

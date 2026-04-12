@@ -1,7 +1,7 @@
 "use client";
 
 import { FileText, Download, ExternalLink, Copy, FolderOpen } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo } from "react";
 import {
   renderDisplayTypeIcon,
   resolveDisplayType,
@@ -20,6 +20,7 @@ export interface FileItemProps {
   source?: "generated" | "detected-path";
   rawPath?: string;
   resolvedPath?: string;
+  workspaceRelativePath?: string;
   kind?: "file" | "directory" | "unknown";
   access?: "unknown" | "ok" | "missing" | "denied" | "invalid";
   previewable?: boolean;
@@ -32,6 +33,8 @@ interface FileItemActionProps {
   onPreviewFile?: (file: FileItemProps) => void;
   onSystemOpenFile?: (file: FileItemProps) => void;
 }
+
+type BadgeTone = "neutral" | "ok" | "warning";
 
 function buildCardKey(file: FileItemProps): string {
   return [file.source ?? "generated", file.resolvedPath ?? file.path, file.name].join("|");
@@ -123,51 +126,22 @@ function buildDisplayNameMap(files: FileItemProps[]): Map<string, string> {
   return map;
 }
 
-function usePathAccessState(files: FileItemProps[]) {
-  const [statusMap, setStatusMap] = useState<Record<string, FileItemProps["access"]>>({});
-
-  const probeTargets = useMemo(
-    () =>
-      files.filter(
-        (file) =>
-          isDetectedPathCard(file) &&
-          file.previewUrl &&
-          file.access !== "missing" &&
-          file.access !== "denied" &&
-          file.access !== "invalid",
-      ),
-    [files],
+function StatusBadge({ label, tone = "neutral" }: { label: string; tone?: BadgeTone }) {
+  const toneClass =
+    tone === "ok"
+      ? "border-primary/30 bg-primary/10 text-primary"
+      : tone === "warning"
+        ? "border-warning/30 bg-warning/10 text-warning"
+        : "border-border-light bg-background-secondary text-text-tertiary";
+  return (
+    <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] ${toneClass}`}>
+      {label}
+    </span>
   );
+}
 
-  useEffect(() => {
-    let cancelled = false;
-
-    const probe = async () => {
-      for (const file of probeTargets) {
-        if (!file.previewUrl) continue;
-        const key = buildCardKey(file);
-        if (statusMap[key] === "ok" || statusMap[key] === "missing") continue;
-        try {
-          const response = await fetch(file.previewUrl, {
-            method: "HEAD",
-            cache: "no-store",
-          });
-          if (cancelled) return;
-          setStatusMap((prev) => ({ ...prev, [key]: response.ok ? "ok" : "missing" }));
-        } catch {
-          if (cancelled) return;
-          setStatusMap((prev) => ({ ...prev, [key]: "missing" }));
-        }
-      }
-    };
-
-    void probe();
-    return () => {
-      cancelled = true;
-    };
-  }, [probeTargets, statusMap]);
-
-  return statusMap;
+function isInaccessibleAccess(access: FileItemProps["access"]): boolean {
+  return access === "missing" || access === "denied" || access === "invalid";
 }
 
 function FileItemAction({ file, onPreviewFile, onSystemOpenFile }: FileItemActionProps) {
@@ -177,9 +151,7 @@ function FileItemAction({ file, onPreviewFile, onSystemOpenFile }: FileItemActio
   const handlePreview = () => {
     if (onPreviewFile) {
       onPreviewFile(file);
-      return;
     }
-    window.open(file.path, "_blank", "noopener,noreferrer");
   };
 
   const handleDownload = () => {
@@ -262,10 +234,13 @@ interface FileListProps {
 }
 
 export function FileList({ files, title, onPreviewFile, onSystemOpenFile }: FileListProps) {
-  const pathStatus = usePathAccessState(files);
   const displayNameMap = useMemo(() => buildDisplayNameMap(files), [files]);
 
   if (files.length === 0) return null;
+
+  const cardLayoutClass = "group flex items-center gap-sm rounded border p-sm transition-all";
+  const titleTextClass = "truncate text-sm font-medium text-text-primary";
+  const pathTextClass = "mt-xs cursor-help truncate text-xs text-text-tertiary";
 
   return (
     <div className="mt-md">
@@ -275,19 +250,22 @@ export function FileList({ files, title, onPreviewFile, onSystemOpenFile }: File
           {title}
         </h4>
       )}
-      <div className="space-y-xs">
+      <div className="space-y-sm">
         {files.map((file, index) => {
           const key = buildCardKey(file);
           const displayType = resolveDisplayType(file);
           const displayName = displayNameMap.get(key) ?? file.name;
           const fullPath = getPathText(file);
           const shortPath = fullPath ? toDisplayPath(fullPath) : null;
-          const access = pathStatus[key] ?? file.access ?? "unknown";
-          const inaccessible = access === "missing" || access === "denied" || access === "invalid";
+          const access = file.access ?? "unknown";
+          const inaccessible = isInaccessibleAccess(access);
+          const kindLabel =
+            file.kind === "directory" ? "目录" : file.kind === "file" ? "文件" : null;
+
           return (
             <div
               key={`${key}-${index}`}
-              className={`group flex items-center gap-sm rounded border p-sm transition-all ${
+              className={`${cardLayoutClass} ${
                 inaccessible
                   ? "border-border-light/60 bg-background-secondary/70 opacity-60"
                   : "border-border-light hover:border-primary hover:bg-primary/5"
@@ -298,21 +276,25 @@ export function FileList({ files, title, onPreviewFile, onSystemOpenFile }: File
               </div>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-xs">
-                  <span className="truncate text-sm font-medium text-text-primary">
-                    {displayName}
-                  </span>
+                  <span className={titleTextClass}>{displayName}</span>
                   {file.size && (
                     <span className="shrink-0 text-xs text-text-tertiary">({file.size})</span>
+                  )}
+                </div>
+                <div className="mt-xs flex items-center gap-1">
+                  {kindLabel && <StatusBadge label={kindLabel} />}
+                  {isDetectedPathCard(file) && access === "ok" && (
+                    <StatusBadge label="可访问" tone="ok" />
+                  )}
+                  {isDetectedPathCard(file) && inaccessible && (
+                    <StatusBadge label="不可访问" tone="warning" />
                   )}
                 </div>
                 {shortPath && (
                   <TooltipProvider delayDuration={120}>
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <p
-                          className="mt-xs cursor-help truncate text-xs text-text-tertiary"
-                          title={fullPath ?? undefined}
-                        >
+                        <p className={pathTextClass} title={fullPath ?? undefined}>
                           {shortPath}
                         </p>
                       </TooltipTrigger>

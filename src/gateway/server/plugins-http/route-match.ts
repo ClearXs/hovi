@@ -47,6 +47,7 @@ export function findMatchingPluginHttpRoutes(
 export function findRegisteredPluginHttpRoute(
   registry: PluginRegistry,
   pathname: string,
+  // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
 ): PluginHttpRouteEntry | undefined {
   const pathContext = resolvePluginRoutePathContext(pathname);
   return findMatchingPluginHttpRoutes(registry, pathContext)[0];

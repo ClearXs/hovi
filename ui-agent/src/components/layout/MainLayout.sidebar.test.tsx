@@ -1,7 +1,7 @@
 import { render } from "@testing-library/react";
 import MainLayout from "./MainLayout";
 
-const sidebarMock = jest.fn(() => <div data-testid="sidebar" />);
+const sidebarMock = jest.fn((..._args: unknown[]) => <div data-testid="sidebar" />);
 
 jest.mock("@/hooks/useResponsive", () => ({
   useResponsive: () => ({ isDesktop: true, isHydrated: true }),
@@ -9,7 +9,7 @@ jest.mock("@/hooks/useResponsive", () => ({
 
 jest.mock("@/components/sidebar/Sidebar", () => ({
   __esModule: true,
-  default: (props: unknown) => sidebarMock(props),
+  default: (...args: unknown[]) => sidebarMock(...args),
 }));
 
 jest.mock("./TopBar", () => ({
@@ -37,7 +37,8 @@ describe("MainLayout sidebar defaults", () => {
     render(<MainLayout assistantVisible={false}>content</MainLayout>);
 
     expect(sidebarMock).toHaveBeenCalled();
-    const lastProps = sidebarMock.mock.calls.at(-1)?.[0] as { isCollapsed?: boolean };
+    const calls = sidebarMock.mock.calls;
+    const lastProps = calls[calls.length - 1]?.[0] as { isCollapsed?: boolean };
     expect(lastProps?.isCollapsed).toBe(true);
   });
 });

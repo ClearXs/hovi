@@ -251,21 +251,30 @@ export type MessageRole = "user" | "assistant" | "system";
  * Content part types
  */
 export interface ContentPart {
-  type: "text" | "image" | "tool_use" | "tool_result";
+  type: "text" | "image" | "audio" | "file" | "tool_use" | "tool_result";
   text?: string;
   image?: ImageContent;
+  audio?: BinaryContent;
+  file?: BinaryContent;
   toolUse?: ToolUse;
   toolResult?: ToolResult;
+  source?: BinaryContent["source"];
+  fileName?: string;
 }
 
 /**
  * Image content
  */
 export interface ImageContent {
+  source: BinaryContent["source"];
+}
+
+export interface BinaryContent {
   source: {
-    type: "base64";
+    type: "base64" | "url";
     media_type: string;
-    data: string;
+    data?: string;
+    url?: string;
   };
 }
 

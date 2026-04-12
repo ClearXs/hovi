@@ -24,6 +24,8 @@ import {
   FileText,
   X,
   File,
+  TerminalSquare,
+  ExternalLink,
 } from "lucide-react";
 import dynamic from "next/dynamic";
 import { useCallback, useMemo, useRef, useState, useEffect, KeyboardEvent, DragEvent } from "react";
@@ -31,6 +33,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import type { CliSoftwareBinding, CliSoftwareCard } from "@/lib/chat/cli-binding";
+import { toCliBinding } from "@/lib/chat/cli-binding";
 import { formatFileSize } from "@/lib/fileUtils";
 import type { KnowledgeDetail } from "@/services/knowledgeApi";
 import { getKnowledge } from "@/services/knowledgeApi";
@@ -147,6 +152,9 @@ interface EnhancedChatInputProps {
   }>;
   activeConnectorIds?: string[];
   onToggleConnector?: (id: string, enabled: boolean) => void;
+  cliBinding?: CliSoftwareBinding | null;
+  onCliBindingChange?: (binding: CliSoftwareBinding | null) => void;
+  onOpenCliBindingDetail?: (softwareKey: string) => void;
   resetKey?: number; // 用于重置输入框
   sessionKey?: string | null;
   pendingUploadSessionKey?: string | null;
@@ -164,6 +172,10 @@ interface SkillStatusEntry {
 
 interface SkillStatusReport {
   skills: SkillStatusEntry[];
+}
+
+interface CliSoftwareListReport {
+  items?: CliSoftwareCard[];
 }
 
 export function resolveSlashPanelPlacement({
@@ -340,6 +352,9 @@ export function EnhancedChatInput({
   connectors = [],
   activeConnectorIds = [],
   onToggleConnector,
+  cliBinding = null,
+  onCliBindingChange,
+  onOpenCliBindingDetail,
   resetKey = 0,
   sessionKey = null,
   pendingUploadSessionKey = null,
@@ -377,6 +392,12 @@ export function EnhancedChatInput({
   const [skillsError, setSkillsError] = useState<string | null>(null);
   const [connectorsOpen, setConnectorsOpen] = useState(false);
   const [connectorsQuery, setConnectorsQuery] = useState("");
+  const [cliOpen, setCliOpen] = useState(false);
+  const [cliQuery, setCliQuery] = useState("");
+  const [cliSoftware, setCliSoftware] = useState<CliSoftwareCard[]>([]);
+  const [isCliLoading, setIsCliLoading] = useState(false);
+  const [cliError, setCliError] = useState<string | null>(null);
+  const [localCliBinding, setLocalCliBinding] = useState<CliSoftwareBinding | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [previewFile, setPreviewFile] = useState<File | null>(null);
   const [previewImageUrl, setPreviewImageUrl] = useState<string | null>(null);
@@ -457,6 +478,7 @@ export function EnhancedChatInput({
       setInput("");
       setAttachments([]);
       setSelectedSkillKeys([]);
+      setLocalCliBinding(null);
       // 如果有外部回调也调用一下
       if (onDraftChange) onDraftChange("");
       if (onDraftAttachmentsChange) onDraftAttachmentsChange([]);
@@ -485,6 +507,27 @@ export function EnhancedChatInput({
       );
     });
   }, [availableConnectors, connectorsQuery]);
+
+  const activeCliBinding = onCliBindingChange ? (cliBinding ?? null) : localCliBinding;
+
+  const filteredCliSoftware = useMemo(() => {
+    const query = cliQuery.trim().toLowerCase();
+    const list = !query
+      ? cliSoftware
+      : cliSoftware.filter((item) => {
+          return (
+            item.name.toLowerCase().includes(query) ||
+            item.softwareKey.toLowerCase().includes(query) ||
+            (item.packageName ?? "").toLowerCase().includes(query) ||
+            (item.cliCommand ?? "").toLowerCase().includes(query)
+          );
+        });
+    return [...list].sort((a, b) => {
+      return (
+        a.name.localeCompare(b.name, "zh-CN") || a.softwareKey.localeCompare(b.softwareKey, "zh-CN")
+      );
+    });
+  }, [cliQuery, cliSoftware]);
 
   const filteredSkills = useMemo(() => {
     const query = skillsQuery.trim().toLowerCase();
@@ -528,6 +571,21 @@ export function EnhancedChatInput({
     }
   }, [isSkillsLoading, wsClient]);
 
+  const loadCliSoftware = useCallback(async () => {
+    if (!wsClient || isCliLoading) return;
+    setIsCliLoading(true);
+    setCliError(null);
+    try {
+      const result = await wsClient.sendRequest<CliSoftwareListReport>("cli.software.list", {});
+      setCliSoftware(Array.isArray(result.items) ? result.items : []);
+    } catch (error) {
+      setCliSoftware([]);
+      setCliError(error instanceof Error ? error.message : "无法获取 CLI 软件列表");
+    } finally {
+      setIsCliLoading(false);
+    }
+  }, [isCliLoading, wsClient]);
+
   const handleSkillsOpenChange = (open: boolean) => {
     skillsAutoOpenRef.current = false;
     if (open) {
@@ -548,6 +606,24 @@ export function EnhancedChatInput({
     if (!open) {
       setConnectorsQuery("");
     }
+  };
+
+  const handleCliOpenChange = (open: boolean) => {
+    setCliOpen(open);
+    if (open && (cliSoftware.length === 0 || cliError)) {
+      void loadCliSoftware();
+    }
+    if (!open) {
+      setCliQuery("");
+    }
+  };
+
+  const applyCliBinding = (binding: CliSoftwareBinding | null) => {
+    if (onCliBindingChange) {
+      onCliBindingChange(binding);
+      return;
+    }
+    setLocalCliBinding(binding);
   };
 
   const updateSlashSuggestionsPosition = (textareaEl?: HTMLTextAreaElement | null) => {
@@ -851,6 +927,79 @@ export function EnhancedChatInput({
           管理 Skills
         </button>
       </div>
+    </>
+  );
+
+  const renderCliPickerContent = () => (
+    <>
+      <div className="px-2 py-1.5">
+        <Input
+          value={cliQuery}
+          onChange={(e) => setCliQuery(e.target.value)}
+          placeholder="筛选 CLI 软件..."
+          className="h-7 text-xs"
+        />
+      </div>
+      <div className="px-2">
+        <div className="max-h-64 overflow-auto scrollbar-default space-y-1">
+          {isCliLoading ? (
+            <div className="flex items-center gap-2 px-2 py-2 text-xs text-text-tertiary">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              加载 CLI 软件中...
+            </div>
+          ) : cliError ? (
+            <div className="px-2 py-2 text-xs text-error">{cliError}</div>
+          ) : filteredCliSoftware.length === 0 ? (
+            <div className="px-2 py-2 text-xs text-text-tertiary">没有匹配的 CLI 软件</div>
+          ) : (
+            filteredCliSoftware.map((item) => {
+              const selected = activeCliBinding?.softwareKey === item.softwareKey;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => {
+                    applyCliBinding(toCliBinding(item));
+                    setCliOpen(false);
+                    setCliQuery("");
+                  }}
+                  className={`w-full cursor-pointer flex items-start justify-between gap-2 rounded-md px-2 py-1.5 text-left transition-colors disabled:opacity-50 ${
+                    selected ? "bg-primary/12 ring-1 ring-primary/35" : "hover:bg-background"
+                  }`}
+                >
+                  <div className="min-w-0">
+                    <div className="text-sm text-text-primary truncate">{item.name}</div>
+                    <div className="text-[11px] text-text-tertiary truncate">
+                      {item.softwareKey}
+                    </div>
+                    {item.cliCommand ? (
+                      <div className="text-[11px] text-text-tertiary/90 truncate mt-0.5">
+                        {item.cliCommand}
+                      </div>
+                    ) : null}
+                  </div>
+                  {selected ? <Check className="w-4 h-4 text-primary shrink-0 mt-0.5" /> : null}
+                </button>
+              );
+            })
+          )}
+        </div>
+      </div>
+      {activeCliBinding ? (
+        <div className="mt-2 pt-2 border-t border-border-light">
+          <button
+            type="button"
+            onClick={() => {
+              applyCliBinding(null);
+              setCliOpen(false);
+            }}
+            className="w-full cursor-pointer rounded-md px-2 py-1.5 text-left text-xs text-primary hover:bg-primary/10"
+          >
+            取消当前会话 CLI 绑定
+          </button>
+        </div>
+      ) : null}
     </>
   );
 
@@ -1603,6 +1752,31 @@ export function EnhancedChatInput({
 
             {/* 文本输入框 */}
             <div ref={inputAreaRef} className="relative flex-1 min-w-[200px]">
+              {activeCliBinding ? (
+                <div className="mb-2 flex flex-wrap items-center gap-1.5">
+                  <span className="inline-flex items-center gap-1 rounded-md border border-primary/35 bg-primary/12 px-2 py-0.5 text-[11px] font-medium text-primary">
+                    CLI: {activeCliBinding.name}
+                    {onOpenCliBindingDetail ? (
+                      <button
+                        type="button"
+                        onClick={() => onOpenCliBindingDetail(activeCliBinding.softwareKey)}
+                        className="inline-flex h-3.5 w-3.5 cursor-pointer items-center justify-center rounded-sm text-primary/80 hover:bg-primary/15 hover:text-primary"
+                        title="查看软件卡片"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={() => applyCliBinding(null)}
+                      className="inline-flex h-3.5 w-3.5 cursor-pointer items-center justify-center rounded-sm text-primary/80 hover:bg-primary/15 hover:text-primary"
+                      title="取消 CLI 绑定"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </span>
+                </div>
+              ) : null}
               {selectedSkillKeys.length > 0 && (
                 <div className="mb-2 flex flex-wrap items-center gap-1.5">
                   {selectedSkillKeys.map((skillKey) => (
@@ -1737,6 +1911,31 @@ export function EnhancedChatInput({
                     className="w-[340px] p-2 rounded-xl border-border-light bg-surface shadow-xl"
                   >
                     {renderSkillsPickerContent()}
+                  </PopoverContent>
+                </Popover>
+
+                <Popover open={cliOpen} onOpenChange={handleCliOpenChange}>
+                  <PopoverTrigger asChild>
+                    <button
+                      disabled={disabled}
+                      className="relative p-sm rounded-lg cursor-pointer hover:bg-background text-text-tertiary hover:text-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                      title="选择 CLI 软件"
+                    >
+                      <TerminalSquare className="w-4 h-4" />
+                      {activeCliBinding ? (
+                        <span className="absolute -top-1 -right-1 min-w-[18px] h-[18px] px-1 rounded-full bg-primary text-white text-[11px] leading-[18px] text-center">
+                          1
+                        </span>
+                      ) : null}
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    align="start"
+                    side="bottom"
+                    sideOffset={8}
+                    className="w-[340px] p-2 rounded-xl border-border-light bg-surface shadow-xl"
+                  >
+                    {renderCliPickerContent()}
                   </PopoverContent>
                 </Popover>
 
@@ -1927,22 +2126,38 @@ export function EnhancedChatInput({
                   <Mic className="w-4 h-4" />
                 </button>
 
-                <div className="flex items-center gap-xs px-xs" title="始终允许（免审批）">
-                  <span className="text-[11px] text-text-tertiary whitespace-nowrap">始终允许</span>
-                  <Switch
-                    checked={autoApproveAlways}
-                    onCheckedChange={(checked) => onAutoApproveAlwaysChange?.(Boolean(checked))}
-                    disabled={disabled || isSending}
-                    aria-label="是否始终允许（免审批）"
-                    className="h-5 w-9"
-                  />
-                </div>
+                <TooltipProvider delayDuration={180}>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div
+                        className="mx-sm flex items-center gap-sm px-sm"
+                        aria-label="始终允许设置"
+                      >
+                        <span className="text-[11px] text-text-tertiary whitespace-nowrap">
+                          始终允许
+                        </span>
+                        <Switch
+                          checked={autoApproveAlways}
+                          onCheckedChange={(checked) =>
+                            onAutoApproveAlwaysChange?.(Boolean(checked))
+                          }
+                          disabled={disabled || isSending}
+                          aria-label="是否始终允许（免审批）"
+                          className="h-5 w-9"
+                        />
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent side="top">
+                      开启后会自动提交“始终允许”，无需逐次审批。
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
 
                 {/* 发送按钮 */}
                 <button
                   onClick={handleSend}
                   disabled={disabled || isSending || !inputValue.trim()}
-                  className="p-sm rounded-lg cursor-pointer bg-primary hover:bg-primary-hover text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="ml-sm p-sm rounded-lg cursor-pointer bg-primary hover:bg-primary-hover text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                   title="发送 (Shift + Command + Enter)"
                 >
                   <Send className="w-4 h-4" />

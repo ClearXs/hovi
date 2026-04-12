@@ -234,6 +234,9 @@ export type KnowledgeTreeEntry = {
   extension?: string | null;
   size?: number | null;
   mtimeMs?: number | null;
+  createdAtMs?: number | null;
+  permissions?: string | null;
+  typeLabel: string;
   sourceType: "local_fs";
   materialized: boolean;
   vectorized: boolean;
@@ -593,9 +596,13 @@ export async function testKnowledgeSource(kbId: string): Promise<KnowledgeSource
   return callKnowledgeWs<KnowledgeSourceTestResult>("knowledge.source.test", { kbId });
 }
 
-export async function syncKnowledgeSource(
-  kbId: string,
-): Promise<{ success: boolean; startedAt: string }> {
+export async function syncKnowledgeSource(kbId: string): Promise<{
+  success: boolean;
+  startedAt: string;
+  checkedDocuments?: number;
+  removedDocuments?: number;
+  message?: string;
+}> {
   return callKnowledgeWs("knowledge.source.sync", { kbId });
 }
 
@@ -607,7 +614,9 @@ export async function resumeKnowledgeSource(kbId: string): Promise<{ success: bo
   return callKnowledgeWs("knowledge.source.resume", { kbId });
 }
 
-export async function deleteKnowledgeSource(kbId: string): Promise<{ success: boolean }> {
+export async function deleteKnowledgeSource(
+  kbId: string,
+): Promise<{ success: boolean; deletedDocuments?: number }> {
   return callKnowledgeWs("knowledge.source.delete", { kbId });
 }
 
@@ -637,6 +646,14 @@ export async function saveKnowledgeTreeFile(params: {
   content: string;
 }): Promise<{ success: boolean; updatedAt: string; documentId?: string | null }> {
   return callKnowledgeWs("knowledge.tree.file.save", params);
+}
+
+export async function renameKnowledgeTreeFile(params: {
+  kbId: string;
+  path: string;
+  filename: string;
+}): Promise<{ filename: string; path: string; documentId?: string | null }> {
+  return callKnowledgeWs("knowledge.tree.file.rename", params);
 }
 
 export async function materializeKnowledgeTreeFile(params: {

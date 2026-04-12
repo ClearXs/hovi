@@ -13,10 +13,11 @@ describe("path-detection", () => {
     expect(cards).toHaveLength(2);
     expect(cards[0]).toMatchObject({
       source: "detected-path",
+      path: "src/app.ts",
       resolvedPath: "src/app.ts",
+      workspaceRelativePath: "src/app.ts",
       previewable: true,
       kind: "file",
-      previewUrl: expect.stringContaining("/files/main/src/app.ts"),
     });
     expect(cards[1]).toMatchObject({
       resolvedPath: "docs/readme.md",
@@ -58,6 +59,13 @@ describe("path-detection", () => {
     expect(cards).toHaveLength(0);
   });
 
+  test("does not treat generic slash command like /command as a file path", () => {
+    const cards = detectPathCardsFromAssistantMessage("请先执行 /command 再继续", {
+      sessionKey: "agent:main:ui-abc",
+    });
+    expect(cards).toHaveLength(0);
+  });
+
   test("does not treat slash skill command as a file path", () => {
     const cards = detectPathCardsFromAssistantMessage(
       "请执行 /markdown-converter 再试 /web-access",
@@ -68,12 +76,42 @@ describe("path-detection", () => {
     expect(cards).toHaveLength(0);
   });
 
+  test("does not treat slash skill command with underscore or dot as a file path", () => {
+    const cards = detectPathCardsFromAssistantMessage("请使用 /skill_pack.v2 或 /web_access", {
+      sessionKey: "agent:main:ui-abc",
+    });
+    expect(cards).toHaveLength(0);
+  });
+
   test("keeps common root directory path like /tmp", () => {
     const cards = detectPathCardsFromAssistantMessage("请查看 /tmp", {
       sessionKey: "agent:main:ui-abc",
     });
     expect(cards).toHaveLength(1);
     expect(cards[0]?.resolvedPath).toBe("/tmp");
+  });
+
+  test("does not treat pseudo device path like /dev/null as a file path", () => {
+    const cards = detectPathCardsFromAssistantMessage("日志可以丢到 /dev/null，不需要展示", {
+      sessionKey: "agent:main:ui-abc",
+    });
+    expect(cards).toHaveLength(0);
+  });
+
+  test("keeps unknown single-segment absolute path like /clawd", () => {
+    const cards = detectPathCardsFromAssistantMessage("路径在 /clawd 下", {
+      sessionKey: "agent:main:ui-abc",
+    });
+    expect(cards).toHaveLength(1);
+    expect(cards[0]?.resolvedPath).toBe("/clawd");
+  });
+
+  test("keeps deep absolute path even with command-like context", () => {
+    const cards = detectPathCardsFromAssistantMessage("请运行 /Users/jiangwei/clawd/logs/app.log", {
+      sessionKey: "agent:main:ui-abc",
+    });
+    expect(cards).toHaveLength(1);
+    expect(cards[0]?.resolvedPath).toBe("/Users/jiangwei/clawd/logs/app.log");
   });
 
   test("filters common slash terminology from blacklisted context", () => {
@@ -122,11 +160,10 @@ describe("path-detection", () => {
     );
     expect(cards).toHaveLength(1);
     expect(cards[0]).toMatchObject({
+      path: "/Users/jiangwei/clawd/招标书/黑龙江省第四次全国农业普查遥感测量技术服务_20260403.md",
       resolvedPath:
         "/Users/jiangwei/clawd/招标书/黑龙江省第四次全国农业普查遥感测量技术服务_20260403.md",
-      previewUrl: expect.stringContaining(
-        "/files/main/%E6%8B%9B%E6%A0%87%E4%B9%A6/%E9%BB%91%E9%BE%99%E6%B1%9F%E7%9C%81%E7%AC%AC%E5%9B%9B%E6%AC%A1%E5%85%A8%E5%9B%BD%E5%86%9C%E4%B8%9A%E6%99%AE%E6%9F%A5%E9%81%A5%E6%84%9F%E6%B5%8B%E9%87%8F%E6%8A%80%E6%9C%AF%E6%9C%8D%E5%8A%A1_20260403.md",
-      ),
+      workspaceRelativePath: "招标书/黑龙江省第四次全国农业普查遥感测量技术服务_20260403.md",
     });
   });
 

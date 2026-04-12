@@ -50,6 +50,8 @@ export type UpdateDocumentMetadataParams = {
   filename?: string;
   description?: string | null;
   tags?: string[];
+  filepath?: string;
+  sourceMetadata?: Record<string, unknown> | null;
 };
 
 /**
@@ -304,14 +306,21 @@ export class KnowledgeStorageManager {
     }
     const nextDescription =
       params.description === undefined ? (existing.description ?? null) : params.description;
+    const nextFilepath = params.filepath ?? existing.filepath;
+    const nextSourceMetadata =
+      params.sourceMetadata === undefined
+        ? (existing.source_metadata ?? null)
+        : params.sourceMetadata
+          ? JSON.stringify(params.sourceMetadata)
+          : null;
 
     this.db
       .prepare(
         `UPDATE kb_documents
-         SET filename = ?, description = ?
+         SET filename = ?, description = ?, filepath = ?, source_metadata = ?
          WHERE id = ?`,
       )
-      .run(nextFilename, nextDescription, params.documentId);
+      .run(nextFilename, nextDescription, nextFilepath, nextSourceMetadata, params.documentId);
 
     if (params.tags) {
       this.db.prepare(`DELETE FROM kb_tags WHERE document_id = ?`).run(params.documentId);

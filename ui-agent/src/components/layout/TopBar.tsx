@@ -67,11 +67,8 @@ export function TopBar({
     lastConnectedAt,
     gatewayUrl,
     gatewayToken,
-    pairingRequestId,
-    pairingDeviceId,
     setGatewayUrl,
     setGatewayToken,
-    clearPairingRequest,
   } = useConnectionStore();
   const { addToast } = useToastStore();
   const { openSettings } = useSettingsStore();
@@ -139,23 +136,6 @@ export function TopBar({
       action: { label: "查看详情", onClick: action },
     });
   }, [lastError, addToast]);
-
-  useEffect(() => {
-    if (!pairingRequestId) return;
-    const command = `moltbot devices approve ${pairingRequestId}`;
-    addToast({
-      title: "设备配对请求",
-      description: "需要在网关主机批准设备配对。",
-      variant: "warning",
-      action: {
-        label: "复制命令",
-        onClick: () => {
-          void navigator.clipboard?.writeText(command);
-          clearPairingRequest();
-        },
-      },
-    });
-  }, [pairingRequestId, addToast, clearPairingRequest]);
 
   const deviceIdShort = useMemo(() => {
     if (!deviceId) return "未生成";
@@ -295,29 +275,6 @@ export function TopBar({
                 地址仅保存在当前浏览器，用于这台设备连接网关。
               </p>
             </div>
-            {pairingRequestId && (
-              <div className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs">
-                <p className="font-medium text-warning">需要配对审批</p>
-                <p className="mt-1 text-text-secondary">
-                  设备 {pairingDeviceId ? pairingDeviceId.slice(0, 6) : ""} 请求配对
-                </p>
-                <p className="mt-2 font-mono text-xs text-text-primary">
-                  moltbot devices approve {pairingRequestId}
-                </p>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  className="mt-2"
-                  onClick={() => {
-                    void navigator.clipboard?.writeText(
-                      `moltbot devices approve ${pairingRequestId}`,
-                    );
-                  }}
-                >
-                  复制命令
-                </Button>
-              </div>
-            )}
             {lastError && (
               <div className="rounded-md border border-error/40 bg-error/10 px-3 py-2 text-xs text-error">
                 {lastError}

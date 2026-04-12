@@ -1,4 +1,4 @@
-import { resolveRpcRequestTimeoutMs } from "./clawdbot-websocket";
+import { OPERATOR_CONNECT_SCOPES, resolveRpcRequestTimeoutMs } from "./clawdbot-websocket";
 
 describe("resolveRpcRequestTimeoutMs", () => {
   it("uses long-running timeout for skills.install", () => {
@@ -15,5 +15,11 @@ describe("resolveRpcRequestTimeoutMs", () => {
 
   it("keeps default timeout for normal methods", () => {
     expect(resolveRpcRequestTimeoutMs("skills.status", undefined)).toBe(30000);
+  });
+
+  it("requests approval and pairing operator scopes", () => {
+    expect(OPERATOR_CONNECT_SCOPES).toEqual(
+      expect.arrayContaining(["operator.approvals", "operator.pairing"]),
+    );
   });
 });

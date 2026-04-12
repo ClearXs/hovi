@@ -1,16 +1,17 @@
 import { drainSessionWriteLockStateForTest } from "../agents/session-write-lock.js";
-import {
-  clearSessionStoreCacheForTest,
-  drainSessionStoreLockQueuesForTest,
-} from "../config/sessions/store.js";
+import { clearSessionStoreCaches } from "../config/sessions/store-cache.js";
+import { drainSessionStoreLockQueuesForTest } from "../config/sessions/store-lock-state.js";
 import { drainFileLockStateForTest } from "../infra/file-lock.js";
 
 let fileLockDrainerForTests: typeof drainFileLockStateForTest | null = null;
+// eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
 let sessionStoreLockQueueDrainerForTests: typeof drainSessionStoreLockQueuesForTest | null = null;
 let sessionWriteLockDrainerForTests: typeof drainSessionWriteLockStateForTest | null = null;
 
 export function setSessionStateCleanupRuntimeForTests(params: {
+  // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
   drainFileLockStateForTest?: typeof drainFileLockStateForTest | null;
+  // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
   drainSessionStoreLockQueuesForTest?: typeof drainSessionStoreLockQueuesForTest | null;
   drainSessionWriteLockStateForTest?: typeof drainSessionWriteLockStateForTest | null;
 }): void {
@@ -33,7 +34,7 @@ export function resetSessionStateCleanupRuntimeForTests(): void {
 
 export async function cleanupSessionStateForTest(): Promise<void> {
   await (sessionStoreLockQueueDrainerForTests ?? drainSessionStoreLockQueuesForTest)();
-  clearSessionStoreCacheForTest();
+  clearSessionStoreCaches();
   await (fileLockDrainerForTests ?? drainFileLockStateForTest)();
   await (sessionWriteLockDrainerForTests ?? drainSessionWriteLockStateForTest)();
 }

@@ -13,6 +13,7 @@ import type { PluginHookGatewayContext, PluginHookGatewayStopEvent } from "./typ
 
 type HookRunnerGlobalState = {
   hookRunner: HookRunner | null;
+  // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
   registry: PluginRegistry | null;
 };
 
@@ -40,11 +41,14 @@ export function initializeGlobalHookRunner(registry: PluginRegistry): void {
       error: (msg) => log.error(msg),
     },
     catchErrors: true,
+    failurePolicyByHook: {
+      before_tool_call: "fail-closed",
+    },
   });
 
   const hookCount = registry.hooks.length;
   if (hookCount > 0) {
-    log.info(`hook runner initialized with ${hookCount} registered hooks`);
+    log.debug(`hook runner initialized with ${hookCount} registered hooks`);
   }
 }
 
@@ -60,6 +64,7 @@ export function getGlobalHookRunner(): HookRunner | null {
  * Get the global plugin registry.
  * Returns null if plugins haven't been loaded yet.
  */
+// eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
 export function getGlobalPluginRegistry(): PluginRegistry | null {
   return getState().registry;
 }

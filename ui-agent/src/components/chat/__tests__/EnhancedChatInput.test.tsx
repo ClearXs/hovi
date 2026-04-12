@@ -51,14 +51,14 @@ describe("EnhancedChatInput - Quick Actions", () => {
   beforeEach(() => {
     jest.clearAllMocks();
     mockOnSend.mockResolvedValue({ ok: true });
-    (useConnectionStore as jest.Mock).mockImplementation(
+    (useConnectionStore as unknown as jest.Mock).mockImplementation(
       (
         selector: (state: {
           wsClient?: { sendRequest: (...args: unknown[]) => Promise<unknown> };
         }) => unknown,
       ) => selector({ wsClient: undefined }),
     );
-    (useSettingsStore as jest.Mock).mockImplementation(
+    (useSettingsStore as unknown as jest.Mock).mockImplementation(
       (selector: (state: { openSettings: (tab: string) => void }) => unknown) =>
         selector({ openSettings: jest.fn() }),
     );
@@ -178,10 +178,67 @@ describe("EnhancedChatInput - Quick Actions", () => {
 
     expect(screen.getByTitle("快捷功能")).toHaveClass("cursor-pointer");
     expect(screen.getByTitle("选择 Skills")).toHaveClass("cursor-pointer");
+    expect(screen.getByTitle("选择 CLI 软件")).toHaveClass("cursor-pointer");
     expect(screen.getByTitle("选择连接器")).toHaveClass("cursor-pointer");
     expect(screen.getByTitle("@ 提及与 / 命令")).toHaveClass("cursor-pointer");
     expect(screen.getByTitle(/上传文件/)).toHaveClass("cursor-pointer");
     expect(screen.getByTitle(/上传图片/)).toHaveClass("cursor-pointer");
+  });
+
+  test("loads and selects CLI software binding from picker", async () => {
+    const sendRequest = jest.fn().mockResolvedValue({
+      items: [
+        {
+          id: "cli-software-figma",
+          softwareKey: "figma",
+          name: "Figma",
+          source: "generated",
+          cliCommand: "figma-cli",
+        },
+      ],
+    });
+    (useConnectionStore as unknown as jest.Mock).mockImplementation(
+      (
+        selector: (state: {
+          wsClient?: { sendRequest: (...args: unknown[]) => Promise<unknown> };
+        }) => unknown,
+      ) => selector({ wsClient: { sendRequest } }),
+    );
+    const onCliBindingChange = jest.fn();
+
+    render(<EnhancedChatInput onSend={mockOnSend} onCliBindingChange={onCliBindingChange} />);
+
+    await userEvent.click(screen.getByTitle("选择 CLI 软件"));
+    expect(sendRequest).toHaveBeenCalledWith("cli.software.list", {});
+
+    await userEvent.click(await screen.findByText("Figma"));
+
+    expect(onCliBindingChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        softwareKey: "figma",
+        name: "Figma",
+      }),
+    );
+  });
+
+  test("opens bound CLI software detail from chip action", async () => {
+    const onOpenCliBindingDetail = jest.fn();
+    render(
+      <EnhancedChatInput
+        onSend={mockOnSend}
+        cliBinding={{
+          softwareKey: "notion",
+          name: "Notion",
+          source: "generated",
+          boundAt: new Date().toISOString(),
+        }}
+        onCliBindingChange={jest.fn()}
+        onOpenCliBindingDetail={onOpenCliBindingDetail}
+      />,
+    );
+
+    await userEvent.click(screen.getByTitle("查看软件卡片"));
+    expect(onOpenCliBindingDetail).toHaveBeenCalledWith("notion");
   });
 
   test("all skill options are visible in dropdown", async () => {
@@ -214,6 +271,21 @@ describe("EnhancedChatInput - Quick Actions", () => {
     await userEvent.click(autoApproveSwitch);
 
     expect(onAutoApproveAlwaysChange).toHaveBeenCalledWith(true);
+  });
+
+  test("shows tooltip for auto-approve switch and keeps spacing from send button", async () => {
+    render(<EnhancedChatInput onSend={mockOnSend} autoApproveAlways={false} />);
+
+    const autoApproveContainer = screen.getByLabelText("始终允许设置");
+    const autoApproveSwitch = screen.getByRole("switch", { name: "是否始终允许（免审批）" });
+    await userEvent.hover(autoApproveContainer);
+
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "开启后会自动提交“始终允许”，无需逐次审批。",
+    );
+    expect(autoApproveContainer).toHaveClass("mx-sm", "gap-sm", "px-sm");
+    expect(autoApproveSwitch).toBeInTheDocument();
+    expect(screen.getByTitle("发送 (Shift + Command + Enter)")).toHaveClass("ml-sm");
   });
 
   test("sends uploaded attachment even before parent draftAttachments rerender", async () => {
@@ -287,7 +359,7 @@ describe("EnhancedChatInput - Quick Actions", () => {
         },
       ],
     });
-    (useConnectionStore as jest.Mock).mockImplementation(
+    (useConnectionStore as unknown as jest.Mock).mockImplementation(
       (
         selector: (state: {
           wsClient?: { sendRequest: (...args: unknown[]) => Promise<unknown> };
@@ -319,7 +391,7 @@ describe("EnhancedChatInput - Quick Actions", () => {
         },
       ],
     });
-    (useConnectionStore as jest.Mock).mockImplementation(
+    (useConnectionStore as unknown as jest.Mock).mockImplementation(
       (
         selector: (state: {
           wsClient?: { sendRequest: (...args: unknown[]) => Promise<unknown> };

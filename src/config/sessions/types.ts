@@ -7,6 +7,7 @@ import type { TtsAutoMode } from "../types.tts.js";
 
 export type SessionScope = "per-sender" | "global";
 
+// eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
 export type SessionChannelId = ChannelId | "webchat";
 
 export type SessionChatType = ChatType;

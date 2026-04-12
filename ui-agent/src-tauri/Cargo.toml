@@ -20,6 +20,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 json5 = "0.4"
 regex = "1"
+rfd = "0.15"
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }

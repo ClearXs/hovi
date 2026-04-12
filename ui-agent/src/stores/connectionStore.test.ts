@@ -2,13 +2,25 @@ const mockConnect = jest.fn().mockResolvedValue(undefined);
 const mockDisconnect = jest.fn();
 const mockIsConnected = jest.fn(() => false);
 const mockAddEventListener = jest.fn();
+const mockSendRequest = jest.fn();
+let lastClientOptions:
+  | {
+      onConnected?: () => void;
+      onDisconnected?: () => void;
+      onError?: (error: Error) => void;
+    }
+  | undefined;
 
-const MockClawdbotWebSocketClient = jest.fn().mockImplementation((_options: unknown) => ({
-  connect: mockConnect,
-  disconnect: mockDisconnect,
-  isConnected: mockIsConnected,
-  addEventListener: mockAddEventListener,
-}));
+const MockClawdbotWebSocketClient = jest.fn().mockImplementation((options: unknown) => {
+  lastClientOptions = options as typeof lastClientOptions;
+  return {
+    connect: mockConnect,
+    disconnect: mockDisconnect,
+    isConnected: mockIsConnected,
+    addEventListener: mockAddEventListener,
+    sendRequest: mockSendRequest,
+  };
+});
 
 jest.mock("../services/clawdbot-websocket", () => ({
   ClawdbotWebSocketClient: MockClawdbotWebSocketClient,
@@ -26,7 +38,9 @@ describe("connectionStore gateway client defaults", () => {
     mockDisconnect.mockClear();
     mockIsConnected.mockClear();
     mockAddEventListener.mockClear();
+    mockSendRequest.mockClear();
     MockClawdbotWebSocketClient.mockClear();
+    lastClientOptions = undefined;
   });
 
   it("uses the Control UI client id by default", async () => {
@@ -115,6 +129,62 @@ describe("connectionStore gateway client defaults", () => {
       expect.objectContaining({
         clientId: "openclaw-control-ui",
       }),
+    );
+  });
+
+  it("approves pending device pairing directly via RPC", async () => {
+    let useConnectionStore: typeof import("./connectionStore").useConnectionStore | undefined;
+    mockIsConnected.mockReturnValue(true);
+    mockSendRequest.mockResolvedValue({ requestId: "req-123" });
+
+    await jest.isolateModulesAsync(async () => {
+      ({ useConnectionStore } = await import("./connectionStore"));
+    });
+
+    expect(useConnectionStore).toBeDefined();
+    await useConnectionStore!.getState().connect();
+    useConnectionStore!.setState({ pairingRequestId: "req-123", pairingDeviceId: "dev-1" });
+
+    await useConnectionStore!.getState().approvePairingRequest();
+
+    expect(mockSendRequest).toHaveBeenCalledWith("device.pair.approve", {
+      requestId: "req-123",
+    });
+    expect(useConnectionStore!.getState().pairingRequestId).toBeNull();
+    expect(useConnectionStore!.getState().pairingDeviceId).toBeNull();
+  });
+
+  it("subscribes to session transcript events after connecting", async () => {
+    let useConnectionStore: typeof import("./connectionStore").useConnectionStore | undefined;
+
+    await jest.isolateModulesAsync(async () => {
+      ({ useConnectionStore } = await import("./connectionStore"));
+    });
+
+    expect(useConnectionStore).toBeDefined();
+    await useConnectionStore!.getState().connect();
+    lastClientOptions?.onConnected?.();
+
+    expect(mockSendRequest).toHaveBeenCalledWith("sessions.subscribe", {});
+  });
+
+  it("registers approval resolved listeners for exec and plugin approvals", async () => {
+    let useConnectionStore: typeof import("./connectionStore").useConnectionStore | undefined;
+
+    await jest.isolateModulesAsync(async () => {
+      ({ useConnectionStore } = await import("./connectionStore"));
+    });
+
+    expect(useConnectionStore).toBeDefined();
+    await useConnectionStore!.getState().connect();
+
+    expect(mockAddEventListener).toHaveBeenCalledWith(
+      "exec.approval.resolved",
+      expect.any(Function),
+    );
+    expect(mockAddEventListener).toHaveBeenCalledWith(
+      "plugin.approval.resolved",
+      expect.any(Function),
     );
   });
 });

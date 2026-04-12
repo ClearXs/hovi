@@ -148,7 +148,7 @@ interface KnowledgeBaseState {
     filename?: string;
     description?: string;
     tags?: string[];
-  }) => Promise<void>;
+  }) => Promise<KnowledgeDetail>;
   deleteDocument: (id: string) => Promise<void>;
   rebuildDocument: (documentId: string) => Promise<void>;
 }
@@ -621,12 +621,15 @@ export const useKnowledgeBaseStore = create<KnowledgeBaseState>((set, get) => ({
             [documentId]: {
               ...state.documentsById[documentId],
               filename: updated.filename,
+              size: updated.size,
               description: updated.description,
               tags: updated.tags,
+              sourceType: updated.sourceType,
             },
           }
         : state.documentsById,
     }));
+    return updated;
   },
 
   deleteDocument: async (id) => {

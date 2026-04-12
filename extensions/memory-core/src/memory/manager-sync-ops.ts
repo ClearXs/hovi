@@ -114,6 +114,7 @@ export abstract class MemoryManagerSyncOps {
   protected abstract readonly agentId: string;
   protected abstract readonly workspaceDir: string;
   protected abstract readonly settings: ResolvedMemorySearchConfig;
+  // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
   protected provider: EmbeddingProvider | null = null;
   protected fallbackFrom?: EmbeddingProviderId;
   protected providerRuntime?: EmbeddingProviderRuntime;
@@ -174,6 +175,7 @@ export abstract class MemoryManagerSyncOps {
   protected abstract getIndexConcurrency(): number;
   protected abstract pruneEmbeddingCacheIfNeeded(): void;
   protected abstract indexFile(
+    // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
     entry: MemoryFileEntry | SessionFileEntry,
     options: { source: MemorySource; content?: string },
   ): Promise<void>;
@@ -1349,7 +1351,7 @@ export abstract class MemoryManagerSyncOps {
   private resolveConfiguredSourcesForMeta(): MemorySource[] {
     const normalized = Array.from(this.sources)
       .filter((source): source is MemorySource => source === "memory" || source === "sessions")
-      .toSorted();
+      .toSorted((a, b) => a.localeCompare(b));
     return normalized.length > 0 ? normalized : ["memory"];
   }
 
@@ -1364,20 +1366,22 @@ export abstract class MemoryManagerSyncOps {
           (source): source is MemorySource => source === "memory" || source === "sessions",
         ),
       ),
-    ).toSorted();
+    ).toSorted((a, b) => a.localeCompare(b));
     return normalized.length > 0 ? normalized : ["memory"];
   }
 
   private resolveConfiguredScopeHash(): string {
     const extraPaths = normalizeExtraMemoryPaths(this.workspaceDir, this.settings.extraPaths)
       .map((value) => value.replace(/\\/g, "/"))
-      .toSorted();
+      .toSorted((a, b) => a.localeCompare(b));
     return hashText(
       JSON.stringify({
         extraPaths,
         multimodal: {
           enabled: this.settings.multimodal.enabled,
-          modalities: [...this.settings.multimodal.modalities].toSorted(),
+          modalities: [...this.settings.multimodal.modalities].toSorted((a, b) =>
+            a.localeCompare(b),
+          ),
           maxFileBytes: this.settings.multimodal.maxFileBytes,
         },
       }),

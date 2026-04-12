@@ -142,6 +142,12 @@ export function KnowledgeSettingsTab() {
 
   const [includeInMemorySearch, setIncludeInMemorySearch] = useState(true);
   const [searchDirty, setSearchDirty] = useState(false);
+  const [sourceType, setSourceType] = useState<"external" | "local_fs" | "smb" | "s3" | "webdav">(
+    "external",
+  );
+  const [sourceConfigText, setSourceConfigText] = useState("{}");
+  const [isSourceBusy, setIsSourceBusy] = useState(false);
+  const [sourceMessage, setSourceMessage] = useState<string | null>(null);
 
   const [providerOptions, setProviderOptions] = useState<string[]>(["auto"]);
   const [modelsByProvider, setModelsByProvider] = useState<Record<string, string[]>>({ auto: [] });
@@ -296,6 +302,17 @@ export function KnowledgeSettingsTab() {
     setVisibility((kbDetail.visibility ?? "private") as "private" | "team" | "public");
     setSelectedTagNames((kbDetail.tags ?? []).map((item) => item.name));
   }, [kbDetail, kbInfoDirty, tagDirty]);
+
+  useEffect(() => {
+    if (!kbDetail) return;
+    setSourceType(
+      (kbDetail.sourceType ?? "external") as "external" | "local_fs" | "smb" | "s3" | "webdav",
+    );
+    setSourceConfigText(
+      kbDetail.sourceConfig ? JSON.stringify(kbDetail.sourceConfig, null, 2) : "{}",
+    );
+    setSourceMessage(null);
+  }, [kbDetail?.kbId]);
 
   useEffect(() => {
     if (!baseSettings) return;
@@ -527,6 +544,201 @@ export function KnowledgeSettingsTab() {
           </SettingRow>
         </div>
         {updateError ? <div className="mt-sm text-xs text-error">{updateError}</div> : null}
+      </div>
+
+      <div className="rounded-xl border border-border-light bg-background p-lg">
+        <div className="mb-md flex items-center justify-between">
+          <div className="text-sm font-semibold text-text-primary">数据源生命周期</div>
+          <div className="flex flex-wrap items-center gap-sm">
+            <Button
+              size="sm"
+              disabled={isSourceBusy}
+              onClick={async () => {
+                if (!activeKbId) return;
+                setSourceMessage(null);
+                setIsSourceBusy(true);
+                try {
+                  let parsedConfig: Record<string, unknown> | undefined;
+                  const trimmed = sourceConfigText.trim();
+                  if (trimmed) {
+                    parsedConfig = JSON.parse(trimmed) as Record<string, unknown>;
+                  }
+                  await updateKnowledgeSource({
+                    kbId: activeKbId,
+                    sourceType,
+                    sourceConfig: parsedConfig,
+                  });
+                  await loadKbList({ offset: 0 });
+                  await selectKb(activeKbId);
+                  setSourceMessage("连接配置已保存");
+                  addToast({ title: "连接配置已保存", variant: "success" });
+                } catch (error) {
+                  const message = error instanceof Error ? error.message : "连接配置保存失败";
+                  setSourceMessage(message);
+                  addToast({ title: message, variant: "error" });
+                } finally {
+                  setIsSourceBusy(false);
+                }
+              }}
+            >
+              connect
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={isSourceBusy}
+              onClick={async () => {
+                if (!activeKbId) return;
+                setSourceMessage(null);
+                setIsSourceBusy(true);
+                try {
+                  const result = await testKnowledgeSource(activeKbId);
+                  setSourceMessage(result.message);
+                  addToast({
+                    title: result.success ? "连接测试通过" : "连接测试失败",
+                    description: result.message,
+                    variant: result.success ? "success" : "error",
+                  });
+                } catch (error) {
+                  const message = error instanceof Error ? error.message : "连接测试失败";
+                  setSourceMessage(message);
+                  addToast({ title: message, variant: "error" });
+                } finally {
+                  setIsSourceBusy(false);
+                }
+              }}
+            >
+              test
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={isSourceBusy}
+              onClick={async () => {
+                if (!activeKbId) return;
+                setIsSourceBusy(true);
+                try {
+                  const result = await syncKnowledgeSource(activeKbId);
+                  await selectKb(activeKbId);
+                  const message = result.message ?? (result.success ? "同步完成" : "同步失败");
+                  setSourceMessage(message);
+                  addToast({
+                    title: result.success ? "同步完成" : "同步失败",
+                    description: message,
+                    variant: result.success ? "success" : "error",
+                  });
+                } catch (error) {
+                  const message = error instanceof Error ? error.message : "同步失败";
+                  setSourceMessage(message);
+                  addToast({ title: message, variant: "error" });
+                } finally {
+                  setIsSourceBusy(false);
+                }
+              }}
+            >
+              sync
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={isSourceBusy}
+              onClick={async () => {
+                if (!activeKbId) return;
+                setIsSourceBusy(true);
+                try {
+                  await pauseKnowledgeSource(activeKbId);
+                  await selectKb(activeKbId);
+                  setSourceMessage("已暂停");
+                } finally {
+                  setIsSourceBusy(false);
+                }
+              }}
+            >
+              pause
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={isSourceBusy}
+              onClick={async () => {
+                if (!activeKbId) return;
+                setIsSourceBusy(true);
+                try {
+                  await resumeKnowledgeSource(activeKbId);
+                  await selectKb(activeKbId);
+                  setSourceMessage("已恢复");
+                } finally {
+                  setIsSourceBusy(false);
+                }
+              }}
+            >
+              resume
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="text-error border-error/30 hover:bg-error/10"
+              disabled={isSourceBusy}
+              onClick={async () => {
+                if (!activeKbId) return;
+                setIsSourceBusy(true);
+                try {
+                  const result = await deleteKnowledgeSource(activeKbId);
+                  await loadKbList({ offset: 0 });
+                  await selectKb(activeKbId);
+                  const removedText =
+                    typeof result.deletedDocuments === "number"
+                      ? `，已清理 ${result.deletedDocuments} 个源文档`
+                      : "";
+                  const message = `数据源配置已删除，知识库条目已保留${removedText}`;
+                  setSourceMessage(message);
+                  addToast({ title: "数据源已删除", description: message, variant: "success" });
+                } catch (error) {
+                  const message = error instanceof Error ? error.message : "数据源删除失败";
+                  setSourceMessage(message);
+                  addToast({ title: message, variant: "error" });
+                } finally {
+                  setIsSourceBusy(false);
+                }
+              }}
+            >
+              delete
+            </Button>
+          </div>
+        </div>
+        <div className="space-y-md">
+          <SettingRow title="数据源类型" description="支持本地目录与远程协议（SMB/S3/WebDAV）。">
+            <Select
+              value={sourceType}
+              onValueChange={(value) =>
+                setSourceType(value as "external" | "local_fs" | "smb" | "s3" | "webdav")
+              }
+            >
+              <SelectTrigger className="w-full" size="default">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent side="top" position="popper" className="z-50 bg-white">
+                <SelectItem value="local_fs">local_fs</SelectItem>
+                <SelectItem value="smb">smb</SelectItem>
+                <SelectItem value="s3">s3</SelectItem>
+                <SelectItem value="webdav">webdav</SelectItem>
+                <SelectSeparator />
+                <SelectItem value="external">external</SelectItem>
+              </SelectContent>
+            </Select>
+          </SettingRow>
+          <SettingRow title="连接配置（JSON）" description="用于 connect/test/sync 的源配置。">
+            <Textarea
+              value={sourceConfigText}
+              onChange={(event) => setSourceConfigText(event.target.value)}
+              rows={5}
+              placeholder='{"endpoint":"...","rootPath":"..."}'
+            />
+          </SettingRow>
+          {sourceMessage ? (
+            <div className="text-xs text-text-secondary">{sourceMessage}</div>
+          ) : null}
+        </div>
       </div>
 
       <div className="rounded-xl border border-border-light bg-background p-lg">

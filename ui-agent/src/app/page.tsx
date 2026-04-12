@@ -19,6 +19,7 @@ import { EnhancedChatInput } from "@/components/chat/EnhancedChatInput";
 import { MessageList, Message, SessionAttachmentMeta } from "@/components/chat/MessageList";
 import { SessionDocuments } from "@/components/chat/SessionDocuments";
 import { SessionPreviewPanel } from "@/components/chat/SessionPreviewPanel";
+import { CliSoftwarePage } from "@/components/cli-software/CliSoftwarePage";
 import { CronJobsDialog } from "@/components/cron/CronJobsDialog";
 import { SettingsPanel } from "@/components/desk-pet/SettingsPanel";
 import { VirtualAssistantPage } from "@/components/desk-pet/VirtualAssistantPage";
@@ -48,7 +49,30 @@ import type { AgentInfo } from "@/features/persona/types/persona";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useResponsive } from "@/hooks/useResponsive";
 import { isSubagentLifecycleEvent } from "@/lib/agent-stream-events";
+import { parseApprovalCommandFromText } from "@/lib/approval-command";
+import {
+  buildApprovalRequestMessageFromEvent,
+  findApprovalMessageIndex,
+} from "@/lib/chat/approval-request-message";
+import {
+  buildCliAnythingDirectoryChatPayload,
+  buildCliAnythingPathChatPayload,
+} from "@/lib/chat/cli-anything-session";
+import {
+  buildCliBindingInjectedMessage,
+  stripCliBindingMetadata,
+  toCliBinding,
+  type CliSoftwareBinding,
+  type CliSoftwareCard,
+} from "@/lib/chat/cli-binding";
+import { findLiveAssistantMessageMatchIndex } from "@/lib/chat/live-message-match";
 import { detectPathCardsFromAssistantMessage } from "@/lib/chat/path-detection";
+import {
+  buildSessionMessageFromTranscriptEvent,
+  findTranscriptMessageMatchIndex,
+  normalizeAssistantRichParts,
+  summarizeAssistantRichParts,
+} from "@/lib/chat/session-message";
 import {
   bindSessionDocuments,
   isPageIndexSupported,
@@ -170,7 +194,7 @@ function HomeContent() {
   const { isMobile } = useResponsive();
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [activeMainView, setActiveMainView] = useState<
-    "chat" | "channel" | "discover" | "knowledge" | "persona" | "my"
+    "chat" | "channel" | "cli" | "discover" | "knowledge" | "persona" | "my"
   >("chat");
 
   // Get user name from config
@@ -220,6 +244,11 @@ function HomeContent() {
   const [sessionConnectorIds, setSessionConnectorIds] = useState<Record<string, string[]>>({});
   const [draftConnectorIds, setDraftConnectorIds] = useState<string[]>([]);
   const [autoApproveAlways, setAutoApproveAlways] = useState(false);
+  const [sessionCliBindings, setSessionCliBindings] = useState<Record<string, CliSoftwareBinding>>(
+    {},
+  );
+  const [draftCliBinding, setDraftCliBinding] = useState<CliSoftwareBinding | null>(null);
+  const [cliHighlightSoftwareKey, setCliHighlightSoftwareKey] = useState<string | null>(null);
 
   // 当前正在进行的 runId（用于取消）
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
@@ -278,11 +307,58 @@ function HomeContent() {
     } catch {}
   }, [autoApproveAlways]);
 
+  const refreshSessionCliBindings = useCallback(async () => {
+    if (!wsClient) return;
+    try {
+      const result = await wsClient.sendRequest<{
+        items?: Array<{
+          sessionKey?: string;
+          binding?: CliSoftwareBinding;
+        }>;
+      }>("cli.software.binding.list", {});
+      const next: Record<string, CliSoftwareBinding> = {};
+      const items = Array.isArray(result.items) ? result.items : [];
+      for (const item of items) {
+        const sessionKey =
+          typeof item?.sessionKey === "string" && item.sessionKey.trim() ? item.sessionKey : "";
+        if (!sessionKey || !item?.binding) continue;
+        next[sessionKey] = item.binding;
+      }
+      setSessionCliBindings(next);
+    } catch {}
+  }, [wsClient]);
+
+  const persistSessionCliBinding = useCallback(
+    async (sessionKey: string, binding: CliSoftwareBinding | null) => {
+      if (!sessionKey.trim()) return;
+      const client = useConnectionStore.getState().wsClient;
+      if (!client) return;
+      try {
+        if (binding) {
+          await client.sendRequest("cli.software.binding.set", {
+            sessionKey,
+            binding,
+          });
+          return;
+        }
+        await client.sendRequest("cli.software.binding.clear", { sessionKey });
+      } catch (error) {
+        addToast({
+          title: "CLI 绑定同步失败",
+          description: error instanceof Error ? error.message : "gateway request failed",
+          variant: "error",
+        });
+      }
+    },
+    [addToast],
+  );
+
   useEffect(() => {
     if (status === "connected") {
       void fetchSessions();
+      void refreshSessionCliBindings();
     }
-  }, [status, fetchSessions]);
+  }, [fetchSessions, refreshSessionCliBindings, status]);
 
   useEffect(() => {
     if (activeSessionKey) {
@@ -311,6 +387,11 @@ function HomeContent() {
       setCurrentConversationId(null);
       setActiveMainView("discover");
     };
+    const handleOpenCli = () => {
+      setCurrentConversationId(null);
+      setCliHighlightSoftwareKey(null);
+      setActiveMainView("cli");
+    };
     const handleOpenChannel = () => {
       setCurrentConversationId(null);
       setActiveMainView("channel");
@@ -327,6 +408,7 @@ function HomeContent() {
     window.addEventListener("mobile:open-agent-manage", handleOpenAgentManage);
     window.addEventListener("mobile:open-knowledge", handleOpenKnowledge);
     window.addEventListener("mobile:open-discover", handleOpenDiscover);
+    window.addEventListener("mobile:open-cli", handleOpenCli);
     window.addEventListener("mobile:open-channel", handleOpenChannel);
     window.addEventListener("mobile:open-my", handleOpenMy);
 
@@ -338,6 +420,7 @@ function HomeContent() {
       window.removeEventListener("mobile:open-agent-manage", handleOpenAgentManage);
       window.removeEventListener("mobile:open-knowledge", handleOpenKnowledge);
       window.removeEventListener("mobile:open-discover", handleOpenDiscover);
+      window.removeEventListener("mobile:open-cli", handleOpenCli);
       window.removeEventListener("mobile:open-channel", handleOpenChannel);
       window.removeEventListener("mobile:open-my", handleOpenMy);
     };
@@ -570,6 +653,7 @@ function HomeContent() {
     text = text.replace(/Conversation info \(untrusted metadata\):[\s\S]*?```[\s\S]*?```\n*/g, "");
     text = text.replace(/Sender \(untrusted metadata\):[\s\S]*?```[\s\S]*?```\n*/g, "");
     text = text.replace(/Thread starter \(untrusted metadata\):[\s\S]*?```[\s\S]*?```\n*/g, "");
+    text = stripCliBindingMetadata(text);
     // 过滤掉消息前面的时间戳 [Fri 2026-02-27 08:56 GMT+8]
     text = text.replace(/^\[.*?\]\s*/g, "");
     return text.trim();
@@ -757,7 +841,12 @@ function HomeContent() {
 
         const mappedRole =
           role === "user" || role === "assistant" || role === "system" ? role : "assistant";
-        const text = extractMessageText(raw?.content ?? item);
+        const richParts =
+          mappedRole === "assistant" || mappedRole === "system"
+            ? normalizeAssistantRichParts(raw?.content)
+            : [];
+        const text =
+          extractMessageText(raw?.content ?? item) || summarizeAssistantRichParts(richParts);
         const createdAt = raw?.createdAt ?? raw?.timestamp;
         const timestamp =
           typeof createdAt === "number"
@@ -840,6 +929,7 @@ function HomeContent() {
           role: normalizedRole,
           content: text || (toolCalls.length > 0 ? "[工具调用]" : "[无文本内容]"),
           timestamp,
+          richParts: richParts.length > 0 ? richParts : undefined,
           usage: normalizeUsage(raw?.usage),
           toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
           toolResults: toolResults.length > 0 ? toolResults : undefined,
@@ -1081,6 +1171,61 @@ function HomeContent() {
 
   useEffect(() => {
     if (!wsClient) return;
+    const handleSessionMessageEvent = (payload: unknown) => {
+      const normalized = buildSessionMessageFromTranscriptEvent({
+        payload: payload as {
+          sessionKey?: string;
+          messageId?: string;
+          messageSeq?: number;
+          totalTokens?: number;
+          message?: {
+            role?: string;
+            content?: unknown;
+            timestamp?: number | string;
+            usage?: unknown;
+            __openclaw?: {
+              id?: string;
+              seq?: number;
+            };
+          };
+        },
+        extractMessageText,
+        normalizeUsage,
+        detectPathCards: ({ messageId, content, sessionKey }) =>
+          getDetectedPathCards({ messageId, content, sessionKey }),
+      });
+      if (!normalized) return;
+
+      setConversationMessages((prev) => {
+        const messages = prev[normalized.sessionKey] ? [...prev[normalized.sessionKey]!] : [];
+        let index = findTranscriptMessageMatchIndex(messages, normalized.message);
+        const parsedApproval = parseApprovalCommandFromText(normalized.message.content);
+        if (index < 0 && parsedApproval?.id) {
+          index = findApprovalMessageIndex(messages, parsedApproval.id);
+        }
+        if (index >= 0) {
+          messages[index] = {
+            ...messages[index],
+            ...normalized.message,
+            toolCalls: messages[index].toolCalls,
+            toolResults: messages[index].toolResults,
+            files: mergeDetectedPathCards(messages[index].files, normalized.message.files ?? []),
+          };
+        } else {
+          messages.push(normalized.message);
+        }
+        return { ...prev, [normalized.sessionKey]: messages };
+      });
+    };
+
+    wsClient.addEventListener("session.message", handleSessionMessageEvent);
+    return () => {
+      wsClient.removeEventListener("session.message", handleSessionMessageEvent);
+    };
+  }, [extractMessageText, getDetectedPathCards, mergeDetectedPathCards, normalizeUsage, wsClient]);
+
+  useEffect(() => {
+    if (!wsClient) return;
     const handleChatEvent = (payload: unknown) => {
       const data = payload as {
         runId?: string;
@@ -1097,7 +1242,9 @@ function HomeContent() {
         return;
       }
       const runKey = `${sessionKey}:${runId}`;
-      const text = extractMessageText(data.message?.content ?? "");
+      const richParts = normalizeAssistantRichParts(data.message?.content);
+      const text =
+        extractMessageText(data.message?.content ?? "") || summarizeAssistantRichParts(richParts);
       const timestampValue = data.message?.timestamp;
       const timestamp = typeof timestampValue === "number" ? new Date(timestampValue) : new Date();
       const groupKey = resolveGroupKey(sessionKey, runId);
@@ -1106,7 +1253,11 @@ function HomeContent() {
       const normalizedUsage = normalizeUsage(data.usage);
       setConversationMessages((prev) => {
         const messages = prev[sessionKey] ? [...prev[sessionKey]!] : [];
-        const index = messages.findIndex((msg) => msg.id === messageId);
+        let index = messages.findIndex((msg) => msg.id === messageId);
+        const parsedApproval = parseApprovalCommandFromText(text);
+        if (index < 0 && parsedApproval?.id) {
+          index = findApprovalMessageIndex(messages, parsedApproval.id);
+        }
         if (data.state === "error") {
           const errorText = data.errorMessage?.trim()
             ? `请求失败：${data.errorMessage}`
@@ -1128,7 +1279,7 @@ function HomeContent() {
           delete usageAppliedByRunKeyRef.current[runKey];
           return { ...prev, [sessionKey]: messages };
         }
-        if (!text && data.state === "final") {
+        if (!text && richParts.length === 0 && data.state === "final") {
           if (index >= 0) {
             return { ...prev, [sessionKey]: messages };
           }
@@ -1148,6 +1299,7 @@ function HomeContent() {
           role: "assistant",
           content: text,
           timestamp,
+          richParts: richParts.length > 0 ? richParts : undefined,
           status: undefined, // 清除等待状态
           usage: mergeUsage(
             index >= 0 ? messages[index]?.usage : undefined,
@@ -1158,6 +1310,9 @@ function HomeContent() {
           toolResults: toolData?.toolResults,
           files: mergedFiles,
         };
+        if (index < 0 && data.state === "final") {
+          index = findLiveAssistantMessageMatchIndex(messages, nextMessage);
+        }
         if (index >= 0) {
           messages[index] = {
             ...messages[index],
@@ -1190,6 +1345,81 @@ function HomeContent() {
     toolEventsByRun,
     wsClient,
   ]);
+
+  useEffect(() => {
+    if (!wsClient) return;
+    type ExecApprovalRequestedPayload = {
+      id?: string;
+      createdAtMs?: number;
+      request?: {
+        sessionKey?: string | null;
+        command?: string | null;
+        commandPreview?: string | null;
+        resolvedPath?: string | null;
+        systemRunPlan?: {
+          commandText?: string | null;
+          commandPreview?: string | null;
+        } | null;
+      };
+    };
+    type PluginApprovalRequestedPayload = {
+      id?: string;
+      createdAtMs?: number;
+      request?: {
+        sessionKey?: string | null;
+        title?: string | null;
+        description?: string | null;
+      };
+    };
+
+    const upsertApprovalMessage = (
+      normalized: {
+        sessionKey: string;
+        approvalId: string;
+        message: Message;
+      } | null,
+    ) => {
+      if (!normalized) return;
+      setConversationMessages((prev) => {
+        const messages = prev[normalized.sessionKey] ? [...prev[normalized.sessionKey]!] : [];
+        const index = findApprovalMessageIndex(messages, normalized.approvalId);
+        if (index >= 0) {
+          messages[index] = {
+            ...messages[index],
+            ...normalized.message,
+          };
+        } else {
+          messages.push(normalized.message);
+        }
+        return { ...prev, [normalized.sessionKey]: messages };
+      });
+    };
+
+    const handleExecApprovalRequested = (payload: unknown) => {
+      upsertApprovalMessage(
+        buildApprovalRequestMessageFromEvent({
+          kind: "exec",
+          payload: payload as ExecApprovalRequestedPayload,
+        }),
+      );
+    };
+
+    const handlePluginApprovalRequested = (payload: unknown) => {
+      upsertApprovalMessage(
+        buildApprovalRequestMessageFromEvent({
+          kind: "plugin",
+          payload: payload as PluginApprovalRequestedPayload,
+        }),
+      );
+    };
+
+    wsClient.addEventListener("exec.approval.requested", handleExecApprovalRequested);
+    wsClient.addEventListener("plugin.approval.requested", handlePluginApprovalRequested);
+    return () => {
+      wsClient.removeEventListener("exec.approval.requested", handleExecApprovalRequested);
+      wsClient.removeEventListener("plugin.approval.requested", handlePluginApprovalRequested);
+    };
+  }, [wsClient]);
 
   useEffect(() => {
     if (!wsClient) return;
@@ -1444,6 +1674,7 @@ function HomeContent() {
       message: string;
       attachments?: File[];
       runId?: string;
+      cliBinding?: CliSoftwareBinding | null;
     }) => {
       const client = useConnectionStore.getState().wsClient;
       if (!client) {
@@ -1464,10 +1695,11 @@ function HomeContent() {
       const idempotencyKey =
         params.runId ??
         (typeof crypto?.randomUUID === "function" ? crypto.randomUUID() : `run-${Date.now()}`);
+      const messageToSend = buildCliBindingInjectedMessage(params.message, params.cliBinding);
       try {
         const response = await client.sendRequest<{ runId?: string }>("chat.send", {
           sessionKey: params.sessionKey,
-          message: params.message,
+          message: messageToSend,
           idempotencyKey,
           attachments: normalizedAttachments,
         });
@@ -1570,6 +1802,9 @@ function HomeContent() {
     const selectedConnectors = sessionKey
       ? (sessionConnectorIds[sessionKey] ?? [])
       : draftConnectorIds;
+    let effectiveCliBinding = sessionKey
+      ? (sessionCliBindings[sessionKey] ?? null)
+      : draftCliBinding;
 
     // 创建新的用户消息
     const messageId = `msg-${Date.now()}`;
@@ -1630,6 +1865,12 @@ function HomeContent() {
         await saveSessionConnectors(sessionKey, selectedConnectors);
         setDraftConnectorIds([]);
       }
+      if (draftCliBinding) {
+        effectiveCliBinding = draftCliBinding;
+        setSessionCliBindings((prev) => ({ ...prev, [sessionKey!]: draftCliBinding }));
+        void persistSessionCliBinding(sessionKey, draftCliBinding);
+        setDraftCliBinding(null);
+      }
     } else {
       // 更新对话消息列表
       setConversationMessages((prev) => ({
@@ -1659,6 +1900,7 @@ function HomeContent() {
       message,
       attachments,
       runId,
+      cliBinding: effectiveCliBinding,
     });
     if (result.ok) {
       // 使用网关返回的 runId 创建 AI 消息占位符
@@ -1714,6 +1956,9 @@ function HomeContent() {
   const activeConnectorIds = currentConversationId
     ? (sessionConnectorIds[currentConversationId] ?? [])
     : draftConnectorIds;
+  const activeCliBinding = currentConversationId
+    ? (sessionCliBindings[currentConversationId] ?? null)
+    : draftCliBinding;
 
   const handleToggleConnector = useCallback(
     (connectorId: string, enabled: boolean) => {
@@ -1734,6 +1979,33 @@ function HomeContent() {
     },
     [currentConversationId, saveSessionConnectors, sessionConnectorIds],
   );
+
+  const handleCliBindingChange = useCallback(
+    (binding: CliSoftwareBinding | null) => {
+      if (currentConversationId) {
+        setSessionCliBindings((prev) => {
+          const next = { ...prev };
+          if (binding) {
+            next[currentConversationId] = binding;
+          } else {
+            delete next[currentConversationId];
+          }
+          return next;
+        });
+        void persistSessionCliBinding(currentConversationId, binding);
+        return;
+      }
+      setDraftCliBinding(binding);
+    },
+    [currentConversationId, persistSessionCliBinding],
+  );
+
+  const handleOpenCliBindingDetail = useCallback((softwareKey: string) => {
+    if (!softwareKey.trim()) return;
+    setCurrentConversationId(null);
+    setCliHighlightSoftwareKey(softwareKey.trim());
+    setActiveMainView("cli");
+  }, []);
 
   // TopBar actions
 
@@ -1775,7 +2047,14 @@ function HomeContent() {
 
   const confirmDelete = () => {
     if (!dialogSessionKey) return;
+    void persistSessionCliBinding(dialogSessionKey, null);
     void deleteSession(dialogSessionKey);
+    setSessionCliBindings((prev) => {
+      if (!prev[dialogSessionKey]) return prev;
+      const next = { ...prev };
+      delete next[dialogSessionKey];
+      return next;
+    });
     if (currentConversationId === dialogSessionKey) {
       setCurrentConversationId(null);
     }
@@ -1785,7 +2064,21 @@ function HomeContent() {
 
   const confirmBatchDelete = () => {
     if (selectedKeys.length === 0) return;
+    selectedKeys.forEach((key) => {
+      void persistSessionCliBinding(key, null);
+    });
     selectedKeys.forEach((key) => deleteSession(key));
+    setSessionCliBindings((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const key of selectedKeys) {
+        if (next[key]) {
+          delete next[key];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
     clearSelection();
     if (selectedKeys.includes(currentConversationId ?? "")) {
       setCurrentConversationId(null);
@@ -1845,6 +2138,7 @@ function HomeContent() {
       sessionKey: currentConversationId,
       message: message.retryPayload.message,
       attachments: message.retryPayload.attachments,
+      cliBinding: sessionCliBindings[currentConversationId] ?? null,
     });
     if (result.ok) {
       updateMessageById(currentConversationId, message.id, (msg) => ({
@@ -1946,6 +2240,264 @@ function HomeContent() {
     });
   };
 
+  const handleGenerateCliSoftware = useCallback(
+    async (software: CliSoftwareCard) => {
+      if (!wsClient) {
+        return { ok: false, error: "尚未连接到网关" };
+      }
+      const runId =
+        typeof crypto?.randomUUID === "function" ? crypto.randomUUID() : `run-${Date.now()}`;
+      const label = `CLI 生成 · ${software.name}`;
+      const sessionKey = await createSession(label);
+      if (!sessionKey) {
+        return { ok: false, error: "新建生成会话失败" };
+      }
+
+      const waitingMessageId = `assistant-${sessionKey}:${runId}`;
+      setConversationMessages((prev) => ({
+        ...prev,
+        [sessionKey]: [
+          ...(prev[sessionKey] ?? []),
+          {
+            id: waitingMessageId,
+            role: "assistant",
+            content: "",
+            timestamp: new Date(),
+            status: "waiting",
+          },
+        ],
+      }));
+
+      let generationRunId = runId;
+      try {
+        const response = await wsClient.sendRequest<{
+          runId?: string;
+          sessionKey?: string;
+          status?: "started";
+          softwareKey?: string;
+        }>("cli.software.generate", {
+          sessionKey,
+          runId,
+          software: {
+            engine: software.engine,
+            targetType: software.targetType,
+            softwareKey: software.softwareKey,
+            name: software.name,
+            source: software.source,
+            targetLocator: software.targetLocator,
+            targetSummary: software.targetSummary,
+            generatedRelativePath: software.generatedRelativePath,
+            packageName: software.packageName,
+            cliCommand: software.cliCommand,
+          },
+        });
+        if (typeof response.runId === "string" && response.runId.trim()) {
+          generationRunId = response.runId;
+        }
+        if (generationRunId !== runId) {
+          const nextWaitingMessageId = `assistant-${sessionKey}:${generationRunId}`;
+          setConversationMessages((prev) => {
+            const messages = prev[sessionKey] ? [...prev[sessionKey]!] : [];
+            const index = messages.findIndex((msg) => msg.id === waitingMessageId);
+            if (index < 0) {
+              return prev;
+            }
+            messages[index] = { ...messages[index], id: nextWaitingMessageId };
+            return { ...prev, [sessionKey]: messages };
+          });
+        }
+      } catch (error) {
+        updateMessageById(sessionKey, waitingMessageId, (msg) => ({
+          ...msg,
+          status: "failed",
+          content: error instanceof Error ? error.message : "cli.software.generate failed",
+        }));
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : "cli.software.generate failed",
+        };
+      }
+
+      const binding = {
+        ...toCliBinding(software),
+        generationSessionKey: sessionKey,
+      };
+      setSessionCliBindings((prev) => ({
+        ...prev,
+        [sessionKey]: binding,
+      }));
+      void persistSessionCliBinding(sessionKey, binding);
+
+      return {
+        ok: true,
+        sessionKey,
+        runId: generationRunId,
+      };
+    },
+    [createSession, persistSessionCliBinding, setSessionCliBindings, updateMessageById, wsClient],
+  );
+
+  const startCliAnythingDirectoryChat = useCallback(
+    async (
+      params:
+        | { mode: "source"; paths: string[]; workspaceRoot: string }
+        | { mode: "source"; files: File[]; workspaceRoot: string }
+        | { mode: "upload"; files: File[]; workspaceRoot: string },
+    ) => {
+      if (!wsClient) {
+        addToast({
+          title: "尚未连接到网关",
+          description: "请先完成连接后再发起 CLI 对话。",
+          variant: "error",
+        });
+        return;
+      }
+
+      const workspaceRoot = params.workspaceRoot.trim();
+      if (!workspaceRoot) {
+        addToast({
+          title: "缺少工作目录",
+          description: "当前无法确定 OpenClaw 工作目录，无法创建 CLI-Anything 对话。",
+          variant: "error",
+        });
+        return;
+      }
+
+      const payload =
+        params.mode === "source" && "paths" in params
+          ? buildCliAnythingPathChatPayload(params.paths, workspaceRoot)
+          : buildCliAnythingDirectoryChatPayload({
+              files: params.files,
+              mode: params.mode,
+              workspaceRoot,
+            });
+      const sessionKey = await createSession(payload.label);
+      if (!sessionKey) {
+        addToast({
+          title: "新建会话失败",
+          description: "无法为 CLI-Anything 创建新会话。",
+          variant: "error",
+        });
+        return;
+      }
+
+      setActiveMainView("chat");
+      setCurrentConversationId(sessionKey);
+      selectSession(sessionKey);
+
+      const userMessageId = `msg-${Date.now()}`;
+      const runId =
+        typeof crypto?.randomUUID === "function" ? crypto.randomUUID() : `run-${Date.now()}`;
+
+      setConversationMessages((prev) => ({
+        ...prev,
+        [sessionKey]: [
+          ...(prev[sessionKey] ?? []),
+          {
+            id: userMessageId,
+            role: "user",
+            content: payload.message,
+            attachments: payload.attachments,
+            timestamp: new Date(),
+            status: "sending",
+            retryPayload: { message: payload.message, attachments: payload.attachments },
+          },
+        ],
+      }));
+
+      const result = await sendChatPayload({
+        sessionKey,
+        message: payload.message,
+        attachments: payload.attachments,
+        runId,
+      });
+
+      if (!result.ok) {
+        addToast({
+          title: "CLI 对话启动失败",
+          description: result.error ?? "chat.send failed",
+          variant: "error",
+        });
+        updateMessageById(sessionKey, userMessageId, (message) => ({
+          ...message,
+          status: "failed",
+        }));
+        return;
+      }
+
+      const actualRunId = result.runId ?? runId;
+      setConversationMessages((prev) => ({
+        ...prev,
+        [sessionKey]: [
+          ...(prev[sessionKey] ?? []).map((message) =>
+            message.id === userMessageId
+              ? { ...message, status: undefined, retryPayload: undefined }
+              : message,
+          ),
+          {
+            id: `assistant-${sessionKey}:${actualRunId}`,
+            role: "assistant",
+            content: "",
+            timestamp: new Date(),
+            status: "waiting",
+          },
+        ],
+      }));
+      setActiveMainView("chat");
+      setCurrentConversationId(sessionKey);
+      selectSession(sessionKey);
+      setActiveRunId(actualRunId);
+      addToast({
+        title: "已创建 CLI 对话",
+        description:
+          params.mode === "source"
+            ? `已为软件路径“${payload.rootName}”发起 CLI-Anything 对话`
+            : `已为 CLI 目录“${payload.rootName}”发起导入对话`,
+      });
+    },
+    [addToast, createSession, selectSession, sendChatPayload, updateMessageById, wsClient],
+  );
+
+  const handleStartCliSoftwareChat = useCallback(
+    (software: CliSoftwareCard) => {
+      if (isStreaming) {
+        stopStreaming();
+      }
+      setActiveMainView("chat");
+      setCurrentConversationId(null);
+      selectSession(null);
+      setDraftMessage("");
+      setDraftAttachments([]);
+      setDraftCliBinding(toCliBinding(software));
+      window.setTimeout(() => {
+        const input = document.querySelector("textarea");
+        if (input) {
+          input.scrollIntoView({ behavior: "smooth", block: "center" });
+          (input as HTMLTextAreaElement).focus();
+        }
+      }, 0);
+    },
+    [isStreaming, selectSession, stopStreaming],
+  );
+
+  const handleOpenCliSoftwareSession = useCallback(
+    (sessionKey: string) => {
+      if (!sessionKey.trim()) {
+        return;
+      }
+      if (isStreaming) {
+        stopStreaming();
+      }
+      setActiveMainView("chat");
+      setCurrentConversationId(sessionKey);
+      selectSession(sessionKey);
+      setDraftMessage("");
+      setDraftAttachments([]);
+      setDraftCliBinding(null);
+    },
+    [isStreaming, selectSession, stopStreaming],
+  );
+
   // 获取当前对话的消息
   const currentMessages = currentConversationId
     ? conversationMessages[currentConversationId] || []
@@ -2004,6 +2556,11 @@ function HomeContent() {
           setCurrentConversationId(null);
           setActiveMainView("discover");
         }}
+        onOpenCli={() => {
+          setCurrentConversationId(null);
+          setCliHighlightSoftwareKey(null);
+          setActiveMainView("cli");
+        }}
         onOpenChannel={() => {
           setCurrentConversationId(null);
           setActiveMainView("channel");
@@ -2018,7 +2575,10 @@ function HomeContent() {
         onOpenTaskSearch={() => setTaskSearchOpen(true)}
         onGoHome={() => setActiveMainView("chat")}
         assistantVisible={
-          activeMainView !== "persona" && activeMainView !== "discover" && assistantVisible
+          activeMainView !== "persona" &&
+          activeMainView !== "discover" &&
+          activeMainView !== "cli" &&
+          assistantVisible
         }
         onToggleAssistantVisible={() => setAssistantVisible(!assistantVisible)}
         showTopBar={activeMainView !== "persona" && activeMainView !== "my"}
@@ -2027,6 +2587,12 @@ function HomeContent() {
         searchShortcutLabel={shortcutLabels.search}
         newSessionShortcutLabel={shortcutLabels.newSession}
         onDeleteSession={(key) => {
+          setSessionCliBindings((prev) => {
+            if (!prev[key]) return prev;
+            const next = { ...prev };
+            delete next[key];
+            return next;
+          });
           setDialogSessionKey(key);
           setActiveDialog("delete");
         }}
@@ -2070,6 +2636,39 @@ function HomeContent() {
                       variant: "error",
                     })
                   }
+                />
+              </div>
+            ) : activeMainView === "cli" ? (
+              <div className="flex-1 overflow-hidden bg-background-tertiary">
+                <CliSoftwarePage
+                  wsClient={wsClient ?? undefined}
+                  onError={(message) =>
+                    addToast({
+                      title: "CLI 请求失败",
+                      description: message,
+                      variant: "error",
+                    })
+                  }
+                  onGenerateSoftware={handleGenerateCliSoftware}
+                  onOpenSession={handleOpenCliSoftwareSession}
+                  onStartChat={handleStartCliSoftwareChat}
+                  onSelectSoftwarePath={(selection) =>
+                    selection.kind === "paths"
+                      ? startCliAnythingDirectoryChat({
+                          paths: selection.paths,
+                          mode: "source",
+                          workspaceRoot: selection.workspaceRoot,
+                        })
+                      : startCliAnythingDirectoryChat({
+                          files: selection.files,
+                          mode: "source",
+                          workspaceRoot: selection.workspaceRoot,
+                        })
+                  }
+                  onUploadCliDirectory={({ files, workspaceRoot }) =>
+                    startCliAnythingDirectoryChat({ files, mode: "upload", workspaceRoot })
+                  }
+                  highlightSoftwareKey={cliHighlightSoftwareKey}
                 />
               </div>
             ) : activeMainView === "channel" ? (
@@ -2141,6 +2740,9 @@ function HomeContent() {
                     connectors={availableConnectors}
                     activeConnectorIds={activeConnectorIds}
                     onToggleConnector={handleToggleConnector}
+                    cliBinding={activeCliBinding}
+                    onCliBindingChange={handleCliBindingChange}
+                    onOpenCliBindingDetail={handleOpenCliBindingDetail}
                     sessionKey={currentConversationId}
                     pendingUploadSessionKey={pendingUploadSessionKey}
                   />
@@ -2231,6 +2833,9 @@ function HomeContent() {
                       connectors={availableConnectors}
                       activeConnectorIds={activeConnectorIds}
                       onToggleConnector={handleToggleConnector}
+                      cliBinding={activeCliBinding}
+                      onCliBindingChange={handleCliBindingChange}
+                      onOpenCliBindingDetail={handleOpenCliBindingDetail}
                       sessionKey={currentConversationId}
                       pendingUploadSessionKey={pendingUploadSessionKey}
                     />
@@ -2416,7 +3021,15 @@ function HomeContent() {
           unreadMap={getUnreadMap()}
           onSelectSession={handleSelectConversation}
           onNewSession={handleNewConversation}
-          onDeleteSession={deleteSession}
+          onDeleteSession={(key) => {
+            setSessionCliBindings((prev) => {
+              if (!prev[key]) return prev;
+              const next = { ...prev };
+              delete next[key];
+              return next;
+            });
+            deleteSession(key);
+          }}
           onOpenTaskSearch={() => setTaskSearchOpen(true)}
           open={sessionDrawerOpen}
           onOpenChange={setSessionDrawerOpen}

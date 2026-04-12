@@ -1,12 +1,12 @@
 "use client";
 
-import { MessageSquare, Bot, BookOpen, User, Radio, Compass } from "lucide-react";
+import { MessageSquare, Bot, BookOpen, User, Radio, Compass, TerminalSquare } from "lucide-react";
 import { useRouter, usePathname } from "next/navigation";
 import { memo, useCallback } from "react";
 import { dispatchMobileEvent, MOBILE_EVENTS } from "@/lib/mobileEvents";
 import { cn } from "@/lib/utils";
 
-type TabId = "chat" | "channel" | "discover" | "personas" | "knowledge" | "my";
+type TabId = "chat" | "channel" | "cli" | "discover" | "personas" | "knowledge" | "my";
 
 interface TabItem {
   id: TabId;
@@ -25,6 +25,13 @@ const TABS: TabItem[] = [
     icon: Radio,
     isEvent: true,
     event: MOBILE_EVENTS.OPEN_CHANNEL,
+  },
+  {
+    id: "cli",
+    label: "CLI",
+    icon: TerminalSquare,
+    isEvent: true,
+    event: MOBILE_EVENTS.OPEN_CLI,
   },
   {
     id: "discover",

@@ -246,6 +246,7 @@ export type AgentDefaultsConfig = {
     /** Session key for heartbeat runs ("main" or explicit session key). */
     session?: string;
     /** Delivery target ("last", "none", or a channel id). */
+    // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
     target?: "last" | "none" | ChannelId;
     /** Direct/DM delivery policy. Default: "allow". */
     directPolicy?: "allow" | "block";

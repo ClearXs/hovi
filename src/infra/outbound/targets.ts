@@ -26,8 +26,10 @@ import {
 } from "./channel-resolution.js";
 import { missingTargetError } from "./target-errors.js";
 
+// eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
 export type OutboundChannel = DeliverableMessageChannel | "none";
 
+// eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
 export type HeartbeatTarget = OutboundChannel | "last";
 
 export type OutboundTarget = {
@@ -84,6 +86,7 @@ function parseExplicitTargetWithPlugin(params: {
 
 export function resolveSessionDeliveryTarget(params: {
   entry?: SessionEntry;
+  // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
   requestedChannel?: GatewayMessageChannel | "last";
   explicitTo?: string;
   explicitThreadId?: string | number;

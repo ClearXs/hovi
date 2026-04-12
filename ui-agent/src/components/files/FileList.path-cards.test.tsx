@@ -41,6 +41,26 @@ describe("FileList path cards", () => {
     expect(onPreviewFile).toHaveBeenCalledWith(expect.objectContaining({ name: "a.ts" }));
   });
 
+  test("does not open a new window when preview callback is missing", () => {
+    const openSpy = jest.spyOn(window, "open").mockImplementation(() => null);
+    const files: FileItemProps[] = [
+      {
+        name: "notes.md",
+        path: "/workspace/notes.md",
+        source: "detected-path",
+        resolvedPath: "/workspace/notes.md",
+        kind: "file",
+        previewable: true,
+      },
+    ];
+
+    render(<FileList files={files} />);
+    fireEvent.click(screen.getByTitle("预览"));
+
+    expect(openSpy).not.toHaveBeenCalled();
+    openSpy.mockRestore();
+  });
+
   test("calls system open callback for detected path cards", () => {
     const onSystemOpenFile = jest.fn();
     const files: FileItemProps[] = [

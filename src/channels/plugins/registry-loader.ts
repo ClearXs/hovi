@@ -10,6 +10,7 @@ export function createChannelRegistryLoader<TValue>(
   resolveValue: ChannelRegistryValueResolver<TValue>,
 ): (id: ChannelId) => Promise<TValue | undefined> {
   const cache = new Map<ChannelId, TValue>();
+  // eslint-disable-next-line @typescript-eslint/no-redundant-type-constituents
   let lastRegistry: PluginRegistry | null = null;
 
   return async (id: ChannelId): Promise<TValue | undefined> => {

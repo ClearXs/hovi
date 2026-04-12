@@ -28,6 +28,7 @@ describe("desktop-env", () => {
 
     delete (window as Window & { __TAURI__?: unknown }).__TAURI__;
     delete (window as Window & { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    localStorage.clear();
   });
 
   it("returns loopback gateway urls in desktop mode", () => {
@@ -51,6 +52,34 @@ describe("desktop-env", () => {
     (window as Window & { __TAURI__?: object }).__TAURI__ = {};
 
     expect(buildGatewayUrl("/api/v1/skills")).toBe("http://127.0.0.1:18789/api/v1/skills");
+  });
+
+  it("uses same-origin relative paths for browser http requests when env is not configured", () => {
+    delete process.env.NEXT_PUBLIC_API_URL;
+
+    expect(getGatewayHttpBaseUrl({ currentUrl: "http://localhost:3002/chat" })).toBe(
+      "http://localhost:3002",
+    );
+    expect(
+      buildGatewayUrl("/files/main/workspace/demo.md", {
+        currentUrl: "http://localhost:3002/chat",
+      }),
+    ).toBe("/files/main/workspace/demo.md");
+  });
+
+  it("still uses same-origin relative paths for browser http requests with configured gateway", () => {
+    delete process.env.NEXT_PUBLIC_API_URL;
+    delete process.env.NEXT_PUBLIC_WS_URL;
+    localStorage.setItem("clawdbot.gateway.url", "ws://127.0.0.1:18789");
+
+    expect(getGatewayHttpBaseUrl({ currentUrl: "http://localhost:3002/chat" })).toBe(
+      "http://127.0.0.1:18789",
+    );
+    expect(
+      buildGatewayUrl("/files/main/workspace/demo.md", {
+        currentUrl: "http://localhost:3002/chat",
+      }),
+    ).toBe("/files/main/workspace/demo.md");
   });
 
   it("uses gateway callback origin for packaged tauri oauth redirects", () => {

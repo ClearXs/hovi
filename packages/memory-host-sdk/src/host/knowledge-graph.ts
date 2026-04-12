@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { runEmbeddedPiAgent } from "../../../../src/agents/pi-embedded.js";
+import { resolveAgentTimeoutMs } from "../../../../src/agents/timeout.js";
 import type { OpenClawConfig } from "../../../../src/config/config.js";
 import { createSubsystemLogger } from "../../../../src/logging/subsystem.js";
 import { hashText } from "./internal.js";
@@ -74,6 +75,7 @@ export async function extractTriplesViaLlm(params: {
 }): Promise<KnowledgeGraphExtractionResult> {
   const { text, settings, cfg, agentId, workspaceDir, agentDir } = params;
   const targetTriples = computeTargetTriples({ text, settings });
+  const timeoutMs = resolveAgentTimeoutMs({ cfg, minMs: 60_000 });
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-kg-"));
   const sessionFile = path.join(tempDir, "session.jsonl");
   // 使用 LightRAG 格式的 prompt
@@ -89,7 +91,7 @@ export async function extractTriplesViaLlm(params: {
       prompt,
       provider: settings.provider,
       model: settings.model,
-      timeoutMs: 60_000,
+      timeoutMs,
       runId: `kb-graph-${Date.now()}`,
       disableTools: true,
     });
