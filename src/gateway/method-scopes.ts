@@ -111,6 +111,8 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "talk.config",
     "agents.files.list",
     "agents.files.get",
+    "cli.software.list",
+    "cli.software.binding.list",
   ],
   [WRITE_SCOPE]: [
     "send",
@@ -143,6 +145,9 @@ const METHOD_SCOPE_GROUPS: Record<OperatorScope, readonly string[]> = {
     "sessions.abort",
     "push.test",
     "node.pending.enqueue",
+    "cli.software.generate",
+    "cli.software.binding.set",
+    "cli.software.binding.clear",
   ],
   [ADMIN_SCOPE]: [
     "channels.logout",
