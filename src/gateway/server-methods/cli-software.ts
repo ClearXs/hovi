@@ -269,3 +269,13 @@ export const cliSoftwareBindingClear: GatewayRequestHandler = function (req) {
 
   respond(true, { ok: true });
 };
+
+// ─── Handler group export ───────────────────────────────────────────────────
+
+export const cliSoftwareHandlers = {
+  "cli.software.list": cliSoftwareList,
+  "cli.software.generate": cliSoftwareGenerate,
+  "cli.software.binding.list": cliSoftwareBindingList,
+  "cli.software.binding.set": cliSoftwareBindingSet,
+  "cli.software.binding.clear": cliSoftwareBindingClear,
+};
