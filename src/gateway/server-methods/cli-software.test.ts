@@ -230,6 +230,31 @@ describe("cli-software handlers", () => {
       expect(r.initialPrompt as string).toContain("//input[@id='search']");
     });
 
+    it("uses caller-provided sessionKey and runId", async () => {
+      const { cliSoftwareGenerate } = await import("./cli-software");
+      const opts = createOptions({
+        params: {
+          engine: "cli-anything",
+          source: "https://example.com",
+          targetLocator: "//button",
+          targetSummary: "A button",
+          targetType: "url",
+          name: "MyTool",
+          sessionKey: "my-session",
+          runId: "my-run",
+        },
+      });
+      cliSoftwareGenerate(opts);
+
+      expect(opts.respond).toHaveBeenCalledTimes(1);
+      const [ok, result] = opts.respond.mock.calls[0]!;
+      expect(ok).toBe(true);
+      const r = result as Record<string, unknown>;
+      expect(r.sessionKey).toBe("my-session");
+      expect(r.runId).toBe("my-run");
+      expect(r.status).toBe("started");
+    });
+
     it("unknown engine returns error", async () => {
       const { cliSoftwareGenerate } = await import("./cli-software");
       const opts = createOptions({

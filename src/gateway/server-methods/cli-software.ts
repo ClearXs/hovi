@@ -69,6 +69,19 @@ export const cliSoftwareList: GatewayRequestHandler = function (req) {
   respond(true, { items });
 };
 
+// ─── Helper ───────────────────────────────────────────────────────────────────
+
+function deriveSoftwareKey(source: string): string {
+  try {
+    const url = new URL(source);
+    return url.hostname.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  } catch {
+    // Not a URL: use the last path component, stripped of non-alphanumerics
+    const last = source.split("/").filter(Boolean).at(-1) ?? source;
+    return last.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+  }
+}
+
 // ─── cli.software.generate ────────────────────────────────────────────────────
 
 function buildCliAnythingPrompt(params: {
@@ -142,9 +155,14 @@ export const cliSoftwareGenerate: GatewayRequestHandler = function (req) {
     return;
   }
 
-  const softwareKey = (params.name as string) ?? `software-${crypto.randomUUID().slice(0, 8)}`;
-  const sessionKey = `session-${crypto.randomUUID().slice(0, 8)}`;
-  const runId = `run-${crypto.randomUUID().slice(0, 8)}`;
+  const rawSessionKey = (params.sessionKey as string | undefined)?.trim();
+  const rawRunId = (params.runId as string | undefined)?.trim();
+  const rawSoftwareKey = (params.softwareKey as string | undefined)?.trim();
+
+  const sessionKey = rawSessionKey || `session-${crypto.randomUUID().slice(0, 8)}`;
+  const runId = rawRunId || `run-${crypto.randomUUID().slice(0, 8)}`;
+  const softwareKey =
+    rawSoftwareKey || (params.name as string) || deriveSoftwareKey((params.source as string) ?? "");
 
   let initialPrompt: string;
 
